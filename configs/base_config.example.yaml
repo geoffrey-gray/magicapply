@@ -1,0 +1,48 @@
+# Copy to base_config.yaml and edit. `.gitignore` keeps base_config.yaml out of git.
+version: 1
+
+llm:
+  provider: anthropic
+  model: claude-sonnet-4-6
+  max_tokens: 4096
+  temperature: 0.3
+
+scoring:
+  threshold: 70
+  prefilter:
+    locations: ["Remote", "New York", "Boston"]
+    seniority: ["senior", "staff"]
+    must_have: []
+    exclude: ["security clearance required"]
+
+static_answers:
+  full_name: "Geoffrey Gray"
+  email: "geoffrey.gray042@gmail.com"
+  location: "Boston, MA"
+  linkedin_url: "https://linkedin.com/in/example"
+  work_authorization: "US citizen"
+  requires_sponsorship: false
+
+paths:
+  resumes_dir: "../resumes"
+  data_dir: "../data"
+
+sources:
+  - name: "starred-companies"
+    type: "career_page"
+    urls:
+      - "https://www.anthropic.com/careers"
+    rate_limit_per_minute: 30
+
+  - name: "watched-jobs"
+    type: "job_url"
+    urls: []
+
+  # LinkedIn is opt-in. Uncomment + set enabled: true only if you accept the
+  # ToS risk documented in README.md.
+  # - name: "linkedin-search"
+  #   type: "linkedin"
+  #   enabled: false
+  #   queries:
+  #     - "senior software engineer remote"
+  #   rate_limit_per_minute: 10

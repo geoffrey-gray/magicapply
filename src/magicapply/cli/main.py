@@ -12,6 +12,7 @@ from pathlib import Path
 import typer
 
 from magicapply import __version__
+from magicapply.cli.commands import config as config_cmds
 
 app = typer.Typer(
     name="magicapply",
@@ -19,6 +20,7 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+app.add_typer(config_cmds.app, name="config")
 
 
 @app.command()

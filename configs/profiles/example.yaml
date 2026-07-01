@@ -1,0 +1,10 @@
+name: "senior-swe"
+base_resume: "example.yaml"
+
+sources:
+  - "starred-companies"
+  - "watched-jobs"
+
+apply:
+  auto_apply: true
+  narrative_style: "concise"

@@ -1,0 +1,3 @@
+# Placeholder base resume — the real schema arrives in Phase 3 with domain models.
+# For now, config validation just checks this file exists.
+name: "Example Person"

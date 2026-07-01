@@ -1,0 +1,195 @@
+"""Pydantic v2 configuration models.
+
+These are the shape of MagicApply's user-facing YAML. Every model uses
+`extra="forbid"` so typos in a config file fail fast instead of being silently
+ignored.
+
+Design decisions worth recording:
+
+- Sources are a discriminated union on `type`. New source kinds add a class here
+  and register an adapter in `infrastructure/sources/`.
+- Profiles reference sources by `name` (a foreign key) rather than embedding
+  source config, so switching profiles doesn't require duplicating credentials
+  or rate limits.
+- Paths are stored as strings on the model and resolved against a `config_root`
+  in the loader — keeps YAML relative-path-friendly.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_Strict = ConfigDict(extra="forbid", frozen=False, str_strip_whitespace=True)
+
+
+class LLMConfig(BaseModel):
+    """LLM provider configuration. Provider-specific fields live under `options`."""
+
+    model_config = _Strict
+
+    provider: Literal["anthropic", "ollama"] = "anthropic"
+    model: str = "claude-sonnet-4-6"
+    max_tokens: int = Field(default=4096, gt=0)
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+    # Provider-specific overrides (e.g. base_url for ollama). Kept loose on
+    # purpose — providers own their own validation.
+    options: dict[str, str | int | float | bool] = Field(default_factory=dict)
+
+
+class ScoringPrefilter(BaseModel):
+    """Cheap rule-based prefilter run before any LLM scoring call."""
+
+    model_config = _Strict
+
+    locations: list[str] = Field(default_factory=list)
+    seniority: list[str] = Field(default_factory=list)
+    must_have: list[str] = Field(default_factory=list)
+    exclude: list[str] = Field(default_factory=list)
+
+
+class ScoringConfig(BaseModel):
+    """Job-scoring behavior.
+
+    `threshold` is applied after LLM scoring. Prefilter rules eliminate jobs
+    before an LLM is called; anything they pass is scored 0-100 and compared
+    against `threshold` to decide auto-apply.
+    """
+
+    model_config = _Strict
+
+    threshold: int = Field(default=70, ge=0, le=100)
+    prefilter: ScoringPrefilter = Field(default_factory=ScoringPrefilter)
+
+
+class StaticAnswers(BaseModel):
+    """Answers to routine application questions.
+
+    Everything static enough that it never depends on the specific job goes
+    here. Anything dynamic (bullets, cover letter, screening questions) is
+    generated per-job by the LLM layer.
+    """
+
+    model_config = _Strict
+
+    full_name: str
+    email: str
+    phone: str | None = None
+    location: str | None = None
+    linkedin_url: str | None = None
+    github_url: str | None = None
+    portfolio_url: str | None = None
+    work_authorization: str | None = None
+    requires_sponsorship: bool | None = None
+    # DEI/EEO — omit or fill per your comfort; MagicApply never invents values.
+    gender: str | None = None
+    ethnicity: str | None = None
+    veteran_status: str | None = None
+    disability_status: str | None = None
+
+
+class Paths(BaseModel):
+    """Filesystem locations. Resolved relative to the config root at load time."""
+
+    model_config = _Strict
+
+    resumes_dir: str = "resumes"
+    data_dir: str = "data"
+
+
+class _SourceBase(BaseModel):
+    model_config = _Strict
+
+    name: str
+    enabled: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("source name must not be blank")
+        return v
+
+
+class CareerPageSource(_SourceBase):
+    """A company's careers page.
+
+    Adapter fetches the page and prefers JSON-LD `JobPosting`; falls back to a
+    per-host HTML parser only when JSON-LD is absent.
+    """
+
+    type: Literal["career_page"] = "career_page"
+    urls: list[str] = Field(default_factory=list)
+    rate_limit_per_minute: int = Field(default=30, gt=0)
+
+
+class JobUrlSource(_SourceBase):
+    """A hand-curated list of specific job posting URLs to keep watching."""
+
+    type: Literal["job_url"] = "job_url"
+    urls: list[str] = Field(default_factory=list)
+
+
+class LinkedInSource(_SourceBase):
+    """Authenticated LinkedIn scraping.
+
+    Disabled by default. LinkedIn's ToS forbids scraping and their bot
+    detection is aggressive — the user opts in explicitly per source, and
+    provides a `LINKEDIN_LI_AT` cookie via env.
+    """
+
+    type: Literal["linkedin"] = "linkedin"
+    enabled: bool = False
+    queries: list[str] = Field(default_factory=list)
+    rate_limit_per_minute: int = Field(default=10, gt=0)
+
+
+Source = Annotated[
+    CareerPageSource | JobUrlSource | LinkedInSource,
+    Field(discriminator="type"),
+]
+
+
+class BaseConfig(BaseModel):
+    """Top-level config shared across every profile."""
+
+    model_config = _Strict
+
+    version: Literal[1] = 1
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    scoring: ScoringConfig = Field(default_factory=ScoringConfig)
+    static_answers: StaticAnswers
+    paths: Paths = Field(default_factory=Paths)
+    sources: list[Source] = Field(default_factory=list)
+
+    def source_names(self) -> set[str]:
+        return {s.name for s in self.sources}
+
+
+class ApplyBehavior(BaseModel):
+    model_config = _Strict
+
+    auto_apply: bool = True
+    narrative_style: Literal["concise", "detailed"] = "concise"
+
+
+class Profile(BaseModel):
+    """A search profile. Multiple profiles = multiple resumes and criteria."""
+
+    model_config = _Strict
+
+    name: str
+    base_resume: str  # Filename relative to Paths.resumes_dir
+    # A profile can override scoring wholesale. Partial merging is not supported
+    # yet — see docs/GOF_PATTERNS.md and README for rationale.
+    scoring: ScoringConfig | None = None
+    sources: list[str] = Field(default_factory=list)
+    apply: ApplyBehavior = Field(default_factory=ApplyBehavior)
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("profile name must not be blank")
+        return v
