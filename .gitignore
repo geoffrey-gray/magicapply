@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Testing / lint caches
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Local secrets and env
+.env
+.env.local
+.env.*.local
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Runtime data (SQLite DB, Playwright storage state)
+data/
+
+# User-specific configs and resumes never belong in git; keep examples.
+configs/base_config.yaml
+configs/profiles/*.yaml
+!configs/profiles/example.yaml
+resumes/*.yaml
+!resumes/example.yaml
