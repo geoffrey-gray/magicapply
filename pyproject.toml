@@ -15,6 +15,8 @@ dependencies = [
     "pydantic>=2.7",
     "pyyaml>=6",
     "sqlmodel>=0.0.20",
+    "anthropic>=0.40",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +39,7 @@ addopts = ["-ra", "--strict-markers"]
 markers = [
     "integration: hits real network/services; skipped unless MAGICAPPLY_LIVE_TESTS=1",
     "linkedin: hits LinkedIn (ToS-sensitive); skipped unless MAGICAPPLY_LINKEDIN_TESTS=1",
+    "anthropic: hits real Anthropic API; skipped unless MAGICAPPLY_LIVE_TESTS=1 + ANTHROPIC_API_KEY",
     "slow: takes noticeable time (>1s); not skipped, just marked",
 ]
 
