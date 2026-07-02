@@ -31,8 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_UA = (
-    "Mozilla/5.0 (X11; Linux x86_64) MagicApply/0.1 "
-    "(+https://github.com/geoffreygray/magicapply)"
+    "Mozilla/5.0 (X11; Linux x86_64) MagicApply/0.1 (+https://github.com/geoffreygray/magicapply)"
 )
 
 # Public re-export so callers can hand a raw HTML page to the parser directly.
