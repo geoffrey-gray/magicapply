@@ -14,7 +14,12 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from magicapply.cli.composition import build_repos, build_scorer, build_sources_for_profile
+from magicapply.cli.composition import (
+    build_repos,
+    build_scorer,
+    build_sources_for_profile,
+    build_tailoring_pipeline,
+)
 from magicapply.config import ConfigError, LoadedConfig, load_config
 from magicapply.config.paths import default_config_root
 from magicapply.pipelines.discovery import DiscoveryPipeline
@@ -65,6 +70,34 @@ def discover(
     if report.source_errors:
         console.print("[red]source errors:[/red]")
         for err in report.source_errors:
+            console.print(f"  - {err}")
+
+
+@app.command()
+def tailor(
+    profile: Annotated[str, typer.Argument(help="Profile name from configs/profiles/")],
+    root: Annotated[Path | None, typer.Option(help="Config root")] = None,
+) -> None:
+    """Tailor every SCORED application for one profile.
+
+    Reads SCORED applications for the profile, rewrites each resume summary
+    against the job description, generates a cover letter, writes both to
+    `<data_dir>/tailored/<application_id>/`, and transitions the row to
+    TAILORED. Re-running is a no-op — already-TAILORED rows are not touched.
+    """
+    loaded = _load(root)
+    profile_cfg = loaded.profile(profile)
+
+    jobs_repo, apps_repo = build_repos(loaded.data_dir())
+    pipeline = build_tailoring_pipeline(loaded, profile_cfg, apps_repo, jobs_repo)
+    report = pipeline.run()
+
+    console.print(f"[green]tailored:[/green] {report.tailored}")
+    if report.missing_job:
+        console.print(f"[yellow]missing job:[/yellow] {report.missing_job}")
+    if report.errors:
+        console.print("[red]errors:[/red]")
+        for err in report.errors:
             console.print(f"  - {err}")
 
 

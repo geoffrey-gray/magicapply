@@ -29,6 +29,7 @@ app.add_typer(status_cmds.app, name="status")
 
 # Pipeline commands live at the top level per ARCHITECTURE.md §7.
 app.command()(pipeline_cmds.discover)
+app.command()(pipeline_cmds.tailor)
 app.command()(pipeline_cmds.run)
 app.command()(pipeline_cmds.apply)
 app.command("review")(_review := status_cmds.review)
