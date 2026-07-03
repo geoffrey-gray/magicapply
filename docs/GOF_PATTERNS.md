@@ -11,7 +11,7 @@ Patterns are listed with the concrete responsibility they cover, the module that
 **Where:** `infrastructure/browser/ats/` (per-ATS form filling) and `infrastructure/llm/providers/` (per-LLM-backend clients).
 
 - `ATSHandler` Protocol → `greenhouse.py`, later `lever.py`, `workday.py`, `ashby.py`.
-- `LLMClient` Protocol → `anthropic.py`, `ollama.py`.
+- `LLMClient` Protocol → `anthropic.py`, `ollama.py`, plus test/dry-run variants `mock.py` (shape-aware; matches on prompt substrings from the injected `PromptsConfig`) and `replay.py` (SHA256-keyed YAML fixtures with a fallback client).
 
 **Why not conditionals:** the variation is behavioral across a large surface (login, navigate, map fields, submit). Polymorphism replaces branching in the pipeline layer.
 
@@ -43,15 +43,28 @@ Patterns are listed with the concrete responsibility they cover, the module that
 
 **Where:** `infrastructure/browser/ats/base.py`.
 
-- `ATSHandler.apply()` is a concrete template: `detect()` → `navigate()` → `fill_static_fields()` → `fill_dynamic_fields()` → `submit()` → `verify()`. Subclasses override the hooks; the flow is invariant.
+- `BaseATSHandler.apply()` is the concrete template: `navigate` → CAPTCHA detect → `fill_static` → `fill_dynamic` → CAPTCHA detect → **dry-run short-circuit** → `submit` → `verify`. Subclasses override the hooks; the flow is invariant.
+- The CAPTCHA detection and dry-run short-circuit are baked into the template, so every existing and future ATS handler inherits them for free. There is no per-handler dry-run wrapper class (see also *Extend, don't multiply* below).
 
-**Why:** every ATS follows the same broad flow — Template Method captures the invariant so subclasses can't accidentally reorder it.
+**Why:** every ATS follows the same broad flow — Template Method captures the invariant so subclasses can't accidentally reorder it, and cross-cutting safety features (CAPTCHA, dry-run) live in the template rather than in each subclass.
 
 ### Repository (Fowler, PoEAA — not strictly GoF)
 
 **Where:** `domain/repositories.py` defines Protocols; `infrastructure/persistence/repositories/` implements them.
 
+- `JobsRepository`: `upsert`, `get`, `get_by_dedup_key`, `list_all`.
+- `ApplicationsRepository`: `add`, `save`, `get`, `by_job_and_profile`, `list_by_state`, `list_by_state_and_profile`.
+
 Listed for completeness — it's the canonical companion to a layered architecture, though not from the GoF book.
+
+## Meta principle: extend, don't multiply
+
+Before adding a new class, ask:
+1. Can an existing class take a new optional kwarg or a new mode? (See `MockLLMClient` — canned vs. shape-aware mode on the same class.)
+2. Can I add a method to an existing class? (See `ApplyPipeline.apply_batch` next to `apply_one`, no `ApplyRunner` sibling.)
+3. Can I extend an existing Template Method's invariant flow? (See `BaseATSHandler.apply` growing a dry-run branch instead of a `DryRunPageDriver` wrapper.)
+
+Only after all three fail does a new sibling class earn its place. Redundant siblings dilute intent and drift out of sync.
 
 ## Deferred (Phase 2+)
 

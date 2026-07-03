@@ -48,19 +48,38 @@ Interactive shells (`ssh magicapply-dev` with no command) work as expected — `
 # Sync deps (idempotent; safe to run every time)
 ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH UV_LINK_MODE=copy; cd ~/magicapply && uv sync --extra dev'
 
-# Unit tests
+# Unit tests (fast; ~2s)
 ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run pytest tests/unit -q'
 
-# Integration tests (network-hitting; gated)
-ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && MAGICAPPLY_LIVE_TESTS=1 uv run pytest tests/integration'
+# Full suite including the hermetic E2E fixture (needs Chromium)
+ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run pytest tests -q'
 
-# Playwright browsers — one-time; do not automate this
-ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run playwright install chromium'
+# Live-network integration tests (Anthropic + custom URL sources)
+ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && MAGICAPPLY_LIVE_TESTS=1 uv run pytest tests/integration'
 
 # CLI
 ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run magicapply --help'
-ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run magicapply discover senior-swe'
+ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run magicapply doctor --root configs'
+ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run magicapply run senior-swe'                 # dry-run against real sources
+ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run magicapply run senior-swe --yes-submit'    # real submissions
 ```
+
+## Playwright browsers (one-time setup)
+
+The apply flow drives real Chromium via Playwright. Install once inside the VM — this download is ~120 MB and the runtime shared libraries are ~50 MB more:
+
+```bash
+# The browser binary (headless shell + full chromium)
+ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH; cd ~/magicapply && uv run playwright install chromium'
+
+# System runtime deps (libnspr4, libnss3, libatk-bridge2.0-0, libgbm1, …)
+# Must be run with sudo because it apt installs system packages. Do NOT
+# route this through `uv` because sudo does not inherit uv from PATH; call
+# the venv Python directly.
+ssh magicapply-dev 'sudo -n DEBIAN_FRONTEND=noninteractive /home/ggray/magicapply/.venv/bin/python -m playwright install-deps chromium'
+```
+
+After both steps `uv run magicapply doctor` should print `chromium PRESENT (…)` and the E2E fixture test should pass.
 
 ## virtiofs share
 
@@ -75,7 +94,7 @@ The mount depends on two settings that were tuned when the VM was first brought 
 - **Guest kernel ≥ 6.12** (backports). The stock Debian 12 kernel (6.1) triggers a `WARN` at `virtio_fs_get_tree` and returns `EIO`; the mount never completes.
 - **Domain XML `<driver type='virtiofs' queue='1024'/>`** — this becomes `queue-size=1024` on QEMU's `vhost-user-fs-pci` device. Anything smaller than ~128 causes the guest driver to reject the device before FUSE_INIT. The initial cloud-init used `queue='1'`, which is why the share never worked before the kernel upgrade + XML fix.
 
-If both are in place, the virtiofsd log at `/tmp/virtiofsd-magicapply.log` (world-readable when the wrapper is set up for debug) should show `Client connected, servicing requests` and continued request lines when the guest performs I/O.
+The wrapper at `/mnt/storage/VMs/magicapply-dev-setup/virtiofsd-wrapper.sh` is intentionally minimal — just `--sandbox=none "$@"` — because NixOS doesn't grant virtiofsd the caps for the default namespace sandbox. If you need to debug a fresh mount failure, temporarily add `--log-level debug` and redirect stderr to a world-readable log; `magicapply-dev.qcow2` will pick it up on the next `virsh start`.
 
 ## Fallback: sync host checkout → VM
 
@@ -107,8 +126,12 @@ virsh -c qemu:///system define /mnt/storage/VMs/magicapply-dev-setup/magicapply-
 |---|---|
 | `ANTHROPIC_API_KEY` | Required when `llm.provider: anthropic` in `configs/base_config.yaml`; unnecessary with `mock` or `replay` |
 | `MAGICAPPLY_LIVE_TESTS` | Gate for the `integration` pytest marker |
-| `MAGICAPPLY_LIVE_APPLY` | Additional gate for the live-apply E2E test (see `tests/integration/e2e/test_e2e_live.py`) |
+| `MAGICAPPLY_LIVE_APPLY` | Extra opt-in for the live-apply E2E test (`tests/integration/e2e/test_e2e_live.py`) |
+| `MAGICAPPLY_LIVE_APPLY_PROFILE` | Profile name the live-apply E2E should run against |
+| `MAGICAPPLY_LIVE_APPLY_ROOT` | Optional `--root` override for the live-apply E2E |
 | `MAGICAPPLY_LINKEDIN_TESTS` | Gate for the `linkedin` marker (ToS-sensitive scraping) |
+| `MAGICAPPLY_LLM_RECORD` | Set to `1` when running with `provider: replay` to capture new LLM responses into `configs/llm-fixtures/<key>.yaml` |
+| `MAGICAPPLY_UPDATE_GOLDENS` | Set to `1` to rewrite `tests/goldens/tailoring/*` from the current run |
 | `MAGICAPPLY_HOME` | Overrides the config-root lookup precedence in `src/magicapply/config/paths.py` |
 | `LINKEDIN_LI_AT` | Session cookie for the deferred LinkedIn adapter |
 | `UV_LINK_MODE=copy` | Suppress uv's hardlink warning; `.venv` on virtiofs, cache on local disk |

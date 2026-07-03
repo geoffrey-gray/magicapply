@@ -217,15 +217,17 @@ MagicApply is designed to be **highly configurable**. The following should live 
 
 ## 10. MVP Scope & Roadmap
 
-### Phase 1 (MVP)
+### Phase 1 (MVP) — shipped
 
 - Configuration system with multiple search profiles
-- Job discovery from LinkedIn + custom company URLs
+- Job discovery from LinkedIn (source stubbed; opt-in via `LINKEDIN_LI_AT`) + custom company URLs (JSON-LD)
 - Basic deduplication and scoring
 - Minimal resume tailoring
 - Narrative generation for cover letters
 - Form filling for Greenhouse (initial ATS)
-- Auto-apply with CAPTCHA fallback
+- Auto-apply with CAPTCHA fallback and a `--no-submit`/`--yes-submit` safety guard
+
+See `CLAUDE.md` for the current wired state and `docs/GOF_PATTERNS.md` for the pattern mapping. LinkedIn scraping and Ollama implementations remain stubs pending Phase 2.
 
 ### Phase 2
 
