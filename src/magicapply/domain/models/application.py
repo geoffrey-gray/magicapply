@@ -91,6 +91,19 @@ class Application(BaseModel):
     score_rationale: str | None = None
     error: str | None = None
     attempts: int = 0
+    tailored_path: str | None = None
+    """Directory on disk holding the tailored resume + cover letter for review.
+
+    Populated by the tailoring pipeline. Files live at
+    `<data_dir>/tailored/<application_id>/{resume.yaml,cover_letter.md}`.
+    """
+    dry_run: bool = False
+    """True if the apply flow stopped at the pre-submit guard.
+
+    The row still lands in `APPLIED` (reused terminal state) so callers can
+    treat both real and dry-run applications with one query and split on
+    this flag for reporting.
+    """
     history: list[StateTransition] = Field(default_factory=list)
     discovered_at: datetime = Field(default_factory=_now_utc)
     updated_at: datetime = Field(default_factory=_now_utc)

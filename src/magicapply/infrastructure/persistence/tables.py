@@ -40,6 +40,8 @@ class ApplicationRow(SQLModel, table=True):
     score_rationale: str | None = None
     error: str | None = None
     attempts: int = 0
+    tailored_path: str | None = None
+    dry_run: bool = False
     discovered_at: datetime
     updated_at: datetime
     history_json: str = "[]"

@@ -73,6 +73,19 @@ class SqlApplicationsRepository:
             ).all()
             return [_row_to_domain(r) for r in rows]
 
+    def list_by_state_and_profile(
+        self,
+        state: ApplicationState,
+        profile_name: str,
+    ) -> list[Application]:
+        with Session(self._engine) as session:
+            rows = session.exec(
+                select(ApplicationRow)
+                .where(ApplicationRow.state == state.value)
+                .where(ApplicationRow.profile_name == profile_name)
+            ).all()
+            return [_row_to_domain(r) for r in rows]
+
 
 def _domain_to_row(app: Application) -> ApplicationRow:
     return ApplicationRow(
@@ -84,6 +97,8 @@ def _domain_to_row(app: Application) -> ApplicationRow:
         score_rationale=app.score_rationale,
         error=app.error,
         attempts=app.attempts,
+        tailored_path=app.tailored_path,
+        dry_run=app.dry_run,
         discovered_at=app.discovered_at,
         updated_at=app.updated_at,
         history_json=_dump_history(app.history),
@@ -96,6 +111,8 @@ def _copy_domain_into_row(app: Application, row: ApplicationRow) -> None:
     row.score_rationale = app.score_rationale
     row.error = app.error
     row.attempts = app.attempts
+    row.tailored_path = app.tailored_path
+    row.dry_run = app.dry_run
     row.updated_at = app.updated_at
     row.history_json = _dump_history(app.history)
 
@@ -110,6 +127,8 @@ def _row_to_domain(row: ApplicationRow) -> Application:
         score_rationale=row.score_rationale,
         error=row.error,
         attempts=row.attempts,
+        tailored_path=row.tailored_path,
+        dry_run=row.dry_run,
         discovered_at=row.discovered_at,
         updated_at=row.updated_at,
         history=_load_history(row.history_json),

@@ -41,3 +41,15 @@ class ApplicationsRepository(Protocol):
         """One profile has at most one Application per Job."""
 
     def list_by_state(self, state: ApplicationState) -> list[Application]: ...
+
+    def list_by_state_and_profile(
+        self,
+        state: ApplicationState,
+        profile_name: str,
+    ) -> list[Application]:
+        """Applications in `state` for a single profile.
+
+        Used by the tailoring and apply pipelines to iterate the queue of
+        applications ready for the next stage without pulling in other
+        profiles' work.
+        """
