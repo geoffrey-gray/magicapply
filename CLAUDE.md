@@ -4,24 +4,46 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current State
 
-**This repository is pre-implementation.** As of writing, the only file present is `ARCHITECTURE.md` — a design document. There is no source code, no `pyproject.toml`, no tests, and no `.git` directory yet. Any request to "run tests," "build," or "install" cannot be satisfied against existing code; the first task is to scaffold the project described in `ARCHITECTURE.md`.
+Phases 1–10 have shipped. The tree is populated: source under `src/magicapply/`, tests under `tests/`, config examples under `configs/`, a working `pyproject.toml`, and a live git history.
 
-When bootstrapping, follow the project layout, tech stack, and naming from `ARCHITECTURE.md` (§5, §8) rather than inventing new structure.
+**What's wired end-to-end today:**
+- `magicapply discover <profile>` — sources → in-run dedup → repo dedup → prefilter → LLM score → persist to SQLite (`src/magicapply/pipelines/discovery.py`).
+- Config loading + cross-ref validation + multi-profile support (`src/magicapply/config/`).
+- Anthropic LLM provider with prompt caching (`src/magicapply/infrastructure/llm/providers/anthropic.py`).
+- Custom-URL and career-page JSON-LD sources (`src/magicapply/infrastructure/sources/custom_url.py`).
+- SQLite repositories for jobs + applications (`src/magicapply/infrastructure/persistence/`).
+- CLI: `discover`, `run`, `apply`, `status`, `config validate`, `profiles list`, `doctor`, `version`.
+
+**What's implemented but not yet wired:**
+- `Tailorer` (resume summary rewrite) and `NarrativeEngine` (cover letter, screening answers) exist under `src/magicapply/domain/resumes/` but no pipeline calls them.
+- `ApplyPipeline` + `GreenhouseHandler` exist under `src/magicapply/pipelines/apply.py` and `src/magicapply/infrastructure/browser/ats/` but the `apply` CLI command is a stub; there is no Playwright session lifecycle.
+- The Ollama provider raises `NotImplementedError`.
+
+**What's deferred (Phase 2):** LinkedIn scraping, Indeed, Glassdoor, Lever/Workday/Ashby handlers, keyword bank, review UI.
+
+`dryrun_plan.md` (repo root) tracks the current work: an end-to-end dry-run test harness that wires tailoring + browser submission into the pipeline with the LLM stubbed.
+
+## Running in the dev VM
+
+MagicApply builds and runs inside a dedicated libvirt VM — see `docs/VM_DEV.md`. Any `pytest`, `magicapply`, or `playwright` invocation should be routed through `ssh magicapply-dev 'cd ~/magicapply && uv run …'`. Running these on the host uses the wrong Python and misses the Playwright environment.
 
 ## Project: MagicApply
 
-Config-driven, terminal-first job application automation tool. Discovers jobs across platforms, scores them, tailors resumes/cover letters with an LLM, and auto-applies via browser automation. Runs locally on Linux.
+Config-driven, terminal-first job application automation tool. Discovers jobs across platforms, scores them, tailors resumes/cover letters with an LLM, and auto-applies via browser automation. Runs locally on Linux (in the dev VM).
 
-## Planned Tech Stack (from ARCHITECTURE.md §8)
+## Tech Stack
 
-- Python 3.11+
+Actual `pyproject.toml` dependencies (Phase 10):
+
+- Python 3.11+ (dev VM runs 3.12 via uv)
 - CLI: Typer + Rich
 - Config: Pydantic v2 + PyYAML
 - Browser automation: Playwright
-- LLM: Claude API (primary), Ollama (optional)
-- Storage: SQLite
-- Testing: pytest
-- Packaging: `pyproject.toml`
+- LLM: `anthropic` (primary), Ollama stub (Phase 2)
+- Storage: SQLite via SQLModel
+- HTTP: httpx
+- Testing: pytest + pytest-asyncio
+- Packaging: `pyproject.toml` (hatchling)
 
 ## Architectural Guardrails
 
@@ -35,11 +57,15 @@ These principles come from `ARCHITECTURE.md` and should shape design decisions:
 - **Repository pattern for persistence** — domain code talks to repository interfaces, SQLite lives behind them in `infrastructure/persistence/`.
 - **Multiple search profiles** — each profile has its own base resume and search criteria; nothing should assume a single global profile.
 
-## Planned CLI Surface (ARCHITECTURE.md §7)
+## CLI Surface (ARCHITECTURE.md §7)
 
-`magicapply run | discover | apply <job-id> | review | config validate | profiles list | status`
+`magicapply run | discover | apply <job-id> | review | config validate | profiles list | status | doctor`
 
-When adding a Typer command, wire it into this surface rather than inventing parallel entry points.
+When adding a Typer command, wire it into this surface rather than inventing parallel entry points. `run`, `discover`, `apply` register at the top level via `src/magicapply/cli/main.py`; `config`, `profiles`, `status` are sub-typers.
+
+## Composition root
+
+Dependencies are wired explicitly in `src/magicapply/cli/composition.py` (no DI framework). CLI commands call helpers there (`build_repos`, `build_sources_for_profile`, `build_scorer`, and so on) rather than constructing infrastructure classes directly. Add new composition helpers here when a command needs a new collaborator.
 
 ## MVP Scope (Phase 1)
 
