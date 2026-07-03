@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -16,6 +17,8 @@ from magicapply.cli.commands import config as config_cmds
 from magicapply.cli.commands import pipeline as pipeline_cmds
 from magicapply.cli.commands import profiles as profiles_cmds
 from magicapply.cli.commands import status as status_cmds
+from magicapply.config import ConfigError, load_config
+from magicapply.config.paths import default_config_root
 
 app = typer.Typer(
     name="magicapply",
@@ -42,12 +45,46 @@ def version() -> None:
 
 
 @app.command()
-def doctor() -> None:
-    """Report Python, package, and cwd — a fast sanity check for the local install."""
+def doctor(
+    root: Annotated[Path | None, typer.Option(help="Config root")] = None,
+) -> None:
+    """Report install + config + Chromium state — non-gating diagnostic."""
     typer.echo(f"magicapply {__version__}")
     typer.echo(f"python     {sys.version.split()[0]} ({sys.executable})")
     typer.echo(f"package    {Path(__file__).resolve().parents[1]}")
     typer.echo(f"cwd        {Path.cwd()}")
+    typer.echo(f"chromium   {_chromium_status()}")
+
+    resolved = root.resolve() if root else default_config_root()
+    typer.echo(f"config root {resolved}")
+    try:
+        loaded = load_config(resolved)
+    except ConfigError as exc:
+        # `doctor` is a diagnostic; never gate on config validity.
+        typer.echo(f"config     [invalid] {exc}")
+        return
+
+    typer.echo(f"llm provider {loaded.base.llm.provider}")
+    data_dir = loaded.data_dir()
+    typer.echo(f"data dir   {data_dir}")
+    db_path = data_dir / "magicapply.sqlite3"
+    if db_path.exists():
+        typer.echo(f"db         {db_path} ({db_path.stat().st_size} bytes)")
+    else:
+        typer.echo(f"db         {db_path} (not created yet)")
+
+
+def _chromium_status() -> str:
+    """Report whether Playwright's Chromium is installed, without running install."""
+    cache = Path.home() / ".cache" / "ms-playwright"
+    if not cache.exists():
+        return "MISSING (run: uv run playwright install chromium)"
+    installed = any(cache.glob("chromium-*")) or any(
+        cache.glob("chromium_headless_shell-*")
+    )
+    if installed:
+        return f"PRESENT ({cache})"
+    return "MISSING (run: uv run playwright install chromium)"
 
 
 if __name__ == "__main__":

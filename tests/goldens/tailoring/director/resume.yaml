@@ -1,0 +1,23 @@
+base_name: E2E Applicant
+job_id: <REDACTED>
+name: E2E Applicant
+email: e2e@example.test
+phone: 555-0100
+location: null
+links: {}
+summary: Engineer with focused experience relevant to Director of Engineering. Track
+  record delivering measurable outcomes at growth-stage teams.
+experience:
+- company: Prior
+  title: Engineer
+  start: 2020-01
+  end: null
+  location: null
+  bullets:
+  - Built things.
+education: []
+skills:
+- python
+- distributed systems
+changes:
+- 'summary rewritten: aligned to JD focus'

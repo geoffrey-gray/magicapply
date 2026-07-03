@@ -10,10 +10,12 @@ dry-run).
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from magicapply.cli.main import app
@@ -26,6 +28,8 @@ from magicapply.infrastructure.persistence.repositories.applications import (
     SqlApplicationsRepository,
 )
 from tests.integration.e2e.fixture_server import FixtureServer
+
+_GOLDENS_ROOT = Path(__file__).resolve().parents[2] / "goldens" / "tailoring"
 
 runner = CliRunner()
 
@@ -140,6 +144,62 @@ def _load_applied(tmp_path: Path) -> list:
     return applied
 
 
+# --- goldens ------------------------------------------------------------------
+
+
+_UPDATE_GOLDENS = os.environ.get("MAGICAPPLY_UPDATE_GOLDENS") == "1"
+
+# Cover letter -> slug lookup. The shape-aware mock echoes the parsed job
+# title into the letter, so a simple substring is enough.
+_TITLE_TO_SLUG = {
+    "Senior Backend Engineer": "senior-backend",
+    "Director of Engineering": "director",
+}
+
+
+def _slug_from_cover_letter(cover: str) -> str:
+    for title, slug in _TITLE_TO_SLUG.items():
+        if title in cover:
+            return slug
+    raise AssertionError(f"cover letter matches no known fixture job: {cover[:120]!r}")
+
+
+def _redact_job_id(resume_dict: dict) -> dict:
+    """Return a copy with the volatile job_id normalized."""
+    out = dict(resume_dict)
+    out["job_id"] = "<REDACTED>"
+    return out
+
+
+def _check_tailored_goldens(tmp_path: Path) -> None:
+    for app_dir in sorted((tmp_path / "data" / "tailored").iterdir()):
+        actual_resume = _redact_job_id(
+            yaml.safe_load((app_dir / "resume.yaml").read_text())
+        )
+        actual_cover = (app_dir / "cover_letter.md").read_text()
+        slug = _slug_from_cover_letter(actual_cover)
+        golden_dir = _GOLDENS_ROOT / slug
+
+        if _UPDATE_GOLDENS:
+            golden_dir.mkdir(parents=True, exist_ok=True)
+            (golden_dir / "resume.yaml").write_text(
+                yaml.safe_dump(actual_resume, sort_keys=False, allow_unicode=True)
+            )
+            (golden_dir / "cover_letter.md").write_text(actual_cover)
+            continue
+
+        golden_resume = yaml.safe_load(
+            (golden_dir / "resume.yaml").read_text()
+        )
+        assert actual_resume == golden_resume, (
+            f"tailored resume drift for {slug}; MAGICAPPLY_UPDATE_GOLDENS=1 to regen"
+        )
+        golden_cover = (golden_dir / "cover_letter.md").read_text()
+        assert actual_cover == golden_cover, (
+            f"cover letter drift for {slug}; MAGICAPPLY_UPDATE_GOLDENS=1 to regen"
+        )
+
+
 class TestE2EDryRun:
     def test_full_pipeline_dry_run_default(
         self, tmp_path: Path, fixture_server: FixtureServer
@@ -162,6 +222,13 @@ class TestE2EDryRun:
 
         artifacts = sorted((tmp_path / "data" / "tailored").glob("*/resume.yaml"))
         assert len(artifacts) == 2
+
+        # Golden-file assertions for the two tailored artifacts. The mock
+        # LLM is deterministic given identical prompts, so both the summary
+        # and the cover letter are stable byte-for-byte. Job_id is a hash of
+        # the fixture URL and therefore changes every run — redact it before
+        # comparing.
+        _check_tailored_goldens(tmp_path)
 
         # Step 3: run — real Chromium drives the fixture form, stops one
         # click short of Submit (default --no-submit).
