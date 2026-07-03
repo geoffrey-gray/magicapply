@@ -74,6 +74,10 @@ class ApplyPipeline:
 
         application.transition_to(target, reason=result.error or "submitted")
         application.error = result.error
+        # A successful dry-run lands in the APPLIED terminal state so the
+        # pipeline plumbing stays uniform; the flag on the row is what tells
+        # a real submission from a dry-run one.
+        application.dry_run = application_data.dry_run
         self._apps.save(application)
 
         return ApplyReport(application.id, application.state, result.error)

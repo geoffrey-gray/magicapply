@@ -35,7 +35,15 @@ class PageDriver(Protocol):
 
 
 class ApplicationData(BaseModel):
-    """Everything a handler needs to fill and submit one application."""
+    """Everything a handler needs to fill and submit one application.
+
+    ``dry_run`` toggles the pre-submit short-circuit in
+    ``BaseATSHandler.apply``: when True, the template method navigates and
+    fills every field but stops one click short of the submit button and
+    reports success with a marker error. The pipeline copies the flag onto
+    the Application row so a downstream ``status`` split can distinguish
+    real applications from dry runs.
+    """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
@@ -43,6 +51,7 @@ class ApplicationData(BaseModel):
     static_answers: StaticAnswers
     tailored_resume: TailoredResume
     cover_letter: str | None = None
+    dry_run: bool = False
 
 
 class ApplicationResult(BaseModel):
@@ -96,6 +105,16 @@ class BaseATSHandler:
                 return ApplicationResult(
                     state="needs_intervention",
                     error=f"CAPTCHA detected before submit: {captcha}",
+                )
+
+            if data.dry_run:
+                # Full application short of the click. Same terminal shape as
+                # a real submit; the Application row's dry_run flag is what
+                # distinguishes downstream reporting.
+                return ApplicationResult(
+                    state="applied",
+                    submitted_url=getattr(page, "url", None),
+                    error="dry-run: submit skipped",
                 )
 
             self._submit(page, data)

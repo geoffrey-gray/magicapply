@@ -73,6 +73,33 @@ class TestGreenhouseFlow:
         assert "selector not found" in (result.error or "")
 
 
+class TestDryRun:
+    def test_dry_run_short_circuits_submit(self) -> None:
+        page = FakePage()
+        data = _data()
+        data = data.model_copy(update={"dry_run": True})
+        result = GreenhouseHandler().apply(page, data)
+
+        # The flow still returns "applied" so the caller's terminal state
+        # transition works uniformly.
+        assert result.state == "applied"
+        assert "dry-run" in (result.error or "")
+
+        # Fills happened (identity, cover letter) but the submit click did NOT.
+        assert any(
+            a[0] == "fill" and a[1][0] == "#first_name" for a in page.actions
+        )
+        assert ("click", ("input[type='submit']",)) not in page.actions
+
+    def test_dry_run_still_catches_captcha_first(self) -> None:
+        page = FakePage(html='<iframe src="google.com/recaptcha"></iframe>')
+        data = _data().model_copy(update={"dry_run": True})
+        result = GreenhouseHandler().apply(page, data)
+        # CAPTCHA branch wins over dry-run branch.
+        assert result.state == "needs_intervention"
+        assert "CAPTCHA" in (result.error or "")
+
+
 class TestBaseHandlerContract:
     def test_matches_must_be_overridden(self) -> None:
         class Minimal(BaseATSHandler):

@@ -126,12 +126,22 @@ def apply(
     job_id: Annotated[str, typer.Argument(help="Job id (16-char hash)")],
     root: Annotated[Path | None, typer.Option(help="Config root")] = None,
     headless: Annotated[bool, typer.Option(help="Run Chromium headless")] = True,
+    no_submit: Annotated[
+        bool,
+        typer.Option(
+            "--no-submit/--yes-submit",
+            help="--no-submit (default) stops one click short of Submit; "
+            "--yes-submit performs a real submission.",
+        ),
+    ] = True,
 ) -> None:
     """Apply to one job. Requires the application to be in TAILORED state.
 
-    Note: this command performs a real submission if run against a live ATS.
-    The ``--no-submit`` / ``--yes-submit`` safety flags land in the next
-    commit — until then only exercise this against local fixture URLs.
+    Default is a dry-run: the flow navigates and fills every field but does
+    not click Submit. The Application still transitions to APPLIED so the
+    downstream tracking works uniformly; ``dry_run=True`` on the row lets
+    ``magicapply status`` split real submissions from dry runs. Pass
+    ``--yes-submit`` to actually submit.
     """
     loaded = _load(root)
     jobs_repo, apps_repo = build_repos(loaded.data_dir())
@@ -159,7 +169,7 @@ def apply(
         console.print(f"[red]job {application.job_id} missing from DB[/red]")
         raise typer.Exit(code=1)
 
-    data = build_application_data(loaded, application, job)
+    data = build_application_data(loaded, application, job, dry_run=no_submit)
     pipeline = build_apply_pipeline(apps_repo)
 
     with PlaywrightSession(headless=headless) as session:
@@ -173,5 +183,7 @@ def apply(
 
     console.print(f"application: {report.application_id}")
     console.print(f"final state: [bold]{report.final_state.value}[/bold]")
+    if no_submit:
+        console.print("[cyan]dry-run:[/cyan] submit was skipped")
     if report.error:
         console.print(f"[yellow]error:[/yellow] {report.error}")

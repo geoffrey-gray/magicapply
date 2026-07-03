@@ -176,23 +176,61 @@ def patched_session(monkeypatch: pytest.MonkeyPatch) -> _FakePage:
 
 
 class TestHappyPath:
-    def test_greenhouse_apply_calls_expected_selectors(
+    def test_yes_submit_clicks_submit(
         self, tmp_path: Path, patched_session: _FakePage
     ) -> None:
+        cfg = _write_valid_repo(tmp_path)
+        job_id, _ = _seed_tailored(tmp_path)
+
+        # Explicit --yes-submit; default is dry-run now.
+        result = runner.invoke(
+            app, ["apply", job_id, "--root", str(cfg), "--yes-submit"]
+        )
+
+        assert result.exit_code == 0, result.stdout
+        assert ("goto", "https://boards.greenhouse.io/acme/jobs/1") in patched_session.calls
+        fills = {c[1] for c in patched_session.calls if c[0] == "fill"}
+        assert "#first_name" in fills
+        assert "#last_name" in fills
+        assert "#email" in fills
+        # Real submit -> click happens.
+        assert ("click", "input[type='submit']") in patched_session.calls
+        assert "applied" in result.stdout
+
+    def test_default_no_submit_skips_click_but_marks_applied(
+        self, tmp_path: Path, patched_session: _FakePage
+    ) -> None:
+        from magicapply.domain.models.application import ApplicationState
+        from magicapply.infrastructure.persistence.db import (
+            create_engine_from_url,
+            sqlite_url_for,
+        )
+        from magicapply.infrastructure.persistence.repositories.applications import (
+            SqlApplicationsRepository,
+        )
+
         cfg = _write_valid_repo(tmp_path)
         job_id, app_id = _seed_tailored(tmp_path)
 
         result = runner.invoke(app, ["apply", job_id, "--root", str(cfg)])
 
         assert result.exit_code == 0, result.stdout
-        # GreenhouseHandler navigates, fills identity fields, clicks submit.
-        assert ("goto", "https://boards.greenhouse.io/acme/jobs/1") in patched_session.calls
+        # Filled the form but did NOT click submit.
         fills = {c[1] for c in patched_session.calls if c[0] == "fill"}
         assert "#first_name" in fills
-        assert "#last_name" in fills
-        assert "#email" in fills
-        assert ("click", "input[type='submit']") in patched_session.calls
-        assert "applied" in result.stdout
+        assert ("click", "input[type='submit']") not in patched_session.calls
+        assert "dry-run" in result.stdout
+
+        # Application still transitions to APPLIED with dry_run=True.
+        engine = create_engine_from_url(
+            sqlite_url_for(tmp_path / "data" / "magicapply.sqlite3")
+        )
+        apps_repo = SqlApplicationsRepository(engine)
+        reloaded = apps_repo.get(app_id)
+        engine.dispose()
+        assert reloaded is not None
+        assert reloaded.state is ApplicationState.APPLIED
+        assert reloaded.dry_run is True
 
 
 class TestErrorPaths:

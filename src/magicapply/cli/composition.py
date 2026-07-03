@@ -120,12 +120,15 @@ def build_application_data(
     loaded: LoadedConfig,
     app: Application,
     job: Job,
+    *,
+    dry_run: bool = False,
 ) -> ApplicationData:
     """Assemble the input the ATS handler needs for one Application.
 
     Reads the tailored resume + cover letter from disk (Phase D wrote them
     under ``app.tailored_path``) and combines them with the profile's static
-    answers from ``base_config.yaml``.
+    answers from ``base_config.yaml``. ``dry_run`` toggles the pre-submit
+    short-circuit in the ATS template method (Phase F).
     """
     if not app.tailored_path:
         raise ValueError(f"application {app.id} has no tailored_path")
@@ -140,6 +143,7 @@ def build_application_data(
         static_answers=loaded.base.static_answers,
         tailored_resume=tailored,
         cover_letter=cover_text or None,
+        dry_run=dry_run,
     )
 
 

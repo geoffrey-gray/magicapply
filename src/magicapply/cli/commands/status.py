@@ -39,11 +39,18 @@ def status(
     loaded = _load_or_exit(root)
     _jobs, apps_repo = build_repos(loaded.data_dir())
 
-    table = Table("state", "count")
-    counts: dict[ApplicationState, int] = {}
+    table = Table("state", "count", "note")
     for state in ApplicationState:
-        counts[state] = len(apps_repo.list_by_state(state))
-        table.add_row(state.value, str(counts[state]))
+        apps_in_state = apps_repo.list_by_state(state)
+        total = len(apps_in_state)
+        note = ""
+        # The APPLIED bucket may mix real submissions and dry-runs; split them
+        # so the operator can tell which is which at a glance.
+        if state is ApplicationState.APPLIED and total:
+            dry = sum(1 for a in apps_in_state if a.dry_run)
+            real = total - dry
+            note = f"real: {real}, dry_run: {dry}"
+        table.add_row(state.value, str(total), note)
     console.print(table)
 
 
