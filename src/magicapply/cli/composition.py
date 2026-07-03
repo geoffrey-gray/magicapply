@@ -9,6 +9,7 @@ construct infrastructure classes themselves.
 from __future__ import annotations
 
 import logging
+from functools import partial
 from pathlib import Path
 
 import yaml
@@ -112,8 +113,22 @@ def build_tailoring_pipeline(
     )
 
 
-def build_apply_pipeline(apps_repo: SqlApplicationsRepository) -> ApplyPipeline:
-    return ApplyPipeline(applications_repo=apps_repo)
+def build_apply_pipeline(
+    loaded: LoadedConfig,
+    apps_repo: SqlApplicationsRepository,
+    jobs_repo: SqlJobsRepository,
+) -> ApplyPipeline:
+    """Build an ApplyPipeline wired for both single-job and batch use.
+
+    Injects a data_builder closure over ``loaded`` so ``apply_batch`` can
+    construct ApplicationData per application without threading the config
+    through the pipeline signature.
+    """
+    return ApplyPipeline(
+        applications_repo=apps_repo,
+        jobs_repo=jobs_repo,
+        data_builder=partial(build_application_data, loaded),
+    )
 
 
 def build_application_data(

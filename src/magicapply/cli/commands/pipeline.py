@@ -109,16 +109,108 @@ def tailor(
 def run(
     profile: Annotated[str, typer.Argument(help="Profile name")],
     root: Annotated[Path | None, typer.Option(help="Config root")] = None,
+    headless: Annotated[bool, typer.Option(help="Run Chromium headless")] = True,
+    no_submit: Annotated[
+        bool,
+        typer.Option(
+            "--no-submit/--yes-submit",
+            help="--no-submit (default) stops one click short of Submit for every "
+            "application; --yes-submit performs real submissions.",
+        ),
+    ] = True,
 ) -> None:
-    """Full cycle: discover + score + apply.
+    """Full cycle: discover → tailor → apply, in one command.
 
-    Apply is not wired end-to-end yet — surface that so the user knows.
+    Sequences the three pipelines for a profile: DiscoveryPipeline surfaces
+    and scores new jobs, TailoringPipeline rewrites the summary + generates
+    a cover letter for every scored application, and ApplyPipeline.apply_batch
+    drives every TAILORED application through the ATS handler in a single
+    shared Chromium session. Default is dry-run (see the ``apply`` command
+    for details); pass ``--yes-submit`` to actually click Submit.
     """
-    discover(profile=profile, root=root)
-    console.print(
-        "[yellow]note:[/yellow] apply phase is not wired in this build. "
-        "See ROADMAP for Phase 9 completion work."
+    loaded = _load(root)
+    profile_cfg = loaded.profile(profile)
+
+    jobs_repo, apps_repo = build_repos(loaded.data_dir())
+
+    # --- discover ---
+    sources = build_sources_for_profile(loaded, profile_cfg)
+    scoring = profile_cfg.scoring or loaded.base.scoring
+    scorer = build_scorer(loaded, profile_cfg, scoring)
+    discover_report = DiscoveryPipeline(
+        sources=sources,
+        jobs_repo=jobs_repo,
+        applications_repo=apps_repo,
+        scorer=scorer,
+        profile_name=profile_cfg.name,
+        score_threshold=scoring.threshold,
+    ).run()
+    _render_discover(discover_report)
+
+    # --- tailor ---
+    tailor_report = build_tailoring_pipeline(
+        loaded, profile_cfg, apps_repo, jobs_repo
+    ).run()
+    _render_tailor(tailor_report)
+
+    # --- apply ---
+    tailored_ready = apps_repo.list_by_state_and_profile(
+        ApplicationState.TAILORED, profile_cfg.name
     )
+    if not tailored_ready:
+        console.print("[dim]no TAILORED applications; skipping apply phase[/dim]")
+        return
+
+    pipeline = build_apply_pipeline(loaded, apps_repo, jobs_repo)
+    with PlaywrightSession(headless=headless) as session:
+        apply_reports = pipeline.apply_batch(
+            session=session,
+            profile_name=profile_cfg.name,
+            dry_run=no_submit,
+        )
+    _render_apply(apply_reports, dry_run=no_submit)
+
+
+def _render_discover(report) -> None:
+    console.print(f"[green]discovered:[/green] {report.discovered}")
+    console.print(f"[yellow]duplicates:[/yellow] {report.duplicates_in_run}")
+    console.print(f"[dim]already seen:[/dim] {report.already_seen}")
+    console.print(f"[green]scored:[/green] {report.scored}")
+    console.print(f"[red]rejected:[/red] {report.rejected_by_threshold}")
+    if report.source_errors:
+        console.print("[red]source errors:[/red]")
+        for err in report.source_errors:
+            console.print(f"  - {err}")
+
+
+def _render_tailor(report) -> None:
+    console.print(f"[green]tailored:[/green] {report.tailored}")
+    if report.missing_job:
+        console.print(f"[yellow]missing job:[/yellow] {report.missing_job}")
+    if report.errors:
+        console.print("[red]tailor errors:[/red]")
+        for err in report.errors:
+            console.print(f"  - {err}")
+
+
+def _render_apply(reports, *, dry_run: bool) -> None:
+    if not reports:
+        console.print("[dim]apply: no reports[/dim]")
+        return
+    applied = sum(1 for r in reports if r.final_state is ApplicationState.APPLIED)
+    intervention = sum(
+        1 for r in reports if r.final_state is ApplicationState.NEEDS_INTERVENTION
+    )
+    failed = sum(1 for r in reports if r.final_state is ApplicationState.FAILED)
+    console.print(f"[green]applied:[/green] {applied}", end="")
+    if dry_run:
+        console.print("  [cyan](dry-run)[/cyan]")
+    else:
+        console.print()
+    if intervention:
+        console.print(f"[yellow]needs intervention:[/yellow] {intervention}")
+    if failed:
+        console.print(f"[red]failed:[/red] {failed}")
 
 
 @app.command()
@@ -170,7 +262,7 @@ def apply(
         raise typer.Exit(code=1)
 
     data = build_application_data(loaded, application, job, dry_run=no_submit)
-    pipeline = build_apply_pipeline(apps_repo)
+    pipeline = build_apply_pipeline(loaded, apps_repo, jobs_repo)
 
     with PlaywrightSession(headless=headless) as session:
         page = session.new_page()
