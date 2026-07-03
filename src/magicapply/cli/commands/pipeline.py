@@ -15,6 +15,8 @@ import typer
 from rich.console import Console
 
 from magicapply.cli.composition import (
+    build_application_data,
+    build_apply_pipeline,
     build_repos,
     build_scorer,
     build_sources_for_profile,
@@ -22,6 +24,8 @@ from magicapply.cli.composition import (
 )
 from magicapply.config import ConfigError, LoadedConfig, load_config
 from magicapply.config.paths import default_config_root
+from magicapply.domain.models.application import ApplicationState
+from magicapply.infrastructure.browser.session import PlaywrightSession
 from magicapply.pipelines.discovery import DiscoveryPipeline
 
 console = Console()
@@ -121,10 +125,53 @@ def run(
 def apply(
     job_id: Annotated[str, typer.Argument(help="Job id (16-char hash)")],
     root: Annotated[Path | None, typer.Option(help="Config root")] = None,
+    headless: Annotated[bool, typer.Option(help="Run Chromium headless")] = True,
 ) -> None:
-    """Manually apply to a specific job."""
-    console.print(
-        f"[yellow]apply {job_id}[/yellow] is not implemented — "
-        "requires the Playwright session stack from Phase 9 completion."
-    )
-    raise typer.Exit(code=1)
+    """Apply to one job. Requires the application to be in TAILORED state.
+
+    Note: this command performs a real submission if run against a live ATS.
+    The ``--no-submit`` / ``--yes-submit`` safety flags land in the next
+    commit — until then only exercise this against local fixture URLs.
+    """
+    loaded = _load(root)
+    jobs_repo, apps_repo = build_repos(loaded.data_dir())
+
+    # A job may have TAILORED applications under more than one profile; find
+    # them all and require a unique match.
+    matches = [
+        a for a in apps_repo.list_by_state(ApplicationState.TAILORED)
+        if a.job_id == job_id
+    ]
+    if not matches:
+        console.print(f"[red]no TAILORED application for job {job_id}[/red]")
+        raise typer.Exit(code=1)
+    if len(matches) > 1:
+        profiles = sorted({a.profile_name for a in matches})
+        console.print(
+            f"[red]multiple TAILORED applications for job {job_id} "
+            f"(profiles: {profiles}); ambiguous[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    application = matches[0]
+    job = jobs_repo.get(application.job_id)
+    if job is None:
+        console.print(f"[red]job {application.job_id} missing from DB[/red]")
+        raise typer.Exit(code=1)
+
+    data = build_application_data(loaded, application, job)
+    pipeline = build_apply_pipeline(apps_repo)
+
+    with PlaywrightSession(headless=headless) as session:
+        page = session.new_page()
+        report = pipeline.apply_one(
+            page=page,
+            application=application,
+            job=job,
+            application_data=data,
+        )
+
+    console.print(f"application: {report.application_id}")
+    console.print(f"final state: [bold]{report.final_state.value}[/bold]")
+    if report.error:
+        console.print(f"[yellow]error:[/yellow] {report.error}")

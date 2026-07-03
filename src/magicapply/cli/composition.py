@@ -16,9 +16,12 @@ import yaml
 from magicapply.config import LoadedConfig, Profile
 from magicapply.config.models import ScoringConfig
 from magicapply.domain.jobs.scoring import JobScorer, LLMScorer, Prefilter
-from magicapply.domain.models.resume import BaseResume
+from magicapply.domain.models.application import Application
+from magicapply.domain.models.job import Job
+from magicapply.domain.models.resume import BaseResume, TailoredResume
 from magicapply.domain.resumes.narrative import NarrativeEngine
 from magicapply.domain.resumes.tailor import Tailorer
+from magicapply.infrastructure.browser.ats.base import ApplicationData
 from magicapply.infrastructure.llm import build_client
 from magicapply.infrastructure.persistence import (
     SqlApplicationsRepository,
@@ -29,6 +32,7 @@ from magicapply.infrastructure.persistence import (
 from magicapply.infrastructure.persistence.db import sqlite_url_for
 from magicapply.infrastructure.sources import build_source
 from magicapply.infrastructure.sources.base import JobSource
+from magicapply.pipelines.apply import ApplyPipeline
 from magicapply.pipelines.tailoring import TailoringPipeline
 
 logger = logging.getLogger(__name__)
@@ -105,6 +109,37 @@ def build_tailoring_pipeline(
         narrative=build_narrative(loaded, profile),
         profile_name=profile.name,
         data_dir=loaded.data_dir(),
+    )
+
+
+def build_apply_pipeline(apps_repo: SqlApplicationsRepository) -> ApplyPipeline:
+    return ApplyPipeline(applications_repo=apps_repo)
+
+
+def build_application_data(
+    loaded: LoadedConfig,
+    app: Application,
+    job: Job,
+) -> ApplicationData:
+    """Assemble the input the ATS handler needs for one Application.
+
+    Reads the tailored resume + cover letter from disk (Phase D wrote them
+    under ``app.tailored_path``) and combines them with the profile's static
+    answers from ``base_config.yaml``.
+    """
+    if not app.tailored_path:
+        raise ValueError(f"application {app.id} has no tailored_path")
+
+    tailored_dir = Path(app.tailored_path)
+    tailored = TailoredResume.model_validate(
+        yaml.safe_load((tailored_dir / "resume.yaml").read_text())
+    )
+    cover_text = (tailored_dir / "cover_letter.md").read_text().strip()
+    return ApplicationData(
+        job_url=job.url,
+        static_answers=loaded.base.static_answers,
+        tailored_resume=tailored,
+        cover_letter=cover_text or None,
     )
 
 
