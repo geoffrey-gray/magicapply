@@ -156,10 +156,17 @@ def build_application_data(
         yaml.safe_load((tailored_dir / "resume.yaml").read_text())
     )
     cover_text = (tailored_dir / "cover_letter.md").read_text().strip()
+    resume_docx = tailored_dir / "resume.docx"
+    if not resume_docx.exists():
+        raise FileNotFoundError(
+            f"application {app.id}: rendered DOCX missing at {resume_docx} — "
+            f"re-run `magicapply tailor` to regenerate"
+        )
     return ApplicationData(
         job_url=job.url,
         static_answers=loaded.base.static_answers,
         tailored_resume=tailored,
+        resume_docx_path=resume_docx,
         cover_letter=cover_text or None,
         dry_run=dry_run,
     )

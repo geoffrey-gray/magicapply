@@ -49,6 +49,9 @@ class _FakePage:
     def content(self) -> str:
         return "<html>ok</html>"
 
+    def set_input_files(self, selector: str, files: str) -> None:
+        self.calls.append(("set_input_files", selector, files))
+
 
 class _FakeSession:
     """new_page() returns a fresh FakePage each time, tracked on .pages."""
@@ -71,6 +74,7 @@ def _data_builder(app: Application, job: Job, *, dry_run: bool) -> ApplicationDa
         job_url=job.url,
         static_answers=_static_answers(),
         tailored_resume=TailoredResume(base_name="R", job_id=job.id, name="Test Person"),
+        resume_docx_path=Path(app.tailored_path or "") / "resume.docx",
         cover_letter="Cover.",
         dry_run=dry_run,
     )

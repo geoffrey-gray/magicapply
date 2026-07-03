@@ -21,6 +21,12 @@ from magicapply.infrastructure.browser.ats.base import (
 
 _MATCH_HOSTS = ("greenhouse.io", "job-boards.greenhouse.io", "boards.greenhouse.io")
 
+_RESUME_FILE_SELECTORS = (
+    "input[type='file'][name='resume']",
+    "input[type='file'][id*='resume']",
+    "input[type='file']",
+)
+
 
 class GreenhouseHandler(BaseATSHandler):
     @classmethod
@@ -42,11 +48,22 @@ class GreenhouseHandler(BaseATSHandler):
 
     def _fill_dynamic(self, page: PageDriver, data: ApplicationData) -> None:
         # Cover letter often goes into a "cover_letter_text" textarea.
-        # Per-role custom fields need per-form discovery; stub for now.
+        # Per-role custom fields need per-form discovery; Phase L wires the
+        # AnswerRouter here for screening questions.
         if data.cover_letter:
             # Some Greenhouse forms don't expose a cover letter field.
             with contextlib.suppress(Exception):
                 page.fill("textarea[name='cover_letter_text']", data.cover_letter)
+
+        # Resume upload. Greenhouse's file input naming varies across
+        # employers; try the most-specific candidate first and fall back
+        # to a generic file input. First selector that does not raise wins.
+        for selector in _RESUME_FILE_SELECTORS:
+            try:
+                page.set_input_files(selector, str(data.resume_docx_path))
+                break
+            except Exception:  # noqa: BLE001
+                continue
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
         page.click("input[type='submit']")

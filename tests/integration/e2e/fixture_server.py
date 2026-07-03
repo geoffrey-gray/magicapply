@@ -19,9 +19,12 @@ looks for; the CAPTCHA branch in ``BaseATSHandler.apply`` never fires.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import urllib.parse
 from collections.abc import Iterator
+from email import message_from_bytes
+from email.policy import HTTP as EMAIL_HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -99,13 +102,14 @@ _APPLY_FORM_HTML = """\
   <head><title>Apply</title></head>
   <body>
     <h1>Apply</h1>
-    <form method="POST" action="/submit">
+    <form method="POST" action="/submit" enctype="multipart/form-data">
       <label>First name <input id="first_name" name="first_name"></label>
       <label>Last name <input id="last_name" name="last_name"></label>
       <label>Email <input id="email" name="email"></label>
       <label>Phone <input id="phone" name="phone"></label>
       <label>LinkedIn <input name="linkedin_url"></label>
       <label>Cover letter <textarea name="cover_letter_text"></textarea></label>
+      <label>Resume <input type="file" name="resume"></label>
       <input type="submit" value="Apply">
     </form>
   </body>
@@ -147,11 +151,18 @@ class FixtureServer:
             def do_POST(self) -> None:  # noqa: N802
                 if self.path == "/submit":
                     length = int(self.headers.get("Content-Length", 0))
-                    body = self.rfile.read(length).decode("utf-8")
-                    parsed = urllib.parse.parse_qs(body, keep_blank_values=True)
-                    submissions.append(
-                        {k: (v[0] if v else "") for k, v in parsed.items()}
-                    )
+                    body = self.rfile.read(length)
+                    content_type = self.headers.get("Content-Type", "")
+                    if content_type.startswith("multipart/form-data"):
+                        fields, files = _parse_multipart(content_type, body)
+                        submissions.append({**fields, "_files": files})
+                    else:
+                        parsed = urllib.parse.parse_qs(
+                            body.decode("utf-8"), keep_blank_values=True
+                        )
+                        submissions.append(
+                            {k: (v[0] if v else "") for k, v in parsed.items()}
+                        )
                     self._html(_THANK_YOU_HTML)
                     return
                 self.send_response(404)
@@ -190,3 +201,34 @@ def fixture_server() -> Iterator[FixtureServer]:
         yield server
     finally:
         server.stop()
+
+
+def _parse_multipart(
+    content_type: str, body: bytes
+) -> tuple[dict[str, str], dict[str, bytes]]:
+    """Return (fields, files) parsed from a multipart/form-data POST.
+
+    Uses stdlib `email` because Python 3.11 removed `cgi.parse_multipart`.
+    """
+    header_bytes = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode()
+    msg = message_from_bytes(header_bytes + body, policy=EMAIL_HTTP)
+    fields: dict[str, str] = {}
+    files: dict[str, bytes] = {}
+    if not msg.is_multipart():
+        return fields, files
+    for part in msg.iter_parts():
+        cd = part.get("Content-Disposition", "")
+        name_match = re.search(r'name="([^"]+)"', cd)
+        filename_match = re.search(r'filename="([^"]*)"', cd)
+        if not name_match:
+            continue
+        name = name_match.group(1)
+        payload = part.get_payload(decode=True) or b""
+        if filename_match and filename_match.group(1):
+            files[name] = payload
+        else:
+            try:
+                fields[name] = payload.decode("utf-8")
+            except UnicodeDecodeError:
+                fields[name] = ""
+    return fields, files

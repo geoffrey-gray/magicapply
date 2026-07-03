@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from magicapply.config.models import StaticAnswers
 from magicapply.domain.models.resume import TailoredResume
 from magicapply.infrastructure.browser.ats.base import (
@@ -34,12 +36,19 @@ class FakePage:
     def content(self) -> str:
         return self._html
 
+    def set_input_files(self, selector: str, files: str) -> None:
+        self.actions.append(("set_input_files", (selector, files)))
 
-def _data(url: str = "https://boards.greenhouse.io/acme/jobs/1") -> ApplicationData:
+
+def _data(
+    url: str = "https://boards.greenhouse.io/acme/jobs/1",
+    resume_docx_path: Path = Path("/tmp/nonexistent-resume.docx"),
+) -> ApplicationData:
     return ApplicationData(
         job_url=url,
         static_answers=StaticAnswers(full_name="Jane Doe", email="j@example.com", phone="555-0100"),
         tailored_resume=TailoredResume(base_name="R", job_id="abc", name="Jane Doe"),
+        resume_docx_path=resume_docx_path,
         cover_letter="Dear team,\n\nHello.",
     )
 
@@ -54,6 +63,8 @@ class TestGreenhouseFlow:
         assert ("fill", ("#last_name", "Doe")) in page.actions
         # Cover letter attempted
         assert any(a[0] == "fill" and a[1][0].startswith("textarea") for a in page.actions)
+        # Resume uploaded via the first candidate selector (fake page never raises).
+        assert any(a[0] == "set_input_files" for a in page.actions)
         # Submitted
         assert ("click", ("input[type='submit']",)) in page.actions
 

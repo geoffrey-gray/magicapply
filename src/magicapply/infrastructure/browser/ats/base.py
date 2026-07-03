@@ -12,6 +12,7 @@ structurally.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -25,13 +26,15 @@ class PageDriver(Protocol):
     """Minimal browser page surface used by ATS handlers.
 
     playwright's `Page` satisfies this structurally (goto, fill, click,
-    content are all methods on it), so real runs need no adapter.
+    content, set_input_files are all methods on it), so real runs need no
+    adapter.
     """
 
     def goto(self, url: str) -> None: ...
     def fill(self, selector: str, value: str) -> None: ...
     def click(self, selector: str) -> None: ...
     def content(self) -> str: ...
+    def set_input_files(self, selector: str, files: str) -> None: ...
 
 
 class ApplicationData(BaseModel):
@@ -43,6 +46,11 @@ class ApplicationData(BaseModel):
     reports success with a marker error. The pipeline copies the flag onto
     the Application row so a downstream ``status`` split can distinguish
     real applications from dry runs.
+
+    ``resume_docx_path`` points at the rendered DOCX the tailoring pipeline
+    produced (see ``TailoringPipeline`` + ``DocxResumeRenderer``); handlers
+    call ``page.set_input_files`` with it against whichever file input the
+    ATS exposes.
     """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -50,6 +58,7 @@ class ApplicationData(BaseModel):
     job_url: str
     static_answers: StaticAnswers
     tailored_resume: TailoredResume
+    resume_docx_path: Path
     cover_letter: str | None = None
     dry_run: bool = False
 

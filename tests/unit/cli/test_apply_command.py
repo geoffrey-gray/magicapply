@@ -114,6 +114,9 @@ def _seed_tailored(
         )
     )
     (tailored_dir / "cover_letter.md").write_text("I would like to apply to Acme.")
+    # Stub docx so build_application_data does not raise on the missing file
+    # (the fake page never actually opens it).
+    (tailored_dir / "resume.docx").write_bytes(b"PK\x03\x04stub")
     app.tailored_path = str(tailored_dir)
     app.transition_to(ApplicationState.TAILORED, reason="test")
     apps_repo.add(app)
@@ -139,6 +142,9 @@ class _FakePage:
 
     def content(self) -> str:
         return "<html><body>ok</body></html>"
+
+    def set_input_files(self, selector: str, files: str) -> None:
+        self.calls.append(("set_input_files", selector, files))
 
     def close(self) -> None:
         pass

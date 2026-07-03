@@ -271,6 +271,10 @@ class TestE2EYesSubmit:
             assert form["phone"] == "555-0100"
             assert form["linkedin_url"].startswith("https://linkedin.com/")
             assert form["cover_letter_text"]
+            # Resume DOCX was uploaded via multipart/form-data.
+            resume_bytes = form["_files"]["resume"]
+            assert resume_bytes[:4] == b"PK\x03\x04"
+            assert len(resume_bytes) > 1000  # non-trivial docx
 
         # The shape-aware mock echoes the parsed job title into the cover
         # letter, so we get one per surviving posting.
