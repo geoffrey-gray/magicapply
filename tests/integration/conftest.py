@@ -32,9 +32,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: Iterable[pytest.
     )
 
     for item in items:
-        if "integration" in item.keywords and not live:
+        markers = {m.name for m in item.iter_markers()}
+        if "integration" in markers and not live:
             item.add_marker(skip_integration)
-        if "anthropic" in item.keywords and not (live and have_anthropic_key):
+        if "anthropic" in markers and not (live and have_anthropic_key):
             item.add_marker(skip_anthropic)
-        if "linkedin" in item.keywords and not linkedin_ok:
+        if "linkedin" in markers and not linkedin_ok:
             item.add_marker(skip_linkedin)
