@@ -69,6 +69,11 @@ class StaticAnswers(BaseModel):
     Everything static enough that it never depends on the specific job goes
     here. Anything dynamic (bullets, cover letter, screening questions) is
     generated per-job by the LLM layer.
+
+    Booleans for authorization / sponsorship / hispanic-latino live alongside
+    the free-text ``work_authorization`` field because ATS forms ask both
+    shapes: some as an open field, some as a yes/no radio. The AnswerRouter
+    (Phase L) picks the right one per field.
     """
 
     model_config = _Strict
@@ -80,11 +85,19 @@ class StaticAnswers(BaseModel):
     linkedin_url: str | None = None
     github_url: str | None = None
     portfolio_url: str | None = None
+    # Explicit yes/no forms — some ATS forms ask a radio "authorized to work
+    # in the US?" separately from the free-text visa description.
+    authorized_to_work_us: bool | None = None
+    needs_sponsorship_us: bool | None = None
     work_authorization: str | None = None
     requires_sponsorship: bool | None = None
+    # Practical numbers a lot of forms ask up front.
+    years_of_experience: int | None = Field(default=None, ge=0, le=80)
+    desired_salary: str | None = None
     # DEI/EEO — omit or fill per your comfort; MagicApply never invents values.
     gender: str | None = None
     ethnicity: str | None = None
+    hispanic_latino: bool | None = None
     veteran_status: str | None = None
     disability_status: str | None = None
 

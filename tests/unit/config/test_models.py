@@ -103,6 +103,35 @@ class TestStaticAnswers:
         assert sa.phone is None
         assert sa.linkedin_url is None
         assert sa.gender is None
+        # New DEI / work-auth fields added in Phase K.2 also default None.
+        assert sa.authorized_to_work_us is None
+        assert sa.needs_sponsorship_us is None
+        assert sa.years_of_experience is None
+        assert sa.desired_salary is None
+        assert sa.hispanic_latino is None
+
+    def test_all_new_fields_round_trip(self) -> None:
+        raw = _valid_static_answers() | {
+            "authorized_to_work_us": True,
+            "needs_sponsorship_us": False,
+            "years_of_experience": 8,
+            "desired_salary": "$180k-$210k",
+            "hispanic_latino": False,
+        }
+        sa = StaticAnswers.model_validate(raw)
+        assert sa.authorized_to_work_us is True
+        assert sa.needs_sponsorship_us is False
+        assert sa.years_of_experience == 8
+        assert sa.desired_salary == "$180k-$210k"
+        assert sa.hispanic_latino is False
+
+    def test_years_of_experience_bounds(self) -> None:
+        raw = _valid_static_answers() | {"years_of_experience": -1}
+        with pytest.raises(ValidationError):
+            StaticAnswers.model_validate(raw)
+        raw = _valid_static_answers() | {"years_of_experience": 81}
+        with pytest.raises(ValidationError):
+            StaticAnswers.model_validate(raw)
 
 
 class TestProfile:
