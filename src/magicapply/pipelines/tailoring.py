@@ -28,6 +28,7 @@ from magicapply.domain.repositories import (
 )
 from magicapply.domain.resumes.narrative import NarrativeEngine
 from magicapply.domain.resumes.tailor import Tailorer
+from magicapply.infrastructure.rendering.docx import DocxResumeRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ class TailoringPipeline:
         jobs_repo: JobsRepository,
         tailorer: Tailorer,
         narrative: NarrativeEngine,
+        resume_renderer: DocxResumeRenderer,
         profile_name: str,
         data_dir: Path,
     ) -> None:
@@ -56,6 +58,7 @@ class TailoringPipeline:
         self._jobs = jobs_repo
         self._tailorer = tailorer
         self._narrative = narrative
+        self._renderer = resume_renderer
         self._profile = profile_name
         self._data_dir = data_dir
 
@@ -95,6 +98,18 @@ class TailoringPipeline:
                 )
             )
             (app_dir / "cover_letter.md").write_text(cover)
+
+            # Render the tailored resume to DOCX for ATS upload. Failures here
+            # (template missing, disk full) are treated like tailoring
+            # failures — reported per-app, no crash.
+            try:
+                self._renderer.render(tailored, app_dir / "resume.docx")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("resume render failed for %s: %s", app.id, exc)
+                report.errors.append(
+                    f"{app.id}: render {type(exc).__name__}: {exc}"
+                )
+                continue
 
             app.tailored_path = str(app_dir)
             app.transition_to(

@@ -11,6 +11,7 @@ dry-run).
 from __future__ import annotations
 
 import os
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from magicapply.infrastructure.persistence.repositories.applications import (
 from tests.integration.e2e.fixture_server import FixtureServer
 
 _GOLDENS_ROOT = Path(__file__).resolve().parents[2] / "goldens" / "tailoring"
+_REPO_TEMPLATE = Path(__file__).resolve().parents[3] / "configs" / "resume_template.docx"
 
 runner = CliRunner()
 
@@ -123,6 +125,7 @@ sources:
     (root / "configs" / "profiles" / "e2e.yaml").write_text(
         "name: e2e\nbase_resume: e2e.yaml\nsources: [fixture]\n"
     )
+    shutil.copy(_REPO_TEMPLATE, root / "configs" / "resume_template.docx")
     return root / "configs"
 
 

@@ -21,7 +21,10 @@ from magicapply.infrastructure.persistence.repositories.applications import (
     SqlApplicationsRepository,
 )
 from magicapply.infrastructure.persistence.repositories.jobs import SqlJobsRepository
+from magicapply.infrastructure.rendering.docx import DocxResumeRenderer
 from magicapply.pipelines.tailoring import TailoringPipeline
+
+_TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "configs" / "resume_template.docx"
 
 
 @pytest.fixture
@@ -73,6 +76,7 @@ def _pipeline(
         jobs_repo=jobs_repo,
         tailorer=tailorer,
         narrative=narrative,
+        resume_renderer=DocxResumeRenderer(_TEMPLATE_PATH),
         profile_name=profile_name,
         data_dir=tmp_path,
     )
@@ -124,6 +128,10 @@ class TestHappyPath:
         assert app_dir.exists()
         assert (app_dir / "resume.yaml").exists()
         assert (app_dir / "cover_letter.md").exists()
+        # Rendered DOCX sits alongside the source artifacts for ATS upload.
+        docx = app_dir / "resume.docx"
+        assert docx.exists()
+        assert docx.read_bytes()[:4] == b"PK\x03\x04"
 
     def test_resume_yaml_parses_as_tailored_resume(
         self, engine: Engine, tmp_path: Path

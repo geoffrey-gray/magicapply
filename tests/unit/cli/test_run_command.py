@@ -3,12 +3,15 @@ sequencing wires end-to-end without touching real network or Chromium."""
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from magicapply.cli.main import app
+
+_REPO_TEMPLATE = Path(__file__).resolve().parents[3] / "configs" / "resume_template.docx"
 
 runner = CliRunner()
 
@@ -54,6 +57,7 @@ sources:
     (tmp_path / "configs" / "profiles" / "swe.yaml").write_text(
         "name: swe\nbase_resume: swe.yaml\nsources: [watched]\n"
     )
+    shutil.copy(_REPO_TEMPLATE, tmp_path / "configs" / "resume_template.docx")
     return tmp_path / "configs"
 
 

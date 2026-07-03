@@ -24,6 +24,7 @@ from magicapply.domain.resumes.narrative import NarrativeEngine
 from magicapply.domain.resumes.tailor import Tailorer
 from magicapply.infrastructure.browser.ats.base import ApplicationData
 from magicapply.infrastructure.llm import build_client
+from magicapply.infrastructure.rendering.docx import DocxResumeRenderer
 from magicapply.infrastructure.persistence import (
     SqlApplicationsRepository,
     SqlJobsRepository,
@@ -103,11 +104,13 @@ def build_tailoring_pipeline(
     apps_repo: SqlApplicationsRepository,
     jobs_repo: SqlJobsRepository,
 ) -> TailoringPipeline:
+    template_path = loaded.root / "resume_template.docx"
     return TailoringPipeline(
         apps_repo=apps_repo,
         jobs_repo=jobs_repo,
         tailorer=build_tailorer(loaded, profile),
         narrative=build_narrative(loaded, profile),
+        resume_renderer=DocxResumeRenderer(template_path),
         profile_name=profile.name,
         data_dir=loaded.data_dir(),
     )
