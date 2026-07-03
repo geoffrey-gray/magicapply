@@ -27,15 +27,6 @@ from magicapply.infrastructure.llm.client import LLMClient, LLMMessage, SystemBl
 
 logger = logging.getLogger(__name__)
 
-_SUMMARY_INSTRUCTIONS = """\
-You rewrite a candidate's resume summary to align with a specific job description.
-
-Rules:
-- 1-2 sentences, plain text, no markdown.
-- Use ONLY facts stated in the base resume. Do NOT invent skills, tenure, or metrics.
-- Prefer phrasing that echoes the job description's own keywords when truthful.
-- Return ONLY the rewritten summary. No preamble, no quotes, no explanation."""
-
 
 class TailoredResumeBuilder:
     """Accumulates tailoring steps; produces TailoredResume on build().
@@ -87,9 +78,16 @@ class TailoredResumeBuilder:
 class Tailorer:
     """Uses an LLMClient to drive a TailoredResumeBuilder."""
 
-    def __init__(self, llm: LLMClient, base: BaseResume) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        base: BaseResume,
+        *,
+        summary_prompt: str,
+    ) -> None:
         self._llm = llm
         self._base = base
+        self._prompt = summary_prompt
         # Serialize base resume once — this is the cacheable payload reused
         # across every job in a discovery run.
         self._base_text = _serialize_resume(base)
@@ -103,7 +101,7 @@ class Tailorer:
 
     def _rewrite_summary(self, job: Job) -> str:
         system = [
-            SystemBlock(text=_SUMMARY_INSTRUCTIONS, cacheable=False),
+            SystemBlock(text=self._prompt, cacheable=False),
             SystemBlock(text=f"BASE RESUME:\n{self._base_text}", cacheable=True),
         ]
         user = (

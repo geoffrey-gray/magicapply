@@ -10,6 +10,7 @@ from magicapply.config.models import (
     CareerPageSource,
     LinkedInSource,
     Profile,
+    PromptsConfig,
     ScoringConfig,
     StaticAnswers,
 )
@@ -113,3 +114,38 @@ class TestProfile:
     def test_blank_name_rejected(self) -> None:
         with pytest.raises(ValidationError, match="blank"):
             Profile.model_validate({"name": "", "base_resume": "swe.yaml"})
+
+
+def _valid_prompts_dict() -> dict:
+    return {
+        "scoring": "score the job",
+        "summary": "rewrite the summary",
+        "cover_letter": "write the cover letter",
+        "answer": "answer the question",
+    }
+
+
+class TestPromptsConfig:
+    def test_minimal_valid(self) -> None:
+        p = PromptsConfig.model_validate(_valid_prompts_dict())
+        assert p.version == 1
+        assert p.scoring == "score the job"
+
+    def test_all_fields_required(self) -> None:
+        for missing in ("scoring", "summary", "cover_letter", "answer"):
+            raw = _valid_prompts_dict()
+            del raw[missing]
+            with pytest.raises(ValidationError, match=missing):
+                PromptsConfig.model_validate(raw)
+
+    def test_blank_prompt_rejected(self) -> None:
+        raw = _valid_prompts_dict()
+        raw["scoring"] = "   \n\n"
+        with pytest.raises(ValidationError, match="blank"):
+            PromptsConfig.model_validate(raw)
+
+    def test_extra_field_rejected(self) -> None:
+        raw = _valid_prompts_dict()
+        raw["mystery"] = "oops"
+        with pytest.raises(ValidationError, match="mystery"):
+            PromptsConfig.model_validate(raw)

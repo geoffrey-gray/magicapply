@@ -29,7 +29,7 @@ class LLMConfig(BaseModel):
 
     model_config = _Strict
 
-    provider: Literal["anthropic", "ollama"] = "anthropic"
+    provider: Literal["anthropic", "ollama", "mock", "replay"] = "anthropic"
     model: str = "claude-sonnet-4-6"
     max_tokens: int = Field(default=4096, gt=0)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
@@ -165,6 +165,32 @@ class BaseConfig(BaseModel):
 
     def source_names(self) -> set[str]:
         return {s.name for s in self.sources}
+
+
+class PromptsConfig(BaseModel):
+    """LLM prompt instructions.
+
+    Prompts are static behavior specification (what defines a good score, a
+    good summary, a good cover letter, a good screening answer). Per the
+    "Config over code" guardrail they live in `configs/prompts.yaml`, not
+    inline in domain modules. Domain classes receive the specific prompt
+    string on construction from the composition root.
+    """
+
+    model_config = _Strict
+
+    version: Literal[1] = 1
+    scoring: str
+    summary: str
+    cover_letter: str
+    answer: str
+
+    @field_validator("scoring", "summary", "cover_letter", "answer")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("prompt must not be blank")
+        return v
 
 
 class ApplyBehavior(BaseModel):

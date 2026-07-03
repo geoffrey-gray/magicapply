@@ -24,21 +24,6 @@ from magicapply.infrastructure.llm.client import LLMClient, LLMMessage, SystemBl
 
 logger = logging.getLogger(__name__)
 
-_SCORING_INSTRUCTIONS = """\
-You are a strict but fair evaluator scoring how well a job posting fits a candidate's resume.
-
-Return ONLY a JSON object with this exact shape:
-{"score": <integer 0-100>, "rationale": "<one or two sentences>"}
-
-Scoring rubric:
-- 90-100: exceptional fit; must-have skills present, seniority matches, no red flags
-- 70-89: strong fit; most requirements met
-- 50-69: partial fit; some requirements met, some gaps
-- 25-49: weak fit; significant gaps
-- 0-24: poor fit; fundamentally wrong role
-
-Do not include commentary outside the JSON. Do not wrap in markdown fences."""
-
 
 @dataclass(frozen=True, slots=True)
 class PrefilterResult:
@@ -90,13 +75,20 @@ class Prefilter:
 class LLMScorer:
     """LLM-backed scorer. Base resume cached; JD sent per call."""
 
-    def __init__(self, llm: LLMClient, *, base_resume_text: str) -> None:
+    def __init__(
+        self,
+        llm: LLMClient,
+        *,
+        base_resume_text: str,
+        scoring_prompt: str,
+    ) -> None:
         self._llm = llm
         self._resume = base_resume_text
+        self._prompt = scoring_prompt
 
     def score(self, job: Job) -> Score:
         system = [
-            SystemBlock(text=_SCORING_INSTRUCTIONS, cacheable=False),
+            SystemBlock(text=self._prompt, cacheable=False),
             SystemBlock(text=f"BASE RESUME:\n{self._resume}", cacheable=True),
         ]
         user = (

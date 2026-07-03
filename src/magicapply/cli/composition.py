@@ -52,11 +52,15 @@ def build_sources_for_profile(loaded: LoadedConfig, profile: Profile) -> list[Jo
 
 
 def build_scorer(loaded: LoadedConfig, profile: Profile, scoring: ScoringConfig) -> JobScorer:
-    llm = build_client(loaded.base.llm)
+    llm = build_client(loaded.base.llm, prompts=loaded.prompts)
     base_text = _load_base_resume_text(loaded, profile)
     return JobScorer(
         prefilter=Prefilter(scoring),
-        llm_scorer=LLMScorer(llm, base_resume_text=base_text),
+        llm_scorer=LLMScorer(
+            llm,
+            base_resume_text=base_text,
+            scoring_prompt=loaded.prompts.scoring,
+        ),
     )
 
 

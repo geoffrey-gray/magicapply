@@ -90,7 +90,7 @@ class TestSerialize:
 class TestTailorer:
     def test_llm_summary_applied_when_different(self) -> None:
         llm = MockLLMClient("Rewritten focused summary.")
-        tailored = Tailorer(llm, _base()).tailor_for(_job())
+        tailored = Tailorer(llm, _base(), summary_prompt="rewrite the summary").tailor_for(_job())
         assert tailored.summary == "Rewritten focused summary."
         assert any("summary" in c for c in tailored.changes)
 
@@ -98,12 +98,12 @@ class TestTailorer:
         base = _base()
         # LLM returns the same text as the base summary — treat as no-op.
         llm = MockLLMClient(base.summary or "")
-        tailored = Tailorer(llm, base).tailor_for(_job())
+        tailored = Tailorer(llm, base, summary_prompt="rewrite the summary").tailor_for(_job())
         assert tailored.changes == []
 
     def test_resume_goes_in_cacheable_system_block(self) -> None:
         llm = MockLLMClient("ok summary")
-        Tailorer(llm, _base()).tailor_for(_job())
+        Tailorer(llm, _base(), summary_prompt="rewrite the summary").tailor_for(_job())
         call = llm.calls[0]
         assert call.system is not None
         assert any(b.cacheable and "BASE RESUME" in b.text for b in call.system)

@@ -86,7 +86,7 @@ class TestParseScore:
 class TestLLMScorer:
     def test_uses_cacheable_resume_block(self) -> None:
         llm = MockLLMClient('{"score": 75, "rationale": "ok"}')
-        scorer = LLMScorer(llm, base_resume_text="RESUME CONTENT")
+        scorer = LLMScorer(llm, base_resume_text="RESUME CONTENT", scoring_prompt="score it")
         s = scorer.score(_job())
         assert s.value == 75
         # Verify caching wiring
@@ -101,7 +101,7 @@ class TestJobScorer:
     def test_prefilter_miss_short_circuits(self) -> None:
         llm = MockLLMClient("should-not-be-called")
         cfg = ScoringConfig(prefilter=ScoringPrefilter(exclude=["python"]))
-        combined = JobScorer(Prefilter(cfg), LLMScorer(llm, base_resume_text="R"))
+        combined = JobScorer(Prefilter(cfg), LLMScorer(llm, base_resume_text="R", scoring_prompt="score it"))
         s = combined.score(_job())
         assert s.value == 0
         assert "prefilter" in s.rationale
@@ -109,7 +109,7 @@ class TestJobScorer:
 
     def test_prefilter_pass_calls_llm(self) -> None:
         llm = MockLLMClient('{"score": 88, "rationale": "great"}')
-        combined = JobScorer(Prefilter(ScoringConfig()), LLMScorer(llm, base_resume_text="R"))
+        combined = JobScorer(Prefilter(ScoringConfig()), LLMScorer(llm, base_resume_text="R", scoring_prompt="score it"))
         s = combined.score(_job())
         assert s == Score(value=88, rationale="great")
         assert len(llm.calls) == 1

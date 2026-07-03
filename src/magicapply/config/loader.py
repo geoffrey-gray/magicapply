@@ -9,9 +9,10 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from magicapply.config.models import BaseConfig, Profile
+from magicapply.config.models import BaseConfig, Profile, PromptsConfig
 
 BASE_CONFIG_FILENAME = "base_config.yaml"
+PROMPTS_FILENAME = "prompts.yaml"
 PROFILES_DIRNAME = "profiles"
 
 
@@ -21,10 +22,11 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class LoadedConfig:
-    """Result of loading a config root: the base + all profiles."""
+    """Result of loading a config root: the base + all profiles + prompts."""
 
     base: BaseConfig
     profiles: dict[str, Profile]
+    prompts: PromptsConfig
     root: Path
 
     def resumes_dir(self) -> Path:
@@ -41,10 +43,11 @@ class LoadedConfig:
 
 
 def load_config(root: Path) -> LoadedConfig:
-    """Load base config + all profiles from `<root>/base_config.yaml` and `<root>/profiles/*.yaml`.
+    """Load base config + all profiles + prompts from the config root.
 
-    Raises `ConfigError` with a helpful message on any structural or
-    cross-reference failure.
+    Reads `<root>/base_config.yaml`, `<root>/profiles/*.yaml`, and
+    `<root>/prompts.yaml`. Raises `ConfigError` with a helpful message on any
+    structural or cross-reference failure.
     """
     root = root.expanduser().resolve()
     if not root.exists():
@@ -54,8 +57,9 @@ def load_config(root: Path) -> LoadedConfig:
 
     base = _load_base(root)
     profiles = _load_profiles(root)
+    prompts = _load_prompts(root)
     _validate_cross_refs(base, profiles, root)
-    return LoadedConfig(base=base, profiles=profiles, root=root)
+    return LoadedConfig(base=base, profiles=profiles, prompts=prompts, root=root)
 
 
 def _load_base(root: Path) -> BaseConfig:
@@ -65,6 +69,17 @@ def _load_base(root: Path) -> BaseConfig:
     raw = _read_yaml(path)
     try:
         return BaseConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ConfigError(f"invalid {path}:\n{exc}") from exc
+
+
+def _load_prompts(root: Path) -> PromptsConfig:
+    path = root / PROMPTS_FILENAME
+    if not path.exists():
+        raise ConfigError(f"missing prompts config: {path}")
+    raw = _read_yaml(path)
+    try:
+        return PromptsConfig.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(f"invalid {path}:\n{exc}") from exc
 

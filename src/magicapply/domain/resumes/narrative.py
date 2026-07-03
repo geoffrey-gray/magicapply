@@ -20,23 +20,6 @@ NarrativeStyle = Literal["concise", "detailed"]
 _CONCISE_STYLE = "Style: 2-3 short paragraphs. No filler."
 _DETAILED_STYLE = "Style: 4-5 substantive paragraphs. Include one concrete example."
 
-_COVER_LETTER_INSTRUCTIONS = """\
-You write cover letters that sound like the candidate — not like an AI.
-
-Rules:
-- Use ONLY facts from the base resume. Do NOT invent employers, dates, or metrics.
-- Do NOT use "As an AI", "I'm excited to apply", or other AI-tell openers.
-- No em dashes as sentence connectors.
-- Return ONLY the cover letter body. No greeting header, no signature block."""
-
-_ANSWER_INSTRUCTIONS = """\
-You answer open-ended screening questions on behalf of the candidate.
-
-Rules:
-- Use ONLY facts from the base resume.
-- Answer the question directly. No preamble.
-- Return ONLY the answer text."""
-
 
 class NarrativeEngine:
     """LLM-backed cover letter + screening answer generator."""
@@ -46,15 +29,20 @@ class NarrativeEngine:
         llm: LLMClient,
         base: BaseResume,
         style: NarrativeStyle = "concise",
+        *,
+        cover_letter_prompt: str,
+        answer_prompt: str,
     ) -> None:
         self._llm = llm
         self._base_text = _serialize_resume(base)
         self._style = style
+        self._cover_letter_prompt = cover_letter_prompt
+        self._answer_prompt = answer_prompt
 
     def cover_letter(self, job: Job) -> str:
         style_note = _CONCISE_STYLE if self._style == "concise" else _DETAILED_STYLE
         system = [
-            SystemBlock(text=f"{_COVER_LETTER_INSTRUCTIONS}\n\n{style_note}", cacheable=False),
+            SystemBlock(text=f"{self._cover_letter_prompt}\n\n{style_note}", cacheable=False),
             SystemBlock(text=f"BASE RESUME:\n{self._base_text}", cacheable=True),
         ]
         user = (
@@ -73,7 +61,7 @@ class NarrativeEngine:
 
     def answer(self, job: Job, question: str) -> str:
         system = [
-            SystemBlock(text=_ANSWER_INSTRUCTIONS, cacheable=False),
+            SystemBlock(text=self._answer_prompt, cacheable=False),
             SystemBlock(text=f"BASE RESUME:\n{self._base_text}", cacheable=True),
         ]
         user = f"JOB TITLE: {job.title}\nCOMPANY: {job.company}\n\nQUESTION:\n{question}\n"

@@ -13,6 +13,19 @@ from magicapply.config import ConfigError, load_config
 runner = CliRunner()
 
 
+_PROMPTS_YAML = """\
+version: 1
+scoring: |
+  score the job.
+summary: |
+  rewrite the summary.
+cover_letter: |
+  write the cover letter.
+answer: |
+  answer the question.
+"""
+
+
 def _write_valid_repo(root: Path) -> None:
     """Create a self-consistent config tree under `root`."""
     (root / "configs").mkdir()
@@ -33,6 +46,7 @@ sources:
     urls: ["https://acme.example"]
 """
     )
+    (root / "configs" / "prompts.yaml").write_text(_PROMPTS_YAML)
     (root / "configs" / "profiles" / "swe.yaml").write_text(
         """
 name: swe
@@ -80,6 +94,20 @@ class TestLoadConfig:
         (tmp_path / "resumes" / "swe.yaml").unlink()
         with pytest.raises(ConfigError, match="missing base_resume"):
             load_config(tmp_path / "configs")
+
+    def test_missing_prompts_raises(self, tmp_path: Path) -> None:
+        _write_valid_repo(tmp_path)
+        (tmp_path / "configs" / "prompts.yaml").unlink()
+        with pytest.raises(ConfigError, match="missing prompts config"):
+            load_config(tmp_path / "configs")
+
+    def test_prompts_loaded_and_accessible(self, tmp_path: Path) -> None:
+        _write_valid_repo(tmp_path)
+        loaded = load_config(tmp_path / "configs")
+        assert "score the job" in loaded.prompts.scoring
+        assert "rewrite the summary" in loaded.prompts.summary
+        assert "cover letter" in loaded.prompts.cover_letter
+        assert "answer the question" in loaded.prompts.answer
 
     def test_duplicate_profile_names_rejected(self, tmp_path: Path) -> None:
         _write_valid_repo(tmp_path)
