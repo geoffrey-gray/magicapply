@@ -282,6 +282,12 @@ def apply(
             application_data=data,
             retry=retry,
         )
+        # Interactive intervention: when the browser is visible (--no-
+        # headless) and the flow bailed for CAPTCHA / manual review, keep
+        # the session open and let the operator finish the application
+        # by hand, then record what happened.
+        if not headless and report.final_state is ApplicationState.NEEDS_INTERVENTION:
+            report = _run_manual_intervention(page, apps_repo, application, report)
 
     console.print(f"application: {report.application_id}")
     console.print(f"final state: [bold]{report.final_state.value}[/bold]")
@@ -289,3 +295,51 @@ def apply(
         console.print("[cyan]dry-run:[/cyan] submit was skipped")
     if report.error:
         console.print(f"[yellow]error:[/yellow] {report.error}")
+
+
+def _run_manual_intervention(
+    page,  # type: ignore[no-untyped-def]
+    apps_repo,  # type: ignore[no-untyped-def]
+    application,  # type: ignore[no-untyped-def]
+    report,  # type: ignore[no-untyped-def]
+):
+    """Prompt the operator to complete the application manually and record
+    the outcome. Called only when the browser is visible and the handler
+    surfaced NEEDS_INTERVENTION (CAPTCHA on load or before submit, per
+    BaseATSHandler.apply).
+    """
+    from magicapply.pipelines.apply import ApplyReport
+
+    current_url = getattr(page, "url", "?")
+    console.print(f"[yellow]manual intervention needed[/yellow] at {current_url}")
+    console.print("Complete the application in the browser window, then press Enter.")
+    try:
+        input()
+    except EOFError:
+        # Non-interactive stdin (e.g., piped) — treat as skip.
+        console.print("[dim]no input available; leaving state as NEEDS_INTERVENTION[/dim]")
+        return report
+
+    outcome = typer.prompt(
+        "Outcome? [y=applied / n=failed / s=skip]",
+        default="s",
+    ).strip().lower()
+
+    from magicapply.domain.models.application import ApplicationState
+
+    if outcome.startswith("y"):
+        target = ApplicationState.APPLIED
+        reason = "manual submit confirmed"
+    elif outcome.startswith("n"):
+        target = ApplicationState.FAILED
+        reason = "manual attempt failed"
+    else:
+        target = ApplicationState.SKIPPED
+        reason = "manual intervention skipped"
+
+    # Re-load in case save() mid-transition below wants the fresh row;
+    # then transition and persist.
+    fresh = apps_repo.get(application.id) or application
+    fresh.transition_to(target, reason=reason)
+    apps_repo.save(fresh)
+    return ApplyReport(fresh.id, fresh.state, reason)

@@ -296,3 +296,150 @@ class TestErrorPaths:
         result = runner.invoke(app, ["apply", job_id, "--root", str(cfg)])
         assert result.exit_code == 1
         assert "missing from DB" in result.stdout
+
+
+class TestManualIntervention:
+    def _seed_needs_intervention(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        page: _FakePage,
+    ) -> None:
+        """Patch ApplyPipeline.apply_one to return a NEEDS_INTERVENTION report."""
+        from magicapply.domain.models.application import ApplicationState
+        from magicapply.pipelines.apply import ApplyReport
+
+        def fake_apply_one(self, *, page, application, job, application_data, retry=False):  # noqa: ARG001
+            # Move the row to NEEDS_INTERVENTION so downstream re-load sees it.
+            application.transition_to(ApplicationState.APPLYING)
+            application.transition_to(ApplicationState.NEEDS_INTERVENTION, reason="CAPTCHA")
+            self._apps.save(application)
+            return ApplyReport(
+                application.id,
+                ApplicationState.NEEDS_INTERVENTION,
+                "CAPTCHA detected",
+            )
+
+        from magicapply.pipelines import apply as apply_mod
+        monkeypatch.setattr(apply_mod.ApplyPipeline, "apply_one", fake_apply_one)
+
+    def test_headed_prompt_records_applied(
+        self,
+        tmp_path: Path,
+        patched_session: _FakePage,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from magicapply.domain.models.application import ApplicationState
+        from magicapply.infrastructure.persistence.db import (
+            create_engine_from_url,
+            sqlite_url_for,
+        )
+        from magicapply.infrastructure.persistence.repositories.applications import (
+            SqlApplicationsRepository,
+        )
+
+        cfg = _write_valid_repo(tmp_path)
+        job_id, app_id = _seed_tailored(tmp_path)
+        self._seed_needs_intervention(monkeypatch, patched_session)
+
+        # Operator presses Enter, then types "y" for applied.
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+        monkeypatch.setattr(
+            "magicapply.cli.commands.pipeline.typer.prompt",
+            lambda *a, **k: "y",
+        )
+
+        result = runner.invoke(
+            app,
+            ["apply", job_id, "--root", str(cfg), "--no-headless"],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "manual intervention" in result.stdout.lower()
+
+        engine = create_engine_from_url(
+            sqlite_url_for(tmp_path / "data" / "magicapply.sqlite3")
+        )
+        reloaded = SqlApplicationsRepository(engine).get(app_id)
+        engine.dispose()
+        assert reloaded is not None
+        assert reloaded.state is ApplicationState.APPLIED
+
+    def test_headed_prompt_records_skipped(
+        self,
+        tmp_path: Path,
+        patched_session: _FakePage,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from magicapply.domain.models.application import ApplicationState
+        from magicapply.infrastructure.persistence.db import (
+            create_engine_from_url,
+            sqlite_url_for,
+        )
+        from magicapply.infrastructure.persistence.repositories.applications import (
+            SqlApplicationsRepository,
+        )
+
+        cfg = _write_valid_repo(tmp_path)
+        job_id, app_id = _seed_tailored(tmp_path)
+        self._seed_needs_intervention(monkeypatch, patched_session)
+
+        monkeypatch.setattr("builtins.input", lambda *a, **k: "")
+        monkeypatch.setattr(
+            "magicapply.cli.commands.pipeline.typer.prompt",
+            lambda *a, **k: "s",
+        )
+
+        result = runner.invoke(
+            app,
+            ["apply", job_id, "--root", str(cfg), "--no-headless"],
+        )
+        assert result.exit_code == 0, result.stdout
+
+        engine = create_engine_from_url(
+            sqlite_url_for(tmp_path / "data" / "magicapply.sqlite3")
+        )
+        reloaded = SqlApplicationsRepository(engine).get(app_id)
+        engine.dispose()
+        assert reloaded is not None
+        assert reloaded.state is ApplicationState.SKIPPED
+
+    def test_headless_does_not_prompt(
+        self,
+        tmp_path: Path,
+        patched_session: _FakePage,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from magicapply.domain.models.application import ApplicationState
+        from magicapply.infrastructure.persistence.db import (
+            create_engine_from_url,
+            sqlite_url_for,
+        )
+        from magicapply.infrastructure.persistence.repositories.applications import (
+            SqlApplicationsRepository,
+        )
+
+        cfg = _write_valid_repo(tmp_path)
+        job_id, app_id = _seed_tailored(tmp_path)
+        self._seed_needs_intervention(monkeypatch, patched_session)
+
+        # Prompt should NOT be called; make it raise so any invocation fails
+        # loudly instead of silently succeeding.
+        def _fail(*a: object, **k: object) -> str:
+            raise AssertionError("prompt should not be called under --headless")
+
+        monkeypatch.setattr("builtins.input", _fail)
+        monkeypatch.setattr(
+            "magicapply.cli.commands.pipeline.typer.prompt", _fail
+        )
+
+        # Default is --headless (no --no-headless flag).
+        result = runner.invoke(app, ["apply", job_id, "--root", str(cfg)])
+        assert result.exit_code == 0, result.stdout
+
+        engine = create_engine_from_url(
+            sqlite_url_for(tmp_path / "data" / "magicapply.sqlite3")
+        )
+        reloaded = SqlApplicationsRepository(engine).get(app_id)
+        engine.dispose()
+        assert reloaded is not None
+        # Row stays in NEEDS_INTERVENTION without operator input.
+        assert reloaded.state is ApplicationState.NEEDS_INTERVENTION
