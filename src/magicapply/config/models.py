@@ -158,8 +158,23 @@ class LinkedInSource(_SourceBase):
     rate_limit_per_minute: int = Field(default=10, gt=0)
 
 
+class IndeedSource(_SourceBase):
+    """Playwright-based Indeed scraping.
+
+    Disabled by default. Indeed's ToS also forbids scraping and their bot
+    detection uses Cloudflare — the adapter detects the "Just a moment"
+    challenge and logs+skips rather than crashing.
+    """
+
+    type: Literal["indeed"] = "indeed"
+    enabled: bool = False
+    queries: list[str] = Field(default_factory=list)
+    location: str | None = None
+    rate_limit_per_minute: int = Field(default=5, gt=0)
+
+
 Source = Annotated[
-    CareerPageSource | JobUrlSource | LinkedInSource,
+    CareerPageSource | JobUrlSource | LinkedInSource | IndeedSource,
     Field(discriminator="type"),
 ]
 

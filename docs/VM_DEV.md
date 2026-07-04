@@ -131,6 +131,7 @@ virsh -c qemu:///system define /mnt/storage/VMs/magicapply-dev-setup/magicapply-
 | `MAGICAPPLY_LIVE_APPLY_ROOT` | Optional `--root` override for the live-apply E2E |
 | `MAGICAPPLY_LINKEDIN_TESTS` | Gate for the `linkedin` marker (ToS-sensitive scraping) |
 | `MAGICAPPLY_LINKEDIN_ACK` | Set to `1` to acknowledge LinkedIn ToS risk; the LinkedIn adapter refuses to run without it |
+| `MAGICAPPLY_INDEED_ACK` | Set to `1` to acknowledge Indeed ToS risk; the Indeed adapter refuses to run without it |
 | `MAGICAPPLY_LLM_RECORD` | Set to `1` when running with `provider: replay` to capture new LLM responses into `configs/llm-fixtures/<key>.yaml` |
 | `MAGICAPPLY_UPDATE_GOLDENS` | Set to `1` to rewrite `tests/goldens/tailoring/*` from the current run |
 | `MAGICAPPLY_HOME` | Overrides the config-root lookup precedence in `src/magicapply/config/paths.py` |

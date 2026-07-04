@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from magicapply.config.models import (
     CareerPageSource,
+    IndeedSource,
     JobUrlSource,
     LinkedInSource,
 )
@@ -12,10 +13,13 @@ from magicapply.infrastructure.sources.custom_url import (
     CareerPageAdapter,
     JobUrlAdapter,
 )
+from magicapply.infrastructure.sources.indeed import IndeedAdapter
 from magicapply.infrastructure.sources.linkedin import LinkedInAdapter
 
 
-def build_source(config: CareerPageSource | JobUrlSource | LinkedInSource) -> JobSource:
+def build_source(
+    config: CareerPageSource | JobUrlSource | LinkedInSource | IndeedSource,
+) -> JobSource:
     """Return the concrete adapter for a Source config entry."""
     if isinstance(config, CareerPageSource):
         return CareerPageAdapter.from_config(config)
@@ -23,4 +27,6 @@ def build_source(config: CareerPageSource | JobUrlSource | LinkedInSource) -> Jo
         return JobUrlAdapter.from_config(config)
     if isinstance(config, LinkedInSource):
         return LinkedInAdapter.from_config(config)
+    if isinstance(config, IndeedSource):
+        return IndeedAdapter.from_config(config)
     raise TypeError(f"unknown source type: {type(config).__name__}")
