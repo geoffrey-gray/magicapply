@@ -6,6 +6,7 @@ from typing import ClassVar
 
 from magicapply.infrastructure.browser.ats.base import ATSHandler
 from magicapply.infrastructure.browser.ats.greenhouse import GreenhouseHandler
+from magicapply.infrastructure.browser.ats.workday import WorkdayHandler
 
 
 class ATSHandlerFactory:
@@ -16,7 +17,10 @@ class ATSHandlerFactory:
     scattered through the pipeline layer.
     """
 
-    _handler_classes: ClassVar[list[type[ATSHandler]]] = [GreenhouseHandler]
+    _handler_classes: ClassVar[list[type[ATSHandler]]] = [
+        GreenhouseHandler,
+        WorkdayHandler,
+    ]
 
     @classmethod
     def for_url(cls, url: str) -> ATSHandler | None:
