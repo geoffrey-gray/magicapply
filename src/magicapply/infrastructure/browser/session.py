@@ -59,6 +59,12 @@ class PlaywrightSession(AbstractContextManager["PlaywrightSession"]):
             raise RuntimeError("PlaywrightSession is not open; use it as a context manager")
         return self._context.new_page()
 
+    def add_cookies(self, cookies: list[dict]) -> None:
+        """Add cookies to the shared context (e.g., LinkedIn li_at)."""
+        if self._context is None:
+            raise RuntimeError("PlaywrightSession is not open; use it as a context manager")
+        self._context.add_cookies(cookies)  # type: ignore[arg-type]
+
     def save_state(self) -> None:
         """Persist the current context's storage state to disk.
 
