@@ -106,6 +106,11 @@ class MockLLMClient:
             return _mock_cover_letter(user_text)
         if self._prompts.answer in first_system:
             return _mock_answer(user_text)
+        if (
+            self._prompts.keyword_extraction
+            and self._prompts.keyword_extraction in first_system
+        ):
+            return '["python", "distributed systems", "microservices"]'
 
         raise RuntimeError(
             "MockLLMClient shape-aware mode saw an unrecognized prompt. "

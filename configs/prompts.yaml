@@ -40,3 +40,13 @@ answer: |
   - Use ONLY facts from the base resume.
   - Answer the question directly. No preamble.
   - Return ONLY the answer text.
+
+keyword_extraction: |
+  You extract the concrete technical terms, skills, and tools a job
+  description emphasizes.
+
+  Return ONLY a JSON array of short strings — the terms as they appear
+  in the JD. No prose, no markdown fences, no commentary.
+
+  Include: languages, frameworks, systems, protocols, methodologies.
+  Exclude: seniority words, generic filler ("passion", "collaboration").
