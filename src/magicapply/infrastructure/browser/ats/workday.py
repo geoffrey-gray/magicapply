@@ -94,11 +94,8 @@ class WorkdayHandler(BaseATSHandler):
         # Real Workday shows an initial Apply / Autofill prompt. Try the
         # candidates in order; anything absent raises and we continue.
         for selector in _APPLY_BUTTONS:
-            try:
-                page.click(selector)
+            if _try_click(page, selector):
                 break
-            except Exception:  # noqa: BLE001
-                continue
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers
@@ -137,30 +134,39 @@ class WorkdayHandler(BaseATSHandler):
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
         for selector in _SUBMIT_BUTTONS:
-            try:
-                page.click(selector)
+            if _try_click(page, selector):
                 return
-            except Exception:  # noqa: BLE001
-                continue
         raise RuntimeError("Workday: no submit button found")
+
+
+# Every candidate-selector attempt uses a short Playwright timeout so a
+# missing selector fails fast (default is 30s and we cycle through many).
+# Real ATS pages resolve well within this budget; fake pages accept the
+# kwarg via **kwargs and short-circuit synchronously.
+_CANDIDATE_TIMEOUT_MS = 500
 
 
 def _try_fill(page: PageDriver, selectors: tuple[str, ...], value: str) -> None:
     for selector in selectors:
         try:
-            page.fill(selector, value)
+            page.fill(selector, value, timeout=_CANDIDATE_TIMEOUT_MS)  # type: ignore[call-arg]
             return
         except Exception:  # noqa: BLE001
             continue
 
 
+def _try_click(page: PageDriver, selector: str) -> bool:
+    try:
+        page.click(selector, timeout=_CANDIDATE_TIMEOUT_MS)  # type: ignore[call-arg]
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _click_next(page: PageDriver) -> bool:
     for selector in _NEXT_BUTTONS:
-        try:
-            page.click(selector)
+        if _try_click(page, selector):
             return True
-        except Exception:  # noqa: BLE001
-            continue
     return False
 
 

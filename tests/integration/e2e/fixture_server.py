@@ -126,6 +126,44 @@ _APPLY_FORM_HTML = """\
 </html>
 """
 
+# Workday-shaped single-page form: data-automation-id selectors matching the
+# real Workday wizard's convention. Single page (no multi-step navigation)
+# because a fixture-side wizard would just be JavaScript we do not need to
+# ship. The handler's Next-button loop terminates because there is no Next
+# button on this page -- exactly the "you have reached the Review step"
+# terminal state.
+_WORKDAY_FORM_HTML = """\
+<!doctype html>
+<html>
+  <head><title>Workday Apply</title></head>
+  <body>
+    <h1>Workday Apply</h1>
+    <form method="POST" action="/submit" enctype="multipart/form-data">
+      <label>First name
+        <input data-automation-id="legalNameSection_firstName"
+               name="first_name">
+      </label>
+      <label>Last name
+        <input data-automation-id="legalNameSection_lastName"
+               name="last_name">
+      </label>
+      <label>Email
+        <input data-automation-id="email" name="email">
+      </label>
+      <label>Phone
+        <input data-automation-id="phone-number" name="phone">
+      </label>
+      <label>Resume
+        <input type="file" data-automation-id="file-upload-input-ref"
+               name="resume">
+      </label>
+      <button type="submit"
+              data-automation-id="submitApplication">Submit</button>
+    </form>
+  </body>
+</html>
+"""
+
 _THANK_YOU_HTML = "<!doctype html><html><body><h1>Thanks!</h1></body></html>"
 
 
@@ -151,6 +189,9 @@ class FixtureServer:
                     return
                 if self.path.startswith("/greenhouse.io/") and self.path.endswith("/apply"):
                     self._html(_APPLY_FORM_HTML)
+                    return
+                if self.path.startswith("/myworkdayjobs.com/") and self.path.endswith("/apply"):
+                    self._html(_WORKDAY_FORM_HTML)
                     return
                 if self.path == "/submit" or self.path == "/thanks":
                     self._html(_THANK_YOU_HTML)

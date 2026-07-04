@@ -19,26 +19,29 @@ class _RecordingPage:
         self._html = html
         self.actions: list[tuple[str, tuple[str, ...]]] = []
 
-    def goto(self, url: str) -> None:
+    # Every method accepts **kwargs so timeout=… from the handler's
+    # fast-fail helpers works uniformly across fake and real pages.
+
+    def goto(self, url: str, **_: object) -> None:
         self.url = url
         self.actions.append(("goto", (url,)))
 
-    def fill(self, selector: str, value: str) -> None:
+    def fill(self, selector: str, value: str, **_: object) -> None:
         self.actions.append(("fill", (selector, value)))
 
-    def click(self, selector: str) -> None:
+    def click(self, selector: str, **_: object) -> None:
         self.actions.append(("click", (selector,)))
 
     def content(self) -> str:
         return self._html
 
-    def set_input_files(self, selector: str, files: str) -> None:
+    def set_input_files(self, selector: str, files: str, **_: object) -> None:
         self.actions.append(("set_input_files", (selector, files)))
 
-    def select_option(self, selector: str, value: str) -> None:
+    def select_option(self, selector: str, value: str, **_: object) -> None:
         self.actions.append(("select_option", (selector, value)))
 
-    def check(self, selector: str) -> None:
+    def check(self, selector: str, **_: object) -> None:
         self.actions.append(("check", (selector,)))
 
 
@@ -58,7 +61,7 @@ class _StopAtNext(_RecordingPage):
         "button:has-text('Apply')",
     )
 
-    def click(self, selector: str) -> None:
+    def click(self, selector: str, **_: object) -> None:
         if selector in self._STOP:
             raise RuntimeError(f"stop at {selector}")
         super().click(selector)
