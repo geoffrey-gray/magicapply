@@ -164,6 +164,26 @@ _WORKDAY_FORM_HTML = """\
 </html>
 """
 
+_LEVER_FORM_HTML = """\
+<!doctype html>
+<html>
+  <head><title>Lever Apply</title></head>
+  <body>
+    <h1>Lever Apply</h1>
+    <form method="POST" action="/submit" enctype="multipart/form-data"
+          class="posting-form">
+      <label>Full name <input name="name"></label>
+      <label>Email <input name="email"></label>
+      <label>Phone <input name="phone"></label>
+      <label>LinkedIn <input name="urls[LinkedIn]"></label>
+      <label>Cover letter <textarea name="comments"></textarea></label>
+      <label>Resume <input type="file" name="resume"></label>
+      <button type="submit">Apply</button>
+    </form>
+  </body>
+</html>
+"""
+
 _THANK_YOU_HTML = "<!doctype html><html><body><h1>Thanks!</h1></body></html>"
 
 
@@ -192,6 +212,9 @@ class FixtureServer:
                     return
                 if self.path.startswith("/myworkdayjobs.com/") and self.path.endswith("/apply"):
                     self._html(_WORKDAY_FORM_HTML)
+                    return
+                if self.path.startswith("/jobs.lever.co/") and self.path.endswith("/apply"):
+                    self._html(_LEVER_FORM_HTML)
                     return
                 if self.path == "/submit" or self.path == "/thanks":
                     self._html(_THANK_YOU_HTML)
