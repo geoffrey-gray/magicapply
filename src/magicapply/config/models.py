@@ -173,8 +173,23 @@ class IndeedSource(_SourceBase):
     rate_limit_per_minute: int = Field(default=5, gt=0)
 
 
+class GlassdoorSource(_SourceBase):
+    """Playwright-based Glassdoor scraping.
+
+    Disabled by default. Glassdoor also uses Cloudflare and often requires
+    a session cookie for detail pages; the adapter can pick one up from
+    the ``GLASSDOOR_SESSION`` env var but falls back to unauthenticated
+    fetching for the public search results.
+    """
+
+    type: Literal["glassdoor"] = "glassdoor"
+    enabled: bool = False
+    queries: list[str] = Field(default_factory=list)
+    rate_limit_per_minute: int = Field(default=5, gt=0)
+
+
 Source = Annotated[
-    CareerPageSource | JobUrlSource | LinkedInSource | IndeedSource,
+    CareerPageSource | JobUrlSource | LinkedInSource | IndeedSource | GlassdoorSource,
     Field(discriminator="type"),
 ]
 
