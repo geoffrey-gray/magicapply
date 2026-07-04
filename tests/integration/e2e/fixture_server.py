@@ -96,6 +96,70 @@ def _careers_html(base_url: str) -> str:
     )
 
 
+# Cross-ATS careers page used by the acceptance suite: one job per ATS,
+# each URL routed to the matching handler by its path segment.
+_CROSS_ATS_JOBS: list[dict[str, Any]] = [
+    {
+        "path": "/greenhouse.io/senior-backend/apply",
+        "title": "Senior Backend Engineer",
+        "company": "Acme",
+        "location": "Remote",
+        "description": "Python and distributed systems.",
+    },
+    {
+        "path": "/myworkdayjobs.com/senior-platform/apply",
+        "title": "Senior Platform Engineer",
+        "company": "Beta",
+        "location": "Remote",
+        "description": "Distributed platform work.",
+    },
+    {
+        "path": "/jobs.lever.co/senior-sre/apply",
+        "title": "Senior SRE",
+        "company": "Gamma",
+        "location": "Remote",
+        "description": "Reliability engineering.",
+    },
+    {
+        "path": "/jobs.ashbyhq.com/staff-swe/application",
+        "title": "Staff Software Engineer",
+        "company": "Delta",
+        "location": "Remote",
+        "description": "Backend + platform.",
+    },
+]
+
+
+def _cross_ats_careers_html(base_url: str) -> str:
+    scripts = []
+    for job in _CROSS_ATS_JOBS:
+        payload = {
+            "@context": "https://schema.org/",
+            "@type": "JobPosting",
+            "title": job["title"],
+            "hiringOrganization": {
+                "@type": "Organization",
+                "name": job["company"],
+            },
+            "jobLocation": {
+                "@type": "Place",
+                "address": {
+                    "@type": "PostalAddress",
+                    "addressLocality": job["location"],
+                },
+            },
+            "url": f"{base_url}{job['path']}",
+            "description": job["description"],
+        }
+        scripts.append(
+            f'<script type="application/ld+json">{json.dumps(payload)}</script>'
+        )
+    return (
+        "<!doctype html><html><head><title>Cross-ATS Careers</title></head>"
+        f"<body><h1>Cross-ATS Careers</h1>{''.join(scripts)}</body></html>"
+    )
+
+
 _APPLY_FORM_HTML = """\
 <!doctype html>
 <html>
@@ -225,6 +289,9 @@ class FixtureServer:
                 base_url = f"http://{self.headers.get('Host', 'localhost')}"
                 if self.path == "/careers":
                     self._html(_careers_html(base_url))
+                    return
+                if self.path == "/careers-cross-ats":
+                    self._html(_cross_ats_careers_html(base_url))
                     return
                 if self.path.startswith("/greenhouse.io/") and self.path.endswith("/apply"):
                     self._html(_APPLY_FORM_HTML)

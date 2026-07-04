@@ -4,24 +4,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current State
 
-Phases 1–10 (foundational stack) and the dry-run harness Phases A–J are shipped. Every step of the config-driven pipeline from job discovery through browser-driven submission is wired end-to-end, with a hermetic fixture E2E and a live-gated E2E to prove it.
+Phases 1–10 (foundational stack), the dry-run harness (Phases A–J), and the DoD maturation (Phases K–U) are shipped. Every step of the config-driven pipeline from multi-source discovery through browser-driven submission across four ATSes is wired end-to-end, with hermetic fixture E2E per ATS and live-gated E2E hooks per source.
 
 **End-to-end today:**
-- `magicapply discover <profile>` — sources → in-run dedup → repo dedup → prefilter → LLM score → persist to SQLite (`src/magicapply/pipelines/discovery.py`).
-- `magicapply tailor <profile>` — SCORED apps → resume summary rewrite + cover letter → files under `data/tailored/<app_id>/{resume.yaml,cover_letter.md}` → transition to TAILORED (`src/magicapply/pipelines/tailoring.py`).
-- `magicapply apply <job-id>` — one Application, real Playwright + Chromium, safe by default (`--no-submit` dry-run stops one click short; `--yes-submit` performs a real submission). Powered by `ApplyPipeline.apply_one` (`src/magicapply/pipelines/apply.py`).
+- `magicapply discover <profile>` — sources → in-run dedup → repo dedup → prefilter → LLM score → persist to SQLite (`src/magicapply/pipelines/discovery.py`). Sources: `career_page`, `job_url`, `linkedin` (Playwright + `LINKEDIN_LI_AT`), `indeed`, `glassdoor` (`src/magicapply/infrastructure/sources/`). Each ToS-sensitive adapter refuses to run without an explicit `MAGICAPPLY_*_ACK=1` env var.
+- `magicapply tailor <profile>` — SCORED apps → LLM keyword extraction → match against `KeywordBank` → resume summary rewrite + evidence-based bullet injection + cover letter → files under `data/tailored/<app_id>/{resume.yaml,cover_letter.md,resume.docx}` → transition to TAILORED (`src/magicapply/pipelines/tailoring.py`). DOCX is rendered via `docxtpl` against `configs/resume_template.docx`.
+- `magicapply apply <job-id>` — one Application, real Playwright + Chromium, safe by default (`--no-submit` dry-run stops one click short; `--yes-submit` performs a real submission; `--retry` re-runs a FAILED application; `--no-headless` opens a visible browser and prompts the operator on NEEDS_INTERVENTION). Powered by `ApplyPipeline.apply_one` (`src/magicapply/pipelines/apply.py`).
 - `magicapply run <profile>` — discover → tailor → `ApplyPipeline.apply_batch` in one shared Chromium session (`src/magicapply/cli/commands/pipeline.py`). Same safety flags. Short-circuits the browser if no TAILORED apps exist.
 - `magicapply status` — table split by state with an additional `real: N, dry_run: M` note on the APPLIED bucket (`src/magicapply/cli/commands/status.py`).
-- `magicapply doctor` — reports Python, package, cwd, Chromium presence, and (when `--root` resolves) `llm.provider`, resolved data dir, and SQLite DB size (`src/magicapply/cli/main.py`).
+- `magicapply doctor --root <path>` — reports Python, package, cwd, Chromium presence, and (when config resolves) `llm.provider`, resolved data dir, and SQLite DB size (`src/magicapply/cli/main.py`).
 - `magicapply config validate`, `magicapply profiles list`, `magicapply status review`.
 
+**ATS handlers registered:** Greenhouse / Workday / Lever / Ashby (`src/magicapply/infrastructure/browser/ats/`). All four subclass `BaseATSHandler` and inherit CAPTCHA detection + Phase F dry-run short-circuit from the template method. Per-role custom fields (screening questions, DEI, yes/no) go through the shared `AnswerRouter` + `scan_form` machinery from Phase L.
+
 **Design invariants worth preserving:**
-- **Prompts live in YAML** (`configs/prompts.yaml`), loaded through a `PromptsConfig` Pydantic model and injected into `LLMScorer`, `Tailorer`, and `NarrativeEngine` on construction. Never inline in Python.
-- **`BaseATSHandler.apply` is the Template Method** for the invariant flow — navigate → CAPTCHA check → fill → CAPTCHA check → **`if data.dry_run` short-circuit** → submit → verify. New ATS handlers inherit the CAPTCHA and dry-run guards for free.
+- **Prompts live in YAML** (`configs/prompts.yaml`), loaded through a `PromptsConfig` Pydantic model and injected into `LLMScorer`, `Tailorer`, `NarrativeEngine`, and `KeywordExtractor` on construction. Never inline in Python.
+- **Keyword bank lives in YAML** (`configs/keyword_bank.yaml`, optional per-profile overrides via `configs/<name>-keywords.yaml`) with a `KeywordBank` Pydantic model. `LoadedConfig.effective_bank(profile)` merges global + override by `term`.
+- **`BaseATSHandler.apply` is the Template Method** for the invariant flow — navigate → CAPTCHA check → fill_static → fill_dynamic → CAPTCHA check → **`if data.dry_run` short-circuit** → submit → verify. New ATS handlers inherit the CAPTCHA and dry-run guards for free.
+- **`AnswerRouter` classifies each scanned form field** into one of six strategies (static / select / check / narrative / file / unhandled). Every ATS handler that walks a form reuses it — no hardcoded selector lists per employer.
 - **`ApplicationData.dry_run` + `Application.dry_run` (row)** — the flow terminal state is always `APPLIED`; the flag distinguishes real vs. dry-run so a single query reports both and `status` splits them at display.
 - **LLM providers** are selected by config: `anthropic`, `ollama` (Phase 2 stub), `mock` (shape-aware; no API key needed for full pipeline runs), `replay` (SHA-keyed YAML fixtures + record mode).
+- **Fast-fail candidate selectors**: multi-selector fallback loops (`_try_click` / `_try_fill` in the ATS handlers) pass a 500 ms Playwright timeout so missing selectors don't burn the 30 s default. Real ATS pages resolve well inside that budget; fixture tests stay under 30 s per suite run.
 
-**Deferred (Phase 2 roadmap):** LinkedIn scraping, Indeed, Glassdoor, Lever/Workday/Ashby handlers, keyword bank, review UI, Ollama provider implementation, Alembic migrations.
+**Deferred (Phase 2+ roadmap):** Ollama provider implementation, per-source live-fixture caching, Alembic migrations, review web UI, screening-question memory (answer cache keyed on question hash).
 
 ## Running in the dev VM
 
