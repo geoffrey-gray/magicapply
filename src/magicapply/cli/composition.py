@@ -22,6 +22,7 @@ from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import BaseResume, TailoredResume
 from magicapply.domain.resumes.narrative import NarrativeEngine
 from magicapply.domain.resumes.tailor import Tailorer
+from magicapply.infrastructure.browser.ats.answer_router import AnswerRouter
 from magicapply.infrastructure.browser.ats.base import ApplicationData
 from magicapply.infrastructure.llm import build_client
 from magicapply.infrastructure.rendering.docx import DocxResumeRenderer
@@ -146,7 +147,10 @@ def build_application_data(
     Reads the tailored resume + cover letter from disk (Phase D wrote them
     under ``app.tailored_path``) and combines them with the profile's static
     answers from ``base_config.yaml``. ``dry_run`` toggles the pre-submit
-    short-circuit in the ATS template method (Phase F).
+    short-circuit in the ATS template method (Phase F). Also attaches an
+    AnswerRouter (Phase L) so handlers can discover and fill per-role
+    custom fields (screening questions, DEI, yes/no) without a hardcoded
+    selector list per employer.
     """
     if not app.tailored_path:
         raise ValueError(f"application {app.id} has no tailored_path")
@@ -162,6 +166,12 @@ def build_application_data(
             f"application {app.id}: rendered DOCX missing at {resume_docx} — "
             f"re-run `magicapply tailor` to regenerate"
         )
+    profile = loaded.profile(app.profile_name)
+    router = AnswerRouter(
+        static_answers=loaded.base.static_answers,
+        narrative=build_narrative(loaded, profile),
+        resume_docx_path=resume_docx,
+    )
     return ApplicationData(
         job_url=job.url,
         static_answers=loaded.base.static_answers,
@@ -169,6 +179,8 @@ def build_application_data(
         resume_docx_path=resume_docx,
         cover_letter=cover_text or None,
         dry_run=dry_run,
+        answer_router=router,
+        job=job,
     )
 
 

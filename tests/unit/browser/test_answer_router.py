@@ -176,3 +176,27 @@ class TestUnhandled:
             selector="input[name='newsletter']", label="Newsletter", kind="checkbox"
         )
         assert _router().resolve(field, _job()).strategy == "unhandled"
+
+    def test_cover_letter_textarea_is_unhandled(self) -> None:
+        # The Greenhouse handler fills the cover letter textarea explicitly;
+        # the router must not overwrite it via a narrative call.
+        narrative = _RecordingNarrative()
+        field = FormField(
+            selector="textarea[name='cover_letter_text']",
+            label="Cover letter",
+            kind="textarea",
+        )
+        result = _router(narrative=narrative).resolve(field, _job())
+        assert result.strategy == "unhandled"
+        assert narrative.calls == []  # narrative engine not called
+
+    def test_plain_textarea_without_question_marker_is_unhandled(self) -> None:
+        # A textarea that does not read like a screening question stays
+        # unhandled so we do not spend tokens on it by accident.
+        narrative = _RecordingNarrative()
+        field = FormField(
+            selector="textarea[name='comments']", label="Comments", kind="textarea"
+        )
+        result = _router(narrative=narrative).resolve(field, _job())
+        assert result.strategy == "unhandled"
+        assert narrative.calls == []

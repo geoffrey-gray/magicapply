@@ -146,6 +146,12 @@ class _FakePage:
     def set_input_files(self, selector: str, files: str) -> None:
         self.calls.append(("set_input_files", selector, files))
 
+    def select_option(self, selector: str, value: str) -> None:
+        self.calls.append(("select_option", selector, value))
+
+    def check(self, selector: str) -> None:
+        self.calls.append(("check", selector))
+
     def close(self) -> None:
         pass
 

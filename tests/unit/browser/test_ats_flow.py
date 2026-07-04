@@ -39,6 +39,12 @@ class FakePage:
     def set_input_files(self, selector: str, files: str) -> None:
         self.actions.append(("set_input_files", (selector, files)))
 
+    def select_option(self, selector: str, value: str) -> None:
+        self.actions.append(("select_option", (selector, value)))
+
+    def check(self, selector: str) -> None:
+        self.actions.append(("check", (selector,)))
+
 
 def _data(
     url: str = "https://boards.greenhouse.io/acme/jobs/1",

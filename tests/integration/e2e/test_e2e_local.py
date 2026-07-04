@@ -112,6 +112,8 @@ static_answers:
   email: e2e@example.test
   phone: "555-0100"
   linkedin_url: https://linkedin.com/in/e2e
+  authorized_to_work_us: true
+  needs_sponsorship_us: false
 paths:
   resumes_dir: ../resumes
   data_dir: ../data
@@ -271,6 +273,10 @@ class TestE2EYesSubmit:
             assert form["phone"] == "555-0100"
             assert form["linkedin_url"].startswith("https://linkedin.com/")
             assert form["cover_letter_text"]
+            # Yes/no select — router picked Yes for authorized_to_work_us=True.
+            assert form["authorized"] == "Yes"
+            # Open-ended textarea — router dispatched to NarrativeEngine.answer.
+            assert form["why_acme"], "expected an answer from the narrative engine"
             # Resume DOCX was uploaded via multipart/form-data.
             resume_bytes = form["_files"]["resume"]
             assert resume_bytes[:4] == b"PK\x03\x04"

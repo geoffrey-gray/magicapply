@@ -122,14 +122,19 @@ class AnswerRouter:
             return ResolvedAnswer("unhandled")
 
         # 4. Text / textarea — identity patterns win first, then anything
-        #    long-form goes to the narrative engine.
+        #    that reads like a screening question goes to the narrative
+        #    engine. "Cover letter" and similar known-handler-owned
+        #    textareas fall through to unhandled so the handler's explicit
+        #    fill is not overwritten.
         if field.kind in {"text", "textarea"}:
             for pattern, attr in _IDENTITY_PATTERNS:
                 if pattern.search(label):
                     return _identity_answer(attr, self._answers)
 
-            # Fall through to narrative for open-ended text/textarea.
-            if field.kind == "textarea" or _looks_open_ended(label):
+            if _is_handler_owned_textarea(label):
+                return ResolvedAnswer("unhandled")
+
+            if _looks_open_ended(label):
                 answer = self._narrative.answer(job, field.label)
                 return ResolvedAnswer("narrative", answer)
 
@@ -190,3 +195,8 @@ def _looks_open_ended(label: str) -> bool:
             "?",
         )
     )
+
+
+def _is_handler_owned_textarea(label: str) -> bool:
+    """Labels the handler fills explicitly (cover letter, resume text)."""
+    return any(marker in label for marker in ("cover letter", "letter of introduction"))

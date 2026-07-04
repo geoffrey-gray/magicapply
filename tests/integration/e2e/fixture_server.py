@@ -110,6 +110,16 @@ _APPLY_FORM_HTML = """\
       <label>LinkedIn <input name="linkedin_url"></label>
       <label>Cover letter <textarea name="cover_letter_text"></textarea></label>
       <label>Resume <input type="file" name="resume"></label>
+      <label>Are you authorized to work in the US?
+        <select name="authorized">
+          <option value="">--</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </label>
+      <label>Why do you want to work at Acme?
+        <textarea name="why_acme"></textarea>
+      </label>
       <input type="submit" value="Apply">
     </form>
   </body>

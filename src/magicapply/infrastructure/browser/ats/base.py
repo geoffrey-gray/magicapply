@@ -26,8 +26,8 @@ class PageDriver(Protocol):
     """Minimal browser page surface used by ATS handlers.
 
     playwright's `Page` satisfies this structurally (goto, fill, click,
-    content, set_input_files are all methods on it), so real runs need no
-    adapter.
+    content, set_input_files, select_option, check are all methods on it),
+    so real runs need no adapter.
     """
 
     def goto(self, url: str) -> None: ...
@@ -35,6 +35,8 @@ class PageDriver(Protocol):
     def click(self, selector: str) -> None: ...
     def content(self) -> str: ...
     def set_input_files(self, selector: str, files: str) -> None: ...
+    def select_option(self, selector: str, value: str) -> None: ...
+    def check(self, selector: str) -> None: ...
 
 
 class ApplicationData(BaseModel):
@@ -51,6 +53,12 @@ class ApplicationData(BaseModel):
     produced (see ``TailoringPipeline`` + ``DocxResumeRenderer``); handlers
     call ``page.set_input_files`` with it against whichever file input the
     ATS exposes.
+
+    ``answer_router`` (when present) drives Phase L per-form field
+    discovery — the handler scans the DOM, hands each field to
+    ``AnswerRouter.resolve`` alongside the Job, and dispatches the
+    resulting strategy. When None, handlers fall back to their historical
+    fixed selector list.
     """
 
     model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
@@ -61,6 +69,13 @@ class ApplicationData(BaseModel):
     resume_docx_path: Path
     cover_letter: str | None = None
     dry_run: bool = False
+    # AnswerRouter is intentionally not typed here to avoid a circular
+    # import at module load; the handler does the isinstance check.
+    answer_router: object | None = None
+    # Optional per-application Job — the answer router needs it to hand
+    # screening questions to NarrativeEngine.answer. Kept optional so
+    # simpler tests don't have to construct one.
+    job: object | None = None
 
 
 class ApplicationResult(BaseModel):
