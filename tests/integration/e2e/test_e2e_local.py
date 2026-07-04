@@ -74,6 +74,10 @@ cover_letter: |
   Write a cover letter body from the base resume.
 answer: |
   Answer the screening question from the resume.
+keyword_extraction: |
+  Extract JD terms as a JSON array.
+bullet_rewrite: |
+  Rewrite each bullet as a JSON array, weaving in evidence.
 """
 
 
@@ -126,6 +130,21 @@ sources:
     (root / "configs" / "prompts.yaml").write_text(_PROMPTS_YAML)
     (root / "configs" / "profiles" / "e2e.yaml").write_text(
         "name: e2e\nbase_resume: e2e.yaml\nsources: [fixture]\n"
+    )
+    # Seed a small keyword bank so bullet injection fires. The mock's
+    # canned extractor response is ["python", "distributed systems",
+    # "microservices"], so a bank entry keyed on "python" or "distributed
+    # systems" will match.
+    (root / "configs" / "keyword_bank.yaml").write_text(
+        """
+version: 1
+keywords:
+  - term: distributed systems
+    evidence: Led migration to microservices at Acme, cutting p99 latency
+    synonyms: [microservices]
+  - term: python
+    evidence: 5+ years, primary language
+"""
     )
     shutil.copy(_REPO_TEMPLATE, root / "configs" / "resume_template.docx")
     return root / "configs"
@@ -234,6 +253,21 @@ class TestE2EDryRun:
         # the fixture URL and therefore changes every run — redact it before
         # comparing.
         _check_tailored_goldens(tmp_path)
+
+        # Bullet injection fired: at least one tailored resume records a
+        # "bank matches" line in its changes list, and the mock-injected
+        # evidence marker appears in a bullet.
+        found_injection = False
+        for resume_path in artifacts:
+            data = yaml.safe_load(resume_path.read_text())
+            if any("bank matches" in c for c in data.get("changes", [])):
+                found_injection = True
+                assert any(
+                    "distributed systems evidence woven in" in b
+                    for exp in data["experience"]
+                    for b in exp["bullets"]
+                )
+        assert found_injection, "expected at least one tailored resume with bank matches"
 
         # Step 3: run — real Chromium drives the fixture form, stops one
         # click short of Submit (default --no-submit).

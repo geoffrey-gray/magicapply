@@ -9,7 +9,8 @@ import pytest
 import yaml
 from sqlalchemy import Engine
 
-from magicapply.config.models import PromptsConfig
+from magicapply.config.models import KeywordBank, PromptsConfig
+from magicapply.domain.keywords.extractor import KeywordExtractor
 from magicapply.domain.models.application import Application, ApplicationState
 from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import BaseResume, TailoredResume
@@ -77,6 +78,8 @@ def _pipeline(
         tailorer=tailorer,
         narrative=narrative,
         resume_renderer=DocxResumeRenderer(_TEMPLATE_PATH),
+        keyword_extractor=KeywordExtractor(llm, extraction_prompt=""),
+        keyword_bank=KeywordBank(),
         profile_name=profile_name,
         data_dir=tmp_path,
     )

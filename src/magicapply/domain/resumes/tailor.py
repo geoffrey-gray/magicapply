@@ -14,9 +14,11 @@ truthful.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Self
 
+from magicapply.config.models import KeywordEntry
 from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import (
     BaseResume,
@@ -84,20 +86,91 @@ class Tailorer:
         base: BaseResume,
         *,
         summary_prompt: str,
+        bullet_prompt: str = "",
     ) -> None:
         self._llm = llm
         self._base = base
         self._prompt = summary_prompt
+        self._bullet_prompt = bullet_prompt
         # Serialize base resume once — this is the cacheable payload reused
         # across every job in a discovery run.
         self._base_text = _serialize_resume(base)
 
-    def tailor_for(self, job: Job) -> TailoredResume:
+    def tailor_for(
+        self,
+        job: Job,
+        matched_bank: list[KeywordEntry] | None = None,
+    ) -> TailoredResume:
         builder = TailoredResumeBuilder(self._base, job)
         summary = self._rewrite_summary(job)
         if summary and summary != (self._base.summary or ""):
             builder.with_summary(summary, "aligned to JD focus")
+
+        # Evidence-based bullet injection. Skipped when the prompt is not
+        # configured, when there are no matched bank entries, or when the
+        # base resume has no experience — any of those means we would
+        # spend LLM tokens for nothing.
+        if matched_bank and self._bullet_prompt and self._base.experience:
+            rewritten = self._rewrite_bullets(job, matched_bank)
+            if rewritten != list(self._base.experience):
+                builder.with_reordered_experience(
+                    rewritten,
+                    f"bullets updated with {len(matched_bank)} bank matches",
+                )
         return builder.build()
+
+    def _rewrite_bullets(
+        self,
+        job: Job,
+        matched_bank: list[KeywordEntry],
+    ) -> list[ExperienceEntry]:
+        """Rewrite each experience entry's bullets, injecting bank evidence
+        where it naturally fits. Strict: any LLM output that shortens the
+        list or fails to parse falls back to the original bullets for that
+        entry — we would rather ship the truthful original than a truncated
+        rewrite.
+        """
+        evidence_lines = "\n".join(
+            f"- {e.term}: {e.evidence}" for e in matched_bank
+        )
+        out: list[ExperienceEntry] = []
+        for entry in self._base.experience:
+            if not entry.bullets:
+                out.append(entry)
+                continue
+            new_bullets = self._rewrite_one_entry(job, entry, evidence_lines)
+            if new_bullets is None or len(new_bullets) != len(entry.bullets):
+                out.append(entry)
+                continue
+            out.append(entry.model_copy(update={"bullets": new_bullets}))
+        return out
+
+    def _rewrite_one_entry(
+        self,
+        job: Job,
+        entry: ExperienceEntry,
+        evidence_lines: str,
+    ) -> list[str] | None:
+        system = [
+            SystemBlock(text=self._bullet_prompt, cacheable=False),
+            SystemBlock(text=f"BASE RESUME:\n{self._base_text}", cacheable=True),
+        ]
+        user = (
+            f"JOB TITLE: {job.title}\n"
+            f"COMPANY: {job.company}\n"
+            f"\nDESCRIPTION:\n{job.description}\n"
+            f"\nKEYWORD BANK MATCHES:\n{evidence_lines}\n"
+            f"\nROLE: {entry.title} at {entry.company}\n"
+            f"BULLETS (JSON array, rewrite each in the same order):\n"
+            f"{json.dumps(entry.bullets)}\n"
+        )
+        result = self._llm.complete(
+            system=system,
+            messages=[LLMMessage(role="user", content=user)],
+            max_tokens=1200,
+            temperature=0.3,
+        )
+        return _parse_bullet_list(result.text)
 
     def _rewrite_summary(self, job: Job) -> str:
         system = [
@@ -117,6 +190,35 @@ class Tailorer:
             temperature=0.3,
         )
         return result.text.strip()
+
+
+def _parse_bullet_list(raw: str) -> list[str] | None:
+    """Parse a JSON array of strings; be lenient about fences. Returns None
+    on any failure so the caller can fall back to the originals cleanly.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.strip("`").strip()
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+        text = text.rstrip("`").strip()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning("bullet rewrite: JSON parse failed: %r", raw[:200])
+        return None
+    if not isinstance(data, list):
+        return None
+    result: list[str] = []
+    for item in data:
+        if not isinstance(item, str):
+            return None
+        stripped = item.strip()
+        if not stripped:
+            return None
+        result.append(stripped)
+    return result
 
 
 def _serialize_resume(base: BaseResume) -> str:

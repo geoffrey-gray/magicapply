@@ -17,6 +17,7 @@ import yaml
 from magicapply.config import LoadedConfig, Profile
 from magicapply.config.models import ScoringConfig
 from magicapply.domain.jobs.scoring import JobScorer, LLMScorer, Prefilter
+from magicapply.domain.keywords.extractor import KeywordExtractor
 from magicapply.domain.models.application import Application
 from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import BaseResume, TailoredResume
@@ -85,6 +86,7 @@ def build_tailorer(loaded: LoadedConfig, profile: Profile) -> Tailorer:
         llm,
         _load_base_resume(loaded, profile),
         summary_prompt=loaded.prompts.summary,
+        bullet_prompt=loaded.prompts.bullet_rewrite,
     )
 
 
@@ -106,12 +108,18 @@ def build_tailoring_pipeline(
     jobs_repo: SqlJobsRepository,
 ) -> TailoringPipeline:
     template_path = loaded.root / "resume_template.docx"
+    extractor = KeywordExtractor(
+        build_client(loaded.base.llm, prompts=loaded.prompts),
+        extraction_prompt=loaded.prompts.keyword_extraction,
+    )
     return TailoringPipeline(
         apps_repo=apps_repo,
         jobs_repo=jobs_repo,
         tailorer=build_tailorer(loaded, profile),
         narrative=build_narrative(loaded, profile),
         resume_renderer=DocxResumeRenderer(template_path),
+        keyword_extractor=extractor,
+        keyword_bank=loaded.effective_bank(profile),
         profile_name=profile.name,
         data_dir=loaded.data_dir(),
     )

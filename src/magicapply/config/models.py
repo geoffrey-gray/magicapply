@@ -199,6 +199,7 @@ class PromptsConfig(BaseModel):
     cover_letter: str
     answer: str
     keyword_extraction: str = ""
+    bullet_rewrite: str = ""
 
     @field_validator("scoring", "summary", "cover_letter", "answer")
     @classmethod

@@ -111,6 +111,11 @@ class MockLLMClient:
             and self._prompts.keyword_extraction in first_system
         ):
             return '["python", "distributed systems", "microservices"]'
+        if (
+            self._prompts.bullet_rewrite
+            and self._prompts.bullet_rewrite in first_system
+        ):
+            return _mock_bullet_rewrite(user_text)
 
         raise RuntimeError(
             "MockLLMClient shape-aware mode saw an unrecognized prompt. "
@@ -154,3 +159,37 @@ def _mock_answer(user_text: str) -> str:
     m = _QUESTION_RE.search(user_text)
     question_preview = m.group(1).strip().splitlines()[0] if m else "the question"
     return f"Yes — based on my resume, I can address {question_preview.lower()}"
+
+
+def _mock_bullet_rewrite(user_text: str) -> str:
+    """Return a JSON array whose length equals the input BULLETS list length.
+
+    Parses the input BULLETS JSON out of the user prompt so the length
+    matches -- the Tailorer rejects a length-mismatched response and falls
+    back to originals, and we want the mock to exercise the happy path.
+    """
+    import json as _json
+    import re as _re
+
+    marker = "BULLETS (JSON array, rewrite each in the same order):"
+    idx = user_text.find(marker)
+    if idx < 0:
+        return "[]"
+    tail = user_text[idx + len(marker):].strip()
+    # Take the first line that starts with [
+    match = _re.search(r"\[.*?\]", tail, _re.DOTALL)
+    if not match:
+        return "[]"
+    try:
+        originals = _json.loads(match.group(0))
+    except _json.JSONDecodeError:
+        return "[]"
+    if not isinstance(originals, list):
+        return "[]"
+    # Weave a fixed evidence phrase into each bullet so the E2E test can
+    # spot the injection without hardcoding a template per bullet.
+    rewritten = [
+        f"{bullet} (distributed systems evidence woven in)"
+        for bullet in originals
+    ]
+    return _json.dumps(rewritten)

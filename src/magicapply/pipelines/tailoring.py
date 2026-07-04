@@ -21,6 +21,9 @@ from pathlib import Path
 
 import yaml
 
+from magicapply.config.models import KeywordBank
+from magicapply.domain.keywords.extractor import KeywordExtractor
+from magicapply.domain.keywords.matcher import match_bank
 from magicapply.domain.models.application import ApplicationState
 from magicapply.domain.repositories import (
     ApplicationsRepository,
@@ -51,6 +54,8 @@ class TailoringPipeline:
         tailorer: Tailorer,
         narrative: NarrativeEngine,
         resume_renderer: DocxResumeRenderer,
+        keyword_extractor: KeywordExtractor,
+        keyword_bank: KeywordBank,
         profile_name: str,
         data_dir: Path,
     ) -> None:
@@ -59,6 +64,8 @@ class TailoringPipeline:
         self._tailorer = tailorer
         self._narrative = narrative
         self._renderer = resume_renderer
+        self._extractor = keyword_extractor
+        self._bank = keyword_bank
         self._profile = profile_name
         self._data_dir = data_dir
 
@@ -81,7 +88,9 @@ class TailoringPipeline:
                 continue
 
             try:
-                tailored = self._tailorer.tailor_for(job)
+                extracted = self._extractor.extract(job)
+                matched = match_bank(extracted, self._bank)
+                tailored = self._tailorer.tailor_for(job, matched_bank=matched)
                 cover = self._narrative.cover_letter(job)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("tailoring failed for %s: %s", app.id, exc)

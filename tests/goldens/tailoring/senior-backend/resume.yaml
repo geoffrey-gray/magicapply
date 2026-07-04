@@ -14,10 +14,11 @@ experience:
   end: null
   location: null
   bullets:
-  - Built things.
+  - Built things. (distributed systems evidence woven in)
 education: []
 skills:
 - python
 - distributed systems
 changes:
 - 'summary rewritten: aligned to JD focus'
+- 'experience reordered: bullets updated with 2 bank matches'
