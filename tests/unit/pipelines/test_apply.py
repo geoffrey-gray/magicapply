@@ -121,6 +121,67 @@ class TestConstructionGuards:
             pipeline.apply_batch(session=session, profile_name="swe", dry_run=True)
 
 
+class TestRetry:
+    def test_retry_on_failed_transitions_to_applied(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        _, app = _seed_tailored(
+            engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/1"
+        )
+        apps = SqlApplicationsRepository(engine)
+        # Move the app through TAILORED -> APPLYING -> FAILED (simulate a
+        # first attempt that hit an ATS handler exception).
+        app.transition_to(ApplicationState.APPLYING)
+        app.transition_to(ApplicationState.FAILED, reason="first attempt failed")
+        apps.save(app)
+
+        pipeline = ApplyPipeline(applications_repo=apps)
+        page = _FakePage()
+        report = pipeline.apply_one(
+            page=page,
+            application=app,
+            job=Job.new(
+                source_name="s",
+                url="https://boards.greenhouse.io/acme/jobs/1",
+                title="X",
+                company="Acme",
+            ),
+            application_data=_data_builder(app, _job_stub(app), dry_run=False),
+            retry=True,
+        )
+        assert report.final_state is ApplicationState.APPLIED
+
+    def test_retry_false_still_rejects_failed_state(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        _, app = _seed_tailored(
+            engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/1"
+        )
+        apps = SqlApplicationsRepository(engine)
+        app.transition_to(ApplicationState.APPLYING)
+        app.transition_to(ApplicationState.FAILED)
+        apps.save(app)
+
+        pipeline = ApplyPipeline(applications_repo=apps)
+        with pytest.raises(ValueError, match="tailored"):
+            pipeline.apply_one(
+                page=_FakePage(),
+                application=app,
+                job=_job_stub(app),
+                application_data=_data_builder(app, _job_stub(app), dry_run=False),
+                retry=False,
+            )
+
+
+def _job_stub(app: Application) -> Job:
+    return Job.new(
+        source_name="s",
+        url="https://boards.greenhouse.io/acme/jobs/1",
+        title="X",
+        company="Acme",
+    )
+
+
 class TestApplyBatchHappyPath:
     def test_empty_queue_returns_empty_reports(
         self, engine: Engine, tmp_path: Path

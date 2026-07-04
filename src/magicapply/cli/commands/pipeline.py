@@ -226,6 +226,14 @@ def apply(
             "--yes-submit performs a real submission.",
         ),
     ] = True,
+    retry: Annotated[
+        bool,
+        typer.Option(
+            "--retry",
+            help="Re-run apply against a previously FAILED application "
+            "(re-executes the ATS handler on the same tailored artifacts).",
+        ),
+    ] = False,
 ) -> None:
     """Apply to one job. Requires the application to be in TAILORED state.
 
@@ -238,20 +246,21 @@ def apply(
     loaded = _load(root)
     jobs_repo, apps_repo = build_repos(loaded.data_dir())
 
-    # A job may have TAILORED applications under more than one profile; find
-    # them all and require a unique match.
+    # --retry searches FAILED applications; default searches TAILORED.
+    target_state = ApplicationState.FAILED if retry else ApplicationState.TAILORED
     matches = [
-        a for a in apps_repo.list_by_state(ApplicationState.TAILORED)
+        a for a in apps_repo.list_by_state(target_state)
         if a.job_id == job_id
     ]
     if not matches:
-        console.print(f"[red]no TAILORED application for job {job_id}[/red]")
+        state_word = target_state.value.upper()
+        console.print(f"[red]no {state_word} application for job {job_id}[/red]")
         raise typer.Exit(code=1)
     if len(matches) > 1:
         profiles = sorted({a.profile_name for a in matches})
         console.print(
-            f"[red]multiple TAILORED applications for job {job_id} "
-            f"(profiles: {profiles}); ambiguous[/red]"
+            f"[red]multiple {target_state.value.upper()} applications for job "
+            f"{job_id} (profiles: {profiles}); ambiguous[/red]"
         )
         raise typer.Exit(code=1)
 
@@ -271,6 +280,7 @@ def apply(
             application=application,
             job=job,
             application_data=data,
+            retry=retry,
         )
 
     console.print(f"application: {report.application_id}")

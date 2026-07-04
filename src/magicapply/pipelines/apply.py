@@ -70,10 +70,17 @@ class ApplyPipeline:
         application: Application,
         job: Job,
         application_data: ApplicationData,
+        retry: bool = False,
     ) -> ApplyReport:
-        if application.state is not ApplicationState.TAILORED:
+        allowed = (
+            {ApplicationState.TAILORED, ApplicationState.FAILED}
+            if retry
+            else {ApplicationState.TAILORED}
+        )
+        if application.state not in allowed:
             raise ValueError(
-                f"apply_one requires TAILORED state; got {application.state}"
+                f"apply_one requires {sorted(s.value for s in allowed)}; "
+                f"got {application.state}"
             )
 
         handler = ATSHandlerFactory.for_url(job.url)
