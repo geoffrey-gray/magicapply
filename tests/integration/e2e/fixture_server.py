@@ -184,6 +184,25 @@ _LEVER_FORM_HTML = """\
 </html>
 """
 
+_ASHBY_FORM_HTML = """\
+<!doctype html>
+<html>
+  <head><title>Ashby Apply</title></head>
+  <body>
+    <h1>Ashby Apply</h1>
+    <form method="POST" action="/submit" enctype="multipart/form-data">
+      <label>Full name <input name="_systemfield_name"></label>
+      <label>Email <input name="_systemfield_email"></label>
+      <label>Phone <input name="_systemfield_phone"></label>
+      <label>LinkedIn <input name="_systemfield_linkedin"></label>
+      <label>Location <input name="_systemfield_location"></label>
+      <label>Resume <input type="file" name="_systemfield_resume"></label>
+      <button type="submit">Submit application</button>
+    </form>
+  </body>
+</html>
+"""
+
 _THANK_YOU_HTML = "<!doctype html><html><body><h1>Thanks!</h1></body></html>"
 
 
@@ -215,6 +234,11 @@ class FixtureServer:
                     return
                 if self.path.startswith("/jobs.lever.co/") and self.path.endswith("/apply"):
                     self._html(_LEVER_FORM_HTML)
+                    return
+                if self.path.startswith("/jobs.ashbyhq.com/") and (
+                    self.path.endswith("/apply") or self.path.endswith("/application")
+                ):
+                    self._html(_ASHBY_FORM_HTML)
                     return
                 if self.path == "/submit" or self.path == "/thanks":
                     self._html(_THANK_YOU_HTML)
