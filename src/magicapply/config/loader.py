@@ -9,10 +9,11 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from magicapply.config.models import BaseConfig, Profile, PromptsConfig
+from magicapply.config.models import BaseConfig, KeywordBank, Profile, PromptsConfig
 
 BASE_CONFIG_FILENAME = "base_config.yaml"
 PROMPTS_FILENAME = "prompts.yaml"
+KEYWORD_BANK_FILENAME = "keyword_bank.yaml"
 PROFILES_DIRNAME = "profiles"
 
 
@@ -22,11 +23,14 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True, slots=True)
 class LoadedConfig:
-    """Result of loading a config root: the base + all profiles + prompts."""
+    """Result of loading a config root: the base + all profiles + prompts +
+    (optional) global keyword bank.
+    """
 
     base: BaseConfig
     profiles: dict[str, Profile]
     prompts: PromptsConfig
+    keyword_bank: KeywordBank
     root: Path
 
     def resumes_dir(self) -> Path:
@@ -40,6 +44,19 @@ class LoadedConfig:
             return self.profiles[name]
         except KeyError as exc:
             raise ConfigError(f"unknown profile: {name!r}") from exc
+
+    def effective_bank(self, profile: Profile) -> KeywordBank:
+        """Global bank merged with the profile's optional override.
+
+        Override entries win by ``term``; entries in the override that are
+        new to the global bank get appended. When the profile has no
+        override, returns the global bank unchanged.
+        """
+        if not profile.keyword_bank_override:
+            return self.keyword_bank
+        override_path = _resolve(self.root, profile.keyword_bank_override)
+        override = _validate_keyword_bank(override_path)
+        return self.keyword_bank.extend_with(override)
 
 
 def load_config(root: Path) -> LoadedConfig:
@@ -58,8 +75,15 @@ def load_config(root: Path) -> LoadedConfig:
     base = _load_base(root)
     profiles = _load_profiles(root)
     prompts = _load_prompts(root)
+    keyword_bank = _load_keyword_bank(root)
     _validate_cross_refs(base, profiles, root)
-    return LoadedConfig(base=base, profiles=profiles, prompts=prompts, root=root)
+    return LoadedConfig(
+        base=base,
+        profiles=profiles,
+        prompts=prompts,
+        keyword_bank=keyword_bank,
+        root=root,
+    )
 
 
 def _load_base(root: Path) -> BaseConfig:
@@ -82,6 +106,22 @@ def _load_prompts(root: Path) -> PromptsConfig:
         return PromptsConfig.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(f"invalid {path}:\n{exc}") from exc
+
+
+def _load_keyword_bank(root: Path) -> KeywordBank:
+    path = root / KEYWORD_BANK_FILENAME
+    if not path.exists():
+        # Banks are optional; a missing file yields an empty bank.
+        return KeywordBank()
+    return _validate_keyword_bank(path)
+
+
+def _validate_keyword_bank(path: Path) -> KeywordBank:
+    raw = _read_yaml(path)
+    try:
+        return KeywordBank.model_validate(raw)
+    except ValidationError as exc:
+        raise ConfigError(f"invalid keyword bank {path}:\n{exc}") from exc
 
 
 def _load_profiles(root: Path) -> dict[str, Profile]:

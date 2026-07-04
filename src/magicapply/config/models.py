@@ -184,10 +184,11 @@ class PromptsConfig(BaseModel):
     """LLM prompt instructions.
 
     Prompts are static behavior specification (what defines a good score, a
-    good summary, a good cover letter, a good screening answer). Per the
-    "Config over code" guardrail they live in `configs/prompts.yaml`, not
-    inline in domain modules. Domain classes receive the specific prompt
-    string on construction from the composition root.
+    good summary, a good cover letter, a good screening answer, which JD
+    terms count as keywords). Per the "Config over code" guardrail they
+    live in `configs/prompts.yaml`, not inline in domain modules. Domain
+    classes receive the specific prompt string on construction from the
+    composition root.
     """
 
     model_config = _Strict
@@ -197,6 +198,7 @@ class PromptsConfig(BaseModel):
     summary: str
     cover_letter: str
     answer: str
+    keyword_extraction: str = ""
 
     @field_validator("scoring", "summary", "cover_letter", "answer")
     @classmethod
@@ -204,6 +206,68 @@ class PromptsConfig(BaseModel):
         if not v.strip():
             raise ValueError("prompt must not be blank")
         return v
+
+
+class KeywordEntry(BaseModel):
+    """One term the operator has verified they can speak to.
+
+    ``evidence`` is a short factual phrase (metric, project, tenure) the
+    bullet-injection prompt can weave into a rewritten bullet without
+    inventing anything. ``synonyms`` broadens the JD-term match: a job
+    that mentions "microservices" still matches an entry keyed on
+    "distributed systems" if that synonym is listed. ``tags`` is
+    free-form and used only for grouping / filtering in the CLI.
+    """
+
+    model_config = _Strict
+
+    term: str
+    synonyms: list[str] = Field(default_factory=list)
+    evidence: str
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("term", "evidence")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be blank")
+        return v
+
+
+class KeywordBank(BaseModel):
+    """Global bank of terms + evidence a profile can draw from.
+
+    Loaded from ``configs/keyword_bank.yaml`` (missing file = empty bank,
+    not an error — banks are optional). Per-profile overrides are merged
+    via ``extend_with`` — override entries win by ``term``.
+    """
+
+    model_config = _Strict
+
+    version: Literal[1] = 1
+    keywords: list[KeywordEntry] = Field(default_factory=list)
+
+    def extend_with(self, override: KeywordBank) -> KeywordBank:
+        """Return a new bank whose entries are self.keywords updated by override.
+
+        Entries with matching ``term`` are replaced by the override entry;
+        new terms in override are appended. Original order of self is
+        preserved for stability.
+        """
+        by_term: dict[str, KeywordEntry] = {e.term: e for e in self.keywords}
+        for entry in override.keywords:
+            by_term[entry.term] = entry
+        # Preserve self order, then append terms new-to-override at the end.
+        ordered: list[KeywordEntry] = []
+        seen: set[str] = set()
+        for entry in self.keywords:
+            ordered.append(by_term[entry.term])
+            seen.add(entry.term)
+        for entry in override.keywords:
+            if entry.term not in seen:
+                ordered.append(entry)
+                seen.add(entry.term)
+        return KeywordBank(version=self.version, keywords=ordered)
 
 
 class ApplyBehavior(BaseModel):
@@ -225,6 +289,9 @@ class Profile(BaseModel):
     scoring: ScoringConfig | None = None
     sources: list[str] = Field(default_factory=list)
     apply: ApplyBehavior = Field(default_factory=ApplyBehavior)
+    # Optional per-profile keyword bank that extends the global one; see
+    # LoadedConfig.effective_bank for merge semantics.
+    keyword_bank_override: str | None = None
 
     @field_validator("name")
     @classmethod
