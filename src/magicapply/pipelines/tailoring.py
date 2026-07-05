@@ -6,7 +6,9 @@ State machine transition performed by this pipeline:
 Artifacts written to disk under ``<data_dir>/tailored/<application_id>/`` so
 the user can inspect exactly what will be sent to the ATS:
     - ``resume.yaml``       -- the tailored resume (YAML, same shape as base)
-    - ``cover_letter.md``   -- the cover-letter body (Markdown)
+    - ``cover_letter.md``   -- the cover-letter body (only when
+                              ``generate_cover_letter=True``; Phase 1 defers
+                              the wire-up per ``final_dod_plan.md`` W.2)
 
 The pipeline is naturally idempotent: it queries
 ``apps_repo.list_by_state_and_profile(SCORED, profile_name)``, so already-
@@ -59,6 +61,7 @@ class TailoringPipeline:
         source_docx_path: Path,
         profile_name: str,
         data_dir: Path,
+        generate_cover_letter: bool = False,
     ) -> None:
         self._apps = apps_repo
         self._jobs = jobs_repo
@@ -70,6 +73,7 @@ class TailoringPipeline:
         self._source_docx = source_docx_path
         self._profile = profile_name
         self._data_dir = data_dir
+        self._generate_cover_letter = generate_cover_letter
 
     def run(self) -> TailoringReport:
         report = TailoringReport()
@@ -93,7 +97,11 @@ class TailoringPipeline:
                 extracted = self._extractor.extract(job)
                 matched = match_bank(extracted, self._bank)
                 tailored = self._tailorer.tailor_for(job, matched_bank=matched)
-                cover = self._narrative.cover_letter(job)
+                cover = (
+                    self._narrative.cover_letter(job)
+                    if self._generate_cover_letter
+                    else None
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("tailoring failed for %s: %s", app.id, exc)
                 report.errors.append(f"{app.id}: {type(exc).__name__}: {exc}")
@@ -108,7 +116,8 @@ class TailoringPipeline:
                     allow_unicode=True,
                 )
             )
-            (app_dir / "cover_letter.md").write_text(cover)
+            if cover is not None:
+                (app_dir / "cover_letter.md").write_text(cover)
 
             # Phase 1: in-place DOCX tailoring — open the operator's
             # original file, swap bank synonyms for JD-emphasised terms

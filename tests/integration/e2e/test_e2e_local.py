@@ -183,19 +183,20 @@ def _load_applied(tmp_path: Path) -> list:
 
 _UPDATE_GOLDENS = os.environ.get("MAGICAPPLY_UPDATE_GOLDENS") == "1"
 
-# Cover letter -> slug lookup. The shape-aware mock echoes the parsed job
-# title into the letter, so a simple substring is enough.
+# Slug lookup uses the tailored summary field. The shape-aware mock echoes
+# the parsed job title into the summary, so a simple substring is enough.
 _TITLE_TO_SLUG = {
     "Senior Backend Engineer": "senior-backend",
     "Director of Engineering": "director",
 }
 
 
-def _slug_from_cover_letter(cover: str) -> str:
+def _slug_from_resume(resume_dict: dict) -> str:
+    summary = resume_dict.get("summary") or ""
     for title, slug in _TITLE_TO_SLUG.items():
-        if title in cover:
+        if title in summary:
             return slug
-    raise AssertionError(f"cover letter matches no known fixture job: {cover[:120]!r}")
+    raise AssertionError(f"tailored resume matches no known fixture job: {summary[:120]!r}")
 
 
 def _redact_job_id(resume_dict: dict) -> dict:
@@ -206,20 +207,24 @@ def _redact_job_id(resume_dict: dict) -> dict:
 
 
 def _check_tailored_goldens(tmp_path: Path) -> None:
+    # W.2: Phase 1 defers cover letter generation, so goldens cover only
+    # the tailored resume yaml. Cover letter goldens will return in
+    # Phase 2 once the LLM is real.
     for app_dir in sorted((tmp_path / "data" / "tailored").iterdir()):
         actual_resume = _redact_job_id(
             yaml.safe_load((app_dir / "resume.yaml").read_text())
         )
-        actual_cover = (app_dir / "cover_letter.md").read_text()
-        slug = _slug_from_cover_letter(actual_cover)
+        slug = _slug_from_resume(actual_resume)
         golden_dir = _GOLDENS_ROOT / slug
+
+        # The Phase 1 pipeline should not have written cover_letter.md.
+        assert not (app_dir / "cover_letter.md").exists()
 
         if _UPDATE_GOLDENS:
             golden_dir.mkdir(parents=True, exist_ok=True)
             (golden_dir / "resume.yaml").write_text(
                 yaml.safe_dump(actual_resume, sort_keys=False, allow_unicode=True)
             )
-            (golden_dir / "cover_letter.md").write_text(actual_cover)
             continue
 
         golden_resume = yaml.safe_load(
@@ -227,10 +232,6 @@ def _check_tailored_goldens(tmp_path: Path) -> None:
         )
         assert actual_resume == golden_resume, (
             f"tailored resume drift for {slug}; MAGICAPPLY_UPDATE_GOLDENS=1 to regen"
-        )
-        golden_cover = (golden_dir / "cover_letter.md").read_text()
-        assert actual_cover == golden_cover, (
-            f"cover letter drift for {slug}; MAGICAPPLY_UPDATE_GOLDENS=1 to regen"
         )
 
 
@@ -316,7 +317,9 @@ class TestE2EYesSubmit:
             assert form["email"] == "e2e@example.test"
             assert form["phone"] == "555-0100"
             assert form["linkedin_url"].startswith("https://linkedin.com/")
-            assert form["cover_letter_text"]
+            # W.2: Phase 1 defers cover letter generation, so the form's
+            # cover-letter textarea stays blank. Phase 2 will fill it.
+            assert form.get("cover_letter_text", "") == ""
             # Yes/no select — router picked Yes for authorized_to_work_us=True.
             assert form["authorized"] == "Yes"
             # Open-ended textarea — router dispatched to NarrativeEngine.answer.
@@ -325,12 +328,6 @@ class TestE2EYesSubmit:
             resume_bytes = form["_files"]["resume"]
             assert resume_bytes[:4] == b"PK\x03\x04"
             assert len(resume_bytes) > 1000  # non-trivial docx
-
-        # The shape-aware mock echoes the parsed job title into the cover
-        # letter, so we get one per surviving posting.
-        letters = " || ".join(f["cover_letter_text"] for f in fixture_server.submissions)
-        assert "Senior Backend Engineer" in letters
-        assert "Director of Engineering" in letters
 
         # Rows APPLIED with dry_run=False.
         applied = _load_applied(tmp_path)

@@ -197,7 +197,9 @@ class TestDodAcceptance:
         assert len(tailored_dirs) == 4
         for app_dir in tailored_dirs:
             assert (app_dir / "resume.yaml").exists()
-            assert (app_dir / "cover_letter.md").exists()
+            # W.2: Phase 1 defers cover letter generation; the pipeline
+            # does not write cover_letter.md unless generate_cover_letter=True.
+            assert not (app_dir / "cover_letter.md").exists()
             docx = app_dir / "resume.docx"
             assert docx.exists()
             assert docx.read_bytes()[:4] == b"PK\x03\x04"

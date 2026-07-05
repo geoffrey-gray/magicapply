@@ -130,6 +130,9 @@ def build_tailoring_pipeline(
         source_docx_path=base.source_docx_path,
         profile_name=profile.name,
         data_dir=loaded.data_dir(),
+        # Phase 1 defers cover letter generation per final_dod_plan.md W.2.
+        # Phase 2 flips this to True once the real LLM is layered in.
+        generate_cover_letter=False,
     )
 
 
@@ -175,7 +178,15 @@ def build_application_data(
     tailored = TailoredResume.model_validate(
         yaml.safe_load((tailored_dir / "resume.yaml").read_text())
     )
-    cover_text = (tailored_dir / "cover_letter.md").read_text().strip()
+    # Phase 1 (W.2): cover letter is optional — the tailoring pipeline
+    # skips writing cover_letter.md unless generate_cover_letter=True. If
+    # the file is absent, the ATS handlers' cover-letter fill is a no-op.
+    cover_letter_path = tailored_dir / "cover_letter.md"
+    cover_text = (
+        cover_letter_path.read_text().strip()
+        if cover_letter_path.exists()
+        else ""
+    )
     resume_docx = tailored_dir / "resume.docx"
     if not resume_docx.exists():
         raise FileNotFoundError(

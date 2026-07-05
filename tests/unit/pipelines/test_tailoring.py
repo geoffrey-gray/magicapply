@@ -68,6 +68,7 @@ def _pipeline(
     tmp_path: Path,
     *,
     profile_name: str = "senior-swe",
+    generate_cover_letter: bool = True,
 ) -> tuple[TailoringPipeline, SqlApplicationsRepository, SqlJobsRepository]:
     jobs_repo = SqlJobsRepository(engine)
     apps_repo = SqlApplicationsRepository(engine)
@@ -94,6 +95,7 @@ def _pipeline(
         source_docx_path=source_docx,
         profile_name=profile_name,
         data_dir=tmp_path,
+        generate_cover_letter=generate_cover_letter,
     )
     return pipeline, apps_repo, jobs_repo
 
@@ -179,6 +181,52 @@ class TestHappyPath:
         # Shape-aware mock injects the parsed job title + company into the letter.
         assert "Senior Backend Engineer" in cover
         assert "Acme" in cover
+
+
+class TestPhase1DeferCoverLetter:
+    """W.2: cover letter defer is kwarg-gated, not deleted.
+
+    Phase 1 default (`generate_cover_letter=False` in composition) skips
+    the NarrativeEngine.cover_letter call and does not write
+    cover_letter.md. Phase 2 flips the flag and the letter reappears.
+    """
+
+    def test_default_false_skips_cover_letter_file(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        pipeline, apps_repo, jobs_repo = _pipeline(
+            engine, tmp_path, generate_cover_letter=False
+        )
+        _, app = _seed_scored_app(jobs_repo, apps_repo)
+
+        report = pipeline.run()
+        assert report.tailored == 1
+
+        reloaded = apps_repo.get(app.id)
+        assert reloaded is not None
+        assert reloaded.tailored_path is not None
+
+        app_dir = Path(reloaded.tailored_path)
+        assert (app_dir / "resume.yaml").exists()
+        assert (app_dir / "resume.docx").exists()
+        assert not (app_dir / "cover_letter.md").exists()
+
+    def test_explicit_true_still_writes_cover_letter(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        # Phase 2 wire-up path: setting the flag True reinstates the
+        # NarrativeEngine call end-to-end without any other change.
+        pipeline, apps_repo, jobs_repo = _pipeline(
+            engine, tmp_path, generate_cover_letter=True
+        )
+        _, app = _seed_scored_app(jobs_repo, apps_repo)
+
+        report = pipeline.run()
+        assert report.tailored == 1
+
+        reloaded = apps_repo.get(app.id)
+        assert reloaded is not None
+        assert (Path(reloaded.tailored_path) / "cover_letter.md").exists()
 
 
 class TestIdempotence:
