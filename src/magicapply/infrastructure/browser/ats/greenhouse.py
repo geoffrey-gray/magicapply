@@ -15,7 +15,7 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from magicapply.infrastructure.browser.ats.answer_router import AnswerRouter
+from magicapply.infrastructure.browser.ats.router_dispatch import apply_router_to_form
 from magicapply.infrastructure.browser.ats.base import (
     ApplicationData,
     BaseATSHandler,
@@ -71,41 +71,11 @@ class GreenhouseHandler(BaseATSHandler):
 
         # Per-role custom fields — walk the form and let the AnswerRouter
         # decide how to fill each. When no router is attached (older
-        # composition, unit tests) we skip this step and rely on
-        # _fill_static + the cover letter / resume calls above.
-        router = data.answer_router
-        job = data.job
-        if isinstance(router, AnswerRouter) and job is not None:
-            _apply_router(page, router, job)
+        # composition, unit tests) the shared helper no-ops.
+        apply_router_to_form(page, data, handler_name="Greenhouse")
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
         page.click("input[type='submit']")
-
-
-def _apply_router(page: PageDriver, router: AnswerRouter, job: object) -> None:
-    fields = scan_form(page)
-    unhandled: list[str] = []
-    for field in fields:
-        resolved = router.resolve(field, job)
-        if resolved.strategy in {"static", "narrative"}:
-            with contextlib.suppress(Exception):
-                page.fill(field.selector, resolved.value)
-        elif resolved.strategy == "select":
-            with contextlib.suppress(Exception):
-                page.select_option(field.selector, resolved.value)
-        elif resolved.strategy == "check":
-            if resolved.check:
-                with contextlib.suppress(Exception):
-                    page.check(field.selector)
-        elif resolved.strategy == "file":
-            # Resume upload already happened above; the router-picked
-            # value is the same path, so re-uploading is redundant but
-            # not harmful. Skip to avoid a second network round-trip.
-            continue
-        else:
-            unhandled.append(field.label)
-    if unhandled:
-        logger.warning("Greenhouse unhandled fields: %s", unhandled)
 
 
 def _first_name(full: str) -> str:

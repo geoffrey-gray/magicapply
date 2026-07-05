@@ -198,6 +198,7 @@ def build_application_data(
         static_answers=loaded.base.static_answers,
         narrative=build_narrative(loaded, profile),
         resume_docx_path=resume_docx,
+        answer_library=loaded.answer_library,
     )
     return ApplicationData(
         job_url=job.url,
@@ -208,6 +209,7 @@ def build_application_data(
         dry_run=dry_run,
         answer_router=router,
         job=job,
+        data_dir=loaded.data_dir(),
     )
 
 

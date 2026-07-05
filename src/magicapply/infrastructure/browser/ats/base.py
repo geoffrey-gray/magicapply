@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from magicapply.config.models import StaticAnswers
 from magicapply.domain.models.resume import TailoredResume
@@ -76,6 +76,15 @@ class ApplicationData(BaseModel):
     # screening questions to NarrativeEngine.answer. Kept optional so
     # simpler tests don't have to construct one.
     job: object | None = None
+    # W.3: mutable list handlers append to as they resolve form fields.
+    # BaseATSHandler.apply persists the full observation in one shot
+    # after _fill_dynamic — Template-Method extension of a cross-cutting
+    # concern (see docs/GOF_PATTERNS.md "extend, don't multiply").
+    resolutions_log: list = Field(default_factory=list)
+    # W.3: destination for the observed-form yaml + answer_proposals.yaml.
+    # None → observation logging is skipped (unit tests without a real
+    # data dir).
+    data_dir: Path | None = None
 
 
 class ApplicationResult(BaseModel):
@@ -123,6 +132,27 @@ class BaseATSHandler:
 
             self._fill_static(page, data)
             self._fill_dynamic(page, data)
+
+            # W.3: persist a per-form observation record. Template Method
+            # invariant — every ATS handler inherits this without
+            # duplicating the call in each _fill_dynamic. Handlers
+            # accumulate resolutions into data.resolutions_log; we write
+            # the yaml once + append narrative/unhandled entries to
+            # data/answer_proposals.yaml.
+            if data.data_dir is not None and data.resolutions_log:
+                from magicapply.infrastructure.browser.ats.observed_form_log import (
+                    log_observed_form,
+                )
+
+                job = data.job
+                job_url = getattr(job, "url", data.job_url)
+                app_id = getattr(job, "id", "unknown")
+                log_observed_form(
+                    app_id=app_id,
+                    job_url=job_url,
+                    resolutions=data.resolutions_log,
+                    data_dir=data.data_dir,
+                )
 
             captcha = detect_captcha(page.content())
             if captcha:

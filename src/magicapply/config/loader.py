@@ -9,11 +9,18 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from magicapply.config.models import BaseConfig, KeywordBank, Profile, PromptsConfig
+from magicapply.config.models import (
+    AnswerLibrary,
+    BaseConfig,
+    KeywordBank,
+    Profile,
+    PromptsConfig,
+)
 
 BASE_CONFIG_FILENAME = "base_config.yaml"
 PROMPTS_FILENAME = "prompts.yaml"
 KEYWORD_BANK_FILENAME = "keyword_bank.yaml"
+ANSWER_LIBRARY_FILENAME = "answer_library.yaml"
 PROFILES_DIRNAME = "profiles"
 
 
@@ -31,6 +38,7 @@ class LoadedConfig:
     profiles: dict[str, Profile]
     prompts: PromptsConfig
     keyword_bank: KeywordBank
+    answer_library: AnswerLibrary
     root: Path
 
     def resumes_dir(self) -> Path:
@@ -76,12 +84,14 @@ def load_config(root: Path) -> LoadedConfig:
     profiles = _load_profiles(root)
     prompts = _load_prompts(root)
     keyword_bank = _load_keyword_bank(root)
+    answer_library = _load_answer_library(root)
     _validate_cross_refs(base, profiles, root)
     return LoadedConfig(
         base=base,
         profiles=profiles,
         prompts=prompts,
         keyword_bank=keyword_bank,
+        answer_library=answer_library,
         root=root,
     )
 
@@ -122,6 +132,19 @@ def _validate_keyword_bank(path: Path) -> KeywordBank:
         return KeywordBank.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(f"invalid keyword bank {path}:\n{exc}") from exc
+
+
+def _load_answer_library(root: Path) -> AnswerLibrary:
+    path = root / ANSWER_LIBRARY_FILENAME
+    if not path.exists():
+        # Optional file; missing → empty library. The router falls
+        # through to the narrative tier.
+        return AnswerLibrary()
+    raw = _read_yaml(path)
+    try:
+        return AnswerLibrary.model_validate(raw)
+    except ValidationError as exc:
+        raise ConfigError(f"invalid answer library {path}:\n{exc}") from exc
 
 
 def _load_profiles(root: Path) -> dict[str, Profile]:

@@ -265,6 +265,43 @@ class KeywordEntry(BaseModel):
         return v
 
 
+class LibraryEntry(BaseModel):
+    """One verified (or proposed) answer to a real employer's screening question.
+
+    See ``final_dod_plan.md`` W.3. Grows from ``data/answer_proposals.yaml``
+    (auto-appended during real ATS runs) after operator review.
+    """
+
+    model_config = _Strict
+
+    question: str
+    question_regex: str | None = None
+    canonical_answer: str
+    seen_on: list[str] = Field(default_factory=list)
+    status: Literal["verified", "proposed"] = "verified"
+
+    @field_validator("question", "canonical_answer")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be blank")
+        return v
+
+
+class AnswerLibrary(BaseModel):
+    """A growing catalog of (ATS question → verified answer) pairs.
+
+    Consulted by ``AnswerRouter`` between the static and narrative tiers.
+    Only ``status == "verified"`` entries are used by the router at runtime;
+    ``proposed`` entries live in the file for review + promotion.
+    """
+
+    model_config = _Strict
+
+    version: Literal[1] = 1
+    answers: list[LibraryEntry] = Field(default_factory=list)
+
+
 class KeywordBank(BaseModel):
     """Global bank of terms + evidence a profile can draw from.
 

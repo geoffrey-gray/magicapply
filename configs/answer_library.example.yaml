@@ -1,0 +1,30 @@
+# Copy to configs/answer_library.yaml. The tool auto-appends proposals to
+# data/answer_proposals.yaml during real ATS runs; you review + promote
+# entries here with status: verified. Only verified entries are consulted
+# by the router at runtime.
+#
+# `question` is matched case-insensitively against the form's label text
+# (exact substring first, then regex if provided).
+
+version: 1
+answers:
+  - question: How did you hear about this role?
+    canonical_answer: LinkedIn
+    seen_on:
+      - greenhouse:anthropic:2026-07-04
+    status: verified
+
+  - question: Are you open to relocation?
+    canonical_answer: "No"
+    seen_on: []
+    status: verified
+
+  - question_regex: "^why do you want to work at .+\\?$"
+    question: Why do you want to work here?
+    canonical_answer: >-
+      Your team's public work on production ML systems maps closely
+      to the problems I've been solving; I'd bring hands-on
+      experience with agentic frameworks and edge deployment to
+      that surface.
+    seen_on: []
+    status: proposed

@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from magicapply.infrastructure.browser.ats.answer_router import AnswerRouter
+from magicapply.infrastructure.browser.ats.router_dispatch import apply_router_to_form
 from magicapply.infrastructure.browser.ats.base import (
     ApplicationData,
     BaseATSHandler,
@@ -74,33 +74,7 @@ class AshbyHandler(BaseATSHandler):
                 continue
 
         # Custom questions via the shared router.
-        router = data.answer_router
-        job = data.job
-        if isinstance(router, AnswerRouter) and job is not None:
-            _apply_router(page, router, job)
+        apply_router_to_form(page, data, handler_name="Ashby")
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
         page.click("button[type='submit']")
-
-
-def _apply_router(page: PageDriver, router: AnswerRouter, job: object) -> None:
-    unhandled: list[str] = []
-    for field in scan_form(page):
-        resolved = router.resolve(field, job)
-        strategy = resolved.strategy
-        if strategy in {"static", "narrative"}:
-            with contextlib.suppress(Exception):
-                page.fill(field.selector, resolved.value)
-        elif strategy == "select":
-            with contextlib.suppress(Exception):
-                page.select_option(field.selector, resolved.value)
-        elif strategy == "check":
-            if resolved.check:
-                with contextlib.suppress(Exception):
-                    page.check(field.selector)
-        elif strategy == "file":
-            continue
-        else:
-            unhandled.append(field.label)
-    if unhandled:
-        logger.warning("Ashby unhandled fields: %s", unhandled)

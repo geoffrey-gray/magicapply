@@ -6,14 +6,25 @@ a page call. Anything the router does not recognise is returned as
 ``strategy="unhandled"`` — the caller logs it and moves on; a real
 submission may still succeed if the field is optional.
 
-Split into three intents:
+Priority tiers evaluated inside ``resolve``:
 - **static**: identity, contact, DEI, work-auth — value comes straight from
   ``StaticAnswers``.
+- **library**: verified answer from ``configs/answer_library.yaml`` — grows
+  from real ATS runs. Matched by exact label, then by ``question_regex``.
 - **narrative**: open-ended text (why do you want to work here, screening
   questions) — value comes from ``NarrativeEngine.answer(job, label)``.
 - **file**: resume upload — value is the tailored DOCX path already on
   ``ApplicationData``.
 """
+
+# NOTE: CoR threshold — this router evaluates six imperative priority
+# tiers (static / library / select / check / narrative / file / unhandled)
+# inside one method. GOF_PATTERNS.md defers formal Chain of Responsibility
+# "if resolution grows past ~3 strategies." We are past the threshold but
+# keep the imperative structure because every tier evaluates on the same
+# input and is a pure lookup — no independent state, no cross-tier
+# feedback. Refactor to CoR the first time a tier grows its own state
+# (e.g., an LLM answer memoization tier that caches by question hash).
 
 from __future__ import annotations
 
@@ -22,12 +33,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from magicapply.config.models import StaticAnswers
+from magicapply.config.models import AnswerLibrary, StaticAnswers
 from magicapply.domain.models.job import Job
 from magicapply.domain.resumes.narrative import NarrativeEngine
 from magicapply.infrastructure.browser.ats.form_scan import FormField
 
-Strategy = Literal["static", "select", "check", "narrative", "file", "unhandled"]
+Strategy = Literal[
+    "static", "library", "select", "check", "narrative", "file", "unhandled"
+]
 
 
 @dataclass
@@ -80,10 +93,18 @@ class AnswerRouter:
         static_answers: StaticAnswers,
         narrative: NarrativeEngine,
         resume_docx_path: Path,
+        answer_library: AnswerLibrary | None = None,
     ) -> None:
         self._answers = static_answers
         self._narrative = narrative
         self._resume_docx_path = resume_docx_path
+        # Only verified entries drive router behaviour; proposed entries
+        # live in the yaml for operator review + promotion.
+        self._library = [
+            entry
+            for entry in (answer_library.answers if answer_library else [])
+            if entry.status == "verified"
+        ]
 
     def resolve(self, field: FormField, job: Job) -> ResolvedAnswer:
         label = field.label.lower()
@@ -91,6 +112,13 @@ class AnswerRouter:
         # 1. File upload — the resume goes here regardless of label.
         if field.kind == "file":
             return ResolvedAnswer("file", str(self._resume_docx_path))
+
+        # 1a. Answer library — verified answers to real screening questions,
+        # consulted before the narrative engine so a library hit skips an
+        # LLM call entirely.
+        library_answer = _match_library(field.label, self._library)
+        if library_answer is not None:
+            return ResolvedAnswer("library", library_answer)
 
         # 2. Yes/no radio or select — try the boolean patterns first.
         if field.kind in {"select", "radio"}:
@@ -200,3 +228,21 @@ def _looks_open_ended(label: str) -> bool:
 def _is_handler_owned_textarea(label: str) -> bool:
     """Labels the handler fills explicitly (cover letter, resume text)."""
     return any(marker in label for marker in ("cover letter", "letter of introduction"))
+
+
+def _match_library(label: str, library: list) -> str | None:
+    """Case-insensitive lookup: exact question match first, then regex."""
+    if not library:
+        return None
+    lo = label.strip().lower()
+    for entry in library:
+        if entry.question.strip().lower() == lo:
+            return entry.canonical_answer
+    for entry in library:
+        if entry.question_regex:
+            try:
+                if re.search(entry.question_regex, label, re.IGNORECASE):
+                    return entry.canonical_answer
+            except re.error:
+                continue
+    return None

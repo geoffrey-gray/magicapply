@@ -21,7 +21,7 @@ import contextlib
 import logging
 import time
 
-from magicapply.infrastructure.browser.ats.answer_router import AnswerRouter
+from magicapply.infrastructure.browser.ats.router_dispatch import apply_router_to_form
 from magicapply.infrastructure.browser.ats.base import (
     ApplicationData,
     BaseATSHandler,
@@ -115,15 +115,11 @@ class WorkdayHandler(BaseATSHandler):
             except Exception:  # noqa: BLE001
                 continue
 
-        router = data.answer_router
-        job = data.job
-
         # Walk the wizard: on each page, apply the router, then click Next.
         # Stop when there's no Next button (we're at the Review step) or
         # when we hit the max-step guard.
         for _ in range(_MAX_STEPS):
-            if isinstance(router, AnswerRouter) and job is not None:
-                _apply_router(page, router, job)
+            apply_router_to_form(page, data, handler_name="Workday")
             if not _click_next(page):
                 break
             # Short wait so the next step's DOM has a chance to render
@@ -168,30 +164,6 @@ def _click_next(page: PageDriver) -> bool:
         if _try_click(page, selector):
             return True
     return False
-
-
-def _apply_router(page: PageDriver, router: AnswerRouter, job: object) -> None:
-    unhandled: list[str] = []
-    for field in scan_form(page):
-        resolved = router.resolve(field, job)
-        strategy = resolved.strategy
-        if strategy in {"static", "narrative"}:
-            with contextlib.suppress(Exception):
-                page.fill(field.selector, resolved.value)
-        elif strategy == "select":
-            with contextlib.suppress(Exception):
-                page.select_option(field.selector, resolved.value)
-        elif strategy == "check":
-            if resolved.check:
-                with contextlib.suppress(Exception):
-                    page.check(field.selector)
-        elif strategy == "file":
-            # Resume already uploaded in _fill_dynamic's file loop.
-            continue
-        else:
-            unhandled.append(field.label)
-    if unhandled:
-        logger.warning("Workday unhandled fields: %s", unhandled)
 
 
 def _first_name(full: str) -> str:
