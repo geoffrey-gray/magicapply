@@ -7,6 +7,8 @@ so the user can inspect what was changed.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, ConfigDict, Field
 
 _Strict = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -33,7 +35,14 @@ class EducationEntry(BaseModel):
 
 
 class BaseResume(BaseModel):
-    """User-maintained base resume. Loaded from YAML at `resumes/<name>.yaml`."""
+    """User-maintained base resume. Loaded from YAML at `resumes/<name>.yaml`.
+
+    ``source_docx_path`` optionally points at the operator's original DOCX
+    file. When present, the Phase 1 ``InPlaceDocxTailorer`` opens that file
+    and applies bank-synonym → JD-term swaps in-place, preserving all
+    formatting byte-for-byte. When None, the tailoring pipeline falls back
+    to the docxtpl template renderer (Phase 2 wire-up).
+    """
 
     model_config = _Strict
 
@@ -46,6 +55,7 @@ class BaseResume(BaseModel):
     experience: list[ExperienceEntry] = Field(default_factory=list)
     education: list[EducationEntry] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
+    source_docx_path: Path | None = None
 
 
 class TailoredResume(BaseModel):

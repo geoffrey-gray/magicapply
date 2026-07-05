@@ -1,0 +1,37 @@
+# Copy to configs/keyword_bank.yaml and fill with your own verified skills.
+#
+# Each entry describes ONE canonical term the operator can speak to on a
+# resume, plus the specific evidence phrase the tailorer may weave into a
+# bullet, plus synonyms the operator would consider equivalent. The
+# in-place DOCX tailorer swaps synonyms found in the resume for the
+# canonical term when the JD emphasises that term.
+#
+# Terms and synonyms are matched case-insensitively at word boundaries.
+
+version: 1
+keywords:
+  - term: distributed systems
+    synonyms: [microservices, service-oriented architecture, soa]
+    evidence: >-
+      Led migration of the payments platform to a microservices
+      architecture; drove p99 latency down 40%.
+    tags: [backend, platform]
+
+  - term: python
+    synonyms: []
+    evidence: 8+ years primary language across backend + data platform.
+    tags: [language]
+
+  - term: kubernetes
+    synonyms: [k8s]
+    evidence: >-
+      Operated a multi-tenant Kubernetes platform serving 200+
+      microservices across three regions.
+    tags: [platform, infrastructure]
+
+  - term: rag
+    synonyms: [retrieval augmented generation, retrieval-augmented generation]
+    evidence: >-
+      Built the first production RAG system at the company; indexed
+      corporate docs, retrieval powered a Slack support bot.
+    tags: [llm, retrieval]

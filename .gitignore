@@ -39,5 +39,15 @@ data/
 configs/base_config.yaml
 configs/profiles/*.yaml
 !configs/profiles/example.yaml
+configs/keyword_bank.yaml
+!configs/keyword_bank.example.yaml
+configs/answer_library.yaml
+!configs/answer_library.example.yaml
 resumes/*.yaml
 !resumes/example.yaml
+resumes/*.docx
+
+# Runtime observation artifacts (Phase W)
+data/observed_forms/
+data/answer_proposals.yaml
+data/screenshots/
