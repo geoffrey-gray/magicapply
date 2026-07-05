@@ -31,7 +31,7 @@ from magicapply.domain.repositories import (
 )
 from magicapply.domain.resumes.narrative import NarrativeEngine
 from magicapply.domain.resumes.tailor import Tailorer
-from magicapply.infrastructure.rendering.docx import DocxResumeRenderer
+from magicapply.infrastructure.rendering.docx_inplace import InPlaceDocxTailorer
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +53,10 @@ class TailoringPipeline:
         jobs_repo: JobsRepository,
         tailorer: Tailorer,
         narrative: NarrativeEngine,
-        resume_renderer: DocxResumeRenderer,
+        resume_renderer: InPlaceDocxTailorer,
         keyword_extractor: KeywordExtractor,
         keyword_bank: KeywordBank,
+        source_docx_path: Path,
         profile_name: str,
         data_dir: Path,
     ) -> None:
@@ -66,6 +67,7 @@ class TailoringPipeline:
         self._renderer = resume_renderer
         self._extractor = keyword_extractor
         self._bank = keyword_bank
+        self._source_docx = source_docx_path
         self._profile = profile_name
         self._data_dir = data_dir
 
@@ -108,11 +110,18 @@ class TailoringPipeline:
             )
             (app_dir / "cover_letter.md").write_text(cover)
 
-            # Render the tailored resume to DOCX for ATS upload. Failures here
-            # (template missing, disk full) are treated like tailoring
-            # failures — reported per-app, no crash.
+            # Phase 1: in-place DOCX tailoring — open the operator's
+            # original file, swap bank synonyms for JD-emphasised terms
+            # at the run level, save. Formatting survives byte-for-byte.
+            # Failures here (source DOCX missing, disk full) are treated
+            # like tailoring failures — reported per-app, no crash.
             try:
-                self._renderer.render(tailored, app_dir / "resume.docx")
+                self._renderer.render(
+                    source_docx=self._source_docx,
+                    matched_bank=matched,
+                    jd_terms=extracted,
+                    out_path=app_dir / "resume.docx",
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("resume render failed for %s: %s", app.id, exc)
                 report.errors.append(

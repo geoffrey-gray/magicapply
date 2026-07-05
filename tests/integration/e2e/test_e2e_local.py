@@ -31,7 +31,16 @@ from magicapply.infrastructure.persistence.repositories.applications import (
 from tests.integration.e2e.fixture_server import FixtureServer
 
 _GOLDENS_ROOT = Path(__file__).resolve().parents[2] / "goldens" / "tailoring"
-_REPO_TEMPLATE = Path(__file__).resolve().parents[3] / "configs" / "resume_template.docx"
+
+
+def _make_test_docx(path: Path) -> Path:
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("E2E Applicant")
+    doc.add_paragraph("Backend engineer with Python and distributed systems experience.")
+    doc.save(str(path))
+    return path
 
 runner = CliRunner()
 
@@ -87,8 +96,9 @@ def _write_configs(root: Path, careers_url: str) -> Path:
     (root / "configs" / "profiles").mkdir(exist_ok=True)
     (root / "resumes").mkdir(exist_ok=True)
     (root / "data").mkdir(exist_ok=True)
+    source_docx = _make_test_docx(root / "resumes" / "e2e.docx")
     (root / "resumes" / "e2e.yaml").write_text(
-        """
+        f"""
 name: E2E Applicant
 email: e2e@example.test
 phone: "555-0100"
@@ -99,6 +109,7 @@ experience:
     start: "2020-01"
     bullets: ["Built things."]
 skills: [python, distributed systems]
+source_docx_path: {source_docx}
 """
     )
     (root / "configs" / "base_config.yaml").write_text(
@@ -146,7 +157,6 @@ keywords:
     evidence: 5+ years, primary language
 """
     )
-    shutil.copy(_REPO_TEMPLATE, root / "configs" / "resume_template.docx")
     return root / "configs"
 
 

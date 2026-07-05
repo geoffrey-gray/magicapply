@@ -43,7 +43,15 @@ from tests.integration.e2e.fixture_server import FixtureServer
 runner = CliRunner()
 
 _CHROMIUM_CACHE = Path.home() / ".cache" / "ms-playwright"
-_REPO_TEMPLATE = Path(__file__).resolve().parents[2] / "configs" / "resume_template.docx"
+
+
+def _make_test_docx(path: Path) -> Path:
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Acceptance Applicant")
+    doc.save(str(path))
+    return path
 
 
 def _chromium_installed() -> bool:
@@ -102,11 +110,13 @@ def _write_configs(root: Path, careers_url: str) -> Path:
     (root / "configs" / "profiles").mkdir()
     (root / "resumes").mkdir()
     (root / "data").mkdir()
+    source_docx = _make_test_docx(root / "resumes" / "senior-swe.docx")
     (root / "resumes" / "senior-swe.yaml").write_text(
-        """
+        f"""
 name: Acceptance Applicant
 email: accept@example.test
 phone: "555-0100"
+source_docx_path: {source_docx}
 summary: Backend engineer with Python and distributed systems.
 experience:
   - company: Prior
@@ -160,7 +170,6 @@ keywords:
     (root / "configs" / "profiles" / "senior-swe.yaml").write_text(
         "name: senior-swe\nbase_resume: senior-swe.yaml\nsources: [fixture]\n"
     )
-    shutil.copy(_REPO_TEMPLATE, root / "configs" / "resume_template.docx")
     return root / "configs"
 
 

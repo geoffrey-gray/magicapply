@@ -3,7 +3,6 @@ sequencing wires end-to-end without touching real network or Chromium."""
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,14 @@ from typer.testing import CliRunner
 
 from magicapply.cli.main import app
 
-_REPO_TEMPLATE = Path(__file__).resolve().parents[3] / "configs" / "resume_template.docx"
+
+def _make_test_docx(path: Path) -> Path:
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Test")
+    doc.save(str(path))
+    return path
 
 runner = CliRunner()
 
@@ -35,7 +41,10 @@ def _write_empty_source_repo(tmp_path: Path) -> Path:
     (tmp_path / "configs" / "profiles").mkdir()
     (tmp_path / "resumes").mkdir()
     (tmp_path / "data").mkdir()
-    (tmp_path / "resumes" / "swe.yaml").write_text("name: Test\n")
+    source_docx = _make_test_docx(tmp_path / "resumes" / "swe.docx")
+    (tmp_path / "resumes" / "swe.yaml").write_text(
+        f"name: Test\nsource_docx_path: {source_docx}\n"
+    )
     (tmp_path / "configs" / "base_config.yaml").write_text(
         """
 version: 1
@@ -57,7 +66,6 @@ sources:
     (tmp_path / "configs" / "profiles" / "swe.yaml").write_text(
         "name: swe\nbase_resume: swe.yaml\nsources: [watched]\n"
     )
-    shutil.copy(_REPO_TEMPLATE, tmp_path / "configs" / "resume_template.docx")
     return tmp_path / "configs"
 
 

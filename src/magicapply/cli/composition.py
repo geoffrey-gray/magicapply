@@ -26,7 +26,7 @@ from magicapply.domain.resumes.tailor import Tailorer
 from magicapply.infrastructure.browser.ats.answer_router import AnswerRouter
 from magicapply.infrastructure.browser.ats.base import ApplicationData
 from magicapply.infrastructure.llm import build_client
-from magicapply.infrastructure.rendering.docx import DocxResumeRenderer
+from magicapply.infrastructure.rendering.docx_inplace import InPlaceDocxTailorer
 from magicapply.infrastructure.persistence import (
     SqlApplicationsRepository,
     SqlJobsRepository,
@@ -69,7 +69,7 @@ def build_scorer(loaded: LoadedConfig, profile: Profile, scoring: ScoringConfig)
     base = _load_base_resume(loaded, profile)
     # Deterministic YAML serialization is the cacheable prompt payload the
     # scorer sends to the LLM.
-    base_text = yaml.safe_dump(base.model_dump(), sort_keys=True)
+    base_text = yaml.safe_dump(base.model_dump(mode="json"), sort_keys=True)
     return JobScorer(
         prefilter=Prefilter(scoring),
         llm_scorer=LLMScorer(
@@ -107,7 +107,14 @@ def build_tailoring_pipeline(
     apps_repo: SqlApplicationsRepository,
     jobs_repo: SqlJobsRepository,
 ) -> TailoringPipeline:
-    template_path = loaded.root / "resume_template.docx"
+    base = _load_base_resume(loaded, profile)
+    if base.source_docx_path is None:
+        raise ValueError(
+            f"resume {profile.base_resume!r} has no source_docx_path — "
+            f"the Phase 1 in-place DOCX tailorer requires the operator's "
+            f"original .docx file. Add `source_docx_path: <path>` to the "
+            f"resume YAML."
+        )
     extractor = KeywordExtractor(
         build_client(loaded.base.llm, prompts=loaded.prompts),
         extraction_prompt=loaded.prompts.keyword_extraction,
@@ -117,9 +124,10 @@ def build_tailoring_pipeline(
         jobs_repo=jobs_repo,
         tailorer=build_tailorer(loaded, profile),
         narrative=build_narrative(loaded, profile),
-        resume_renderer=DocxResumeRenderer(template_path),
+        resume_renderer=InPlaceDocxTailorer(),
         keyword_extractor=extractor,
         keyword_bank=loaded.effective_bank(profile),
+        source_docx_path=base.source_docx_path,
         profile_name=profile.name,
         data_dir=loaded.data_dir(),
     )

@@ -27,7 +27,15 @@ from tests.integration.e2e.fixture_server import FixtureServer
 runner = CliRunner()
 
 _CHROMIUM_CACHE = Path.home() / ".cache" / "ms-playwright"
-_REPO_TEMPLATE = Path(__file__).resolve().parents[3] / "configs" / "resume_template.docx"
+
+
+def _make_test_docx(path: Path) -> Path:
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("E2E Lever Applicant")
+    doc.save(str(path))
+    return path
 
 
 def _chromium_installed() -> bool:
@@ -98,7 +106,6 @@ sources:
     (root / "configs" / "profiles" / "e2e.yaml").write_text(
         "name: e2e\nbase_resume: e2e.yaml\nsources: [fixture]\n"
     )
-    shutil.copy(_REPO_TEMPLATE, root / "configs" / "resume_template.docx")
     return root / "configs"
 
 
@@ -139,7 +146,7 @@ def _seed_tailored(tmp_path: Path, lever_url: str) -> str:
         )
     )
     (tailored_dir / "cover_letter.md").write_text("Applying.")
-    shutil.copy(_REPO_TEMPLATE, tailored_dir / "resume.docx")
+    _make_test_docx(tailored_dir / "resume.docx")
 
     a.tailored_path = str(tailored_dir)
     a.transition_to(ApplicationState.TAILORED, reason="seed")

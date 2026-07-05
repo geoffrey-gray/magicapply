@@ -22,10 +22,20 @@ from magicapply.infrastructure.persistence.repositories.applications import (
     SqlApplicationsRepository,
 )
 from magicapply.infrastructure.persistence.repositories.jobs import SqlJobsRepository
-from magicapply.infrastructure.rendering.docx import DocxResumeRenderer
+from magicapply.infrastructure.rendering.docx_inplace import InPlaceDocxTailorer
 from magicapply.pipelines.tailoring import TailoringPipeline
 
-_TEMPLATE_PATH = Path(__file__).resolve().parents[3] / "configs" / "resume_template.docx"
+
+def _make_test_docx(path: Path) -> Path:
+    """Minimal DOCX with one paragraph so the in-place tailorer has runs
+    to walk (or byte-copy when no swaps apply)."""
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Test Person")
+    doc.add_paragraph("Backend engineer building distributed systems.")
+    doc.save(str(path))
+    return path
 
 
 @pytest.fixture
@@ -72,14 +82,16 @@ def _pipeline(
         cover_letter_prompt=prompts.cover_letter,
         answer_prompt=prompts.answer,
     )
+    source_docx = _make_test_docx(tmp_path / "source.docx")
     pipeline = TailoringPipeline(
         apps_repo=apps_repo,
         jobs_repo=jobs_repo,
         tailorer=tailorer,
         narrative=narrative,
-        resume_renderer=DocxResumeRenderer(_TEMPLATE_PATH),
+        resume_renderer=InPlaceDocxTailorer(),
         keyword_extractor=KeywordExtractor(llm, extraction_prompt=""),
         keyword_bank=KeywordBank(),
+        source_docx_path=source_docx,
         profile_name=profile_name,
         data_dir=tmp_path,
     )
