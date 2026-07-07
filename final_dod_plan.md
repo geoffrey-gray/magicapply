@@ -512,7 +512,7 @@ Each row = one commit. Small, reviewable, tree stays green.
 - [ ] **W.5c** LinkedIn cookie retrieval → source verify against real search HTML.
 - [x] **W.6** Multi-source aggregation + daily-update semantics verified (2026-07-07).
 - [x] **W.7** Real captures → E2E + offline regression; synthetic inline HTML retired (`*-e2e-smoke-*` for yes-submit only).
-- [ ] **W.8** Runbook + README + CLAUDE.md refresh; supersede banners on old plan files.
+- [x] **W.8** Runbook + README + CLAUDE.md refresh; supersede banners on old plan files.
 
 ---
 

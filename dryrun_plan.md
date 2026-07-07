@@ -1,5 +1,11 @@
 # MagicApply — End-to-End Dry-Run Test Plan
 
+## Superseded
+
+This document is superseded by [final_dod_plan.md](final_dod_plan.md). Kept for historical reference (Phases A–J design decisions and rationale).
+
+---
+
 **Status:** shipped 2026-07-03 across commits `dca2d1d` (Phase A) through `e68cdd3` (Phase J). See `git log --oneline` for the phase-by-phase history; this document is kept as reference for the design decisions, deviations, and rationale that landed along the way.
 
 **Goal:** Exercise the full pipeline (discovery → dedup → scoring → tailoring → cover letter → browser-driven submission) inside the `magicapply-dev` VM, with the LLM stubbed but everything else real. Two harnesses: a hermetic local-fixture E2E, and a live-gated dry-run against real jobs that stops one click short of Submit.

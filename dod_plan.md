@@ -1,5 +1,11 @@
 # MagicApply — Definition-of-Done Maturity Plan
 
+## Superseded
+
+This document is superseded by [final_dod_plan.md](final_dod_plan.md). Kept for historical reference (Waves 1–4 maturity sequencing).
+
+---
+
 **Status:** proposed 2026-07-03
 **Precedent:** `dryrun_plan.md` shipped Phases A–J (`dca2d1d..e68cdd3`) and brought the pipeline to hermetic + live-gated dry-run against Greenhouse. This plan closes the gap to the full user workflow: multi-platform discovery, keyword-bank-driven bullet injection, real file upload, per-role form discovery, three additional ATS handlers, and retry/intervention polish.
 

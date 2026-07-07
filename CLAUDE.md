@@ -4,11 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Current State
 
-Phases 1–10 (foundational stack), the dry-run harness (Phases A–J), and the DoD maturation (Phases K–U) are shipped. Every step of the config-driven pipeline from multi-source discovery through browser-driven submission across four ATSes is wired end-to-end, with hermetic fixture E2E per ATS and live-gated E2E hooks per source.
+Phases 1–10 (foundational stack), the dry-run harness (Phases A–J), composable-forms migration (CF.0–CF.6), and Phase 1 DoD maturation (W.0–W.8 in `final_dod_plan.md`) are shipped. The config-driven pipeline runs discovery → tailoring → browser-driven apply across four ATSes. **Operator workflow:** [docs/OPERATOR_RUNBOOK.md](docs/OPERATOR_RUNBOOK.md).
+
+**Phase 1 defaults (operator VM):**
+- `llm.provider: mock` — no API key; shape-aware canned responses.
+- Tailoring via `InPlaceDocxTailorer` — keyword/synonym swaps in the operator's source DOCX (format preserved); cover letters **deferred** (`generate_cover_letter=False` in `composition.py`).
+- `configs/answer_library.yaml` starts empty; `data/answer_proposals.yaml` grows from real apply runs for operator review + promotion.
+- Four ATS handlers verified live dry-run (Greenhouse, Workday, Lever, Ashby); W.4 DOM captures promoted to `tests/fixtures/captured/`.
+- Indeed/Glassdoor adapters log+skip when bot-blocked; LinkedIn needs `LINKEDIN_LI_AT` (W.5c pending).
 
 **End-to-end today:**
 - `magicapply discover <profile>` — sources → in-run dedup → repo dedup → prefilter → LLM score → persist to SQLite (`src/magicapply/pipelines/discovery.py`). Sources: `career_page`, `job_url`, `linkedin` (Playwright + `LINKEDIN_LI_AT`), `indeed`, `glassdoor` (`src/magicapply/infrastructure/sources/`). Each ToS-sensitive adapter refuses to run without an explicit `MAGICAPPLY_*_ACK=1` env var.
-- `magicapply tailor <profile>` — SCORED apps → LLM keyword extraction → match against `KeywordBank` → resume summary rewrite + evidence-based bullet injection + cover letter → files under `data/tailored/<app_id>/{resume.yaml,cover_letter.md,resume.docx}` → transition to TAILORED (`src/magicapply/pipelines/tailoring.py`). DOCX is rendered via `docxtpl` against `configs/resume_template.docx`.
+- `magicapply tailor <profile>` — SCORED apps → keyword extraction → match against `KeywordBank` → `InPlaceDocxTailorer` writes `data/tailored/<app_id>/resume.docx` (+ `resume.yaml`) → transition to TAILORED (`src/magicapply/pipelines/tailoring.py`). Cover letter path exists but is kwarg-gated off in Phase 1.
 - `magicapply apply <job-id>` — one Application, real Playwright + Chromium, safe by default (`--no-submit` dry-run stops one click short; `--yes-submit` performs a real submission; `--retry` re-runs a FAILED application; `--no-headless` opens a visible browser and prompts the operator on NEEDS_INTERVENTION). Powered by `ApplyPipeline.apply_one` (`src/magicapply/pipelines/apply.py`).
 - `magicapply run <profile>` — discover → tailor → `ApplyPipeline.apply_batch` in one shared Chromium session (`src/magicapply/cli/commands/pipeline.py`). Same safety flags. Short-circuits the browser if no TAILORED apps exist.
 - `magicapply status` — table split by state with an additional `real: N, dry_run: M` note on the APPLIED bucket (`src/magicapply/cli/commands/status.py`).
@@ -26,7 +33,7 @@ Phases 1–10 (foundational stack), the dry-run harness (Phases A–J), and the 
 - **LLM providers** are selected by config: `anthropic`, `ollama` (Phase 2 stub), `mock` (shape-aware; no API key needed for full pipeline runs), `replay` (SHA-keyed YAML fixtures + record mode).
 - **Fast-fail candidate selectors**: multi-selector fallback loops (`_try_click` / `_try_fill` in the ATS handlers) pass a 500 ms Playwright timeout so missing selectors don't burn the 30 s default. Real ATS pages resolve well inside that budget; fixture tests stay under 30 s per suite run.
 
-**Deferred (Phase 2+ roadmap):** Ollama provider implementation, per-source live-fixture caching, Alembic migrations, review web UI, screening-question memory (answer cache keyed on question hash).
+**Deferred (Phase 2+ roadmap):** Anthropic LLM for scoring/narrative at scale, cover-letter generation reinstated, Ollama provider, LinkedIn as primary discovery, real submissions at scale, Alembic migrations, review web UI, screening-question memory (answer cache keyed on question hash).
 
 ## Running in the dev VM
 
@@ -58,7 +65,7 @@ These principles come from `ARCHITECTURE.md` and shape design decisions:
 - **Layered architecture.** Keep the separation strict: `cli/` → `services/` → `domain/` → `infrastructure/`. Domain code must not import from `infrastructure/` directly; use repository/strategy interfaces. (One pre-existing exception: the `LLMClient` Protocol lives under `infrastructure/llm/client.py` and is imported by domain scoring / tailoring / narrative modules. Flagged in `dryrun_plan.md`; out-of-scope to move.)
 - **Extend, don't multiply.** When adding capability, first ask whether an existing class can take a new optional kwarg, a new mode, or a new method. New sibling classes only when the capability genuinely does not exist. See `docs/GOF_PATTERNS.md`.
 - **Automation with guardrails.** Auto-apply is the default path; only surface a browser to the user on CAPTCHA or unrecoverable failure. Don't add interactive prompts to the happy path.
-- **Focus on the top 4 ATS** (Greenhouse, Lever, Workday, Ashby) before broadening. Greenhouse ships today; the rest are Phase 2.
+- **Focus on the top 4 ATS** (Greenhouse, Lever, Workday, Ashby) before broadening. All four ship with composable forms; extend handlers rather than adding parallel fill paths.
 - **Strategy pattern for ATS handlers** under `infrastructure/browser/` — one handler per ATS, selected at runtime.
 - **Repository pattern for persistence** — domain code talks to repository interfaces, SQLite lives behind them in `infrastructure/persistence/`.
 - **Multiple search profiles** — each profile has its own base resume and search criteria; nothing should assume a single global profile.
@@ -76,14 +83,16 @@ Dependencies are wired explicitly in `src/magicapply/cli/composition.py` (no DI 
 ## Testing
 
 - **Unit + browser + CLI**: `uv run pytest tests/unit -q` (fast; ~2s, no network, no Chromium).
-- **Hermetic E2E fixture**: `uv run pytest tests/integration/e2e/test_e2e_local.py` (marked `slow`; real Chromium against a threaded HTTP fixture that impersonates a Greenhouse form; ~5s).
+- **Hermetic E2E fixture**: `uv run pytest tests/integration/e2e/test_e2e_local.py` (marked `slow`; real Chromium against a threaded HTTP fixture; ~5s).
+- **W.4 capture regression**: `uv run pytest tests/unit/browser/test_capture_regression.py -q` (offline scan/fill against promoted DOMs).
+- **Captured live dry-runs**: `uv run pytest tests/integration/e2e/test_e2e_captured_live.py -q` (slow; Chromium against `tests/fixtures/captured/`).
 - **Live-gated pipeline**: `MAGICAPPLY_LIVE_TESTS=1 MAGICAPPLY_LIVE_APPLY=1 MAGICAPPLY_LIVE_APPLY_PROFILE=<name> uv run pytest tests/integration/e2e/test_e2e_live.py -s` (runs your real configs, always dry-run — never submits).
 - **Live Anthropic / custom-URL sources**: `MAGICAPPLY_LIVE_TESTS=1 ANTHROPIC_API_KEY=… uv run pytest tests/integration` (hits real network / API).
 - **Regenerate tailoring goldens**: `MAGICAPPLY_UPDATE_GOLDENS=1 uv run pytest tests/integration/e2e/test_e2e_local.py::TestE2EDryRun -q` and commit `tests/goldens/tailoring/*`.
 
 ## MVP Scope
 
-Delivered end-to-end. Everything in `ARCHITECTURE.md` §10 Phase 1 (config system with multiple profiles, LinkedIn + custom-URL discovery, dedup + scoring, resume tailoring, cover-letter generation, Greenhouse form filling, auto-apply with CAPTCHA fallback) ships. LinkedIn scraping and Ollama remain stubs pending Phase 2.
+Phase 1 DoD (`final_dod_plan.md` §4) is met except W.5c (LinkedIn cookie verification). Config system with multiple profiles, multi-source discovery + dedup + scoring, format-preserving DOCX tailoring, four ATS handlers with composable forms + answer library, dry-run auto-apply with CAPTCHA fallback, and operator runbook all ship. Cover letters and real Anthropic LLM validation are Phase 2.
 
 ## Open Design Questions
 
