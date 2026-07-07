@@ -191,6 +191,7 @@ class IndeedSource(_SourceBase):
     queries: list[str] = Field(default_factory=list)
     location: str | None = None
     rate_limit_per_minute: int = Field(default=5, gt=0)
+    enrich_apply_urls: bool = True
 
 
 class GlassdoorSource(_SourceBase):
@@ -206,6 +207,7 @@ class GlassdoorSource(_SourceBase):
     enabled: bool = False
     queries: list[str] = Field(default_factory=list)
     rate_limit_per_minute: int = Field(default=5, gt=0)
+    enrich_apply_urls: bool = True
 
 
 class GreenhouseSource(_SourceBase):

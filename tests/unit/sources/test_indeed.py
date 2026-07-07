@@ -34,6 +34,16 @@ class TestIndeedGuards:
         assert list(adapter.discover()) == []
 
 
+def test_from_config_honors_enrich_apply_urls_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAGICAPPLY_INDEED_ACK", "1")
+    adapter = IndeedAdapter.from_config(
+        IndeedSource(name="indeed-search", enrich_apply_urls=False)
+    )
+    assert adapter._enrich_apply_urls is False
+
+
 class TestSearchUrlExtractor:
     def test_extracts_viewjob_urls_with_jk(self) -> None:
         html = """

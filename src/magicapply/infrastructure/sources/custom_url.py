@@ -19,6 +19,7 @@ import httpx
 
 from magicapply.config.models import CareerPageSource, JobUrlSource
 from magicapply.infrastructure.sources.base import SourceError
+from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
 from magicapply.infrastructure.sources.jsonld import (
     extract_jobposting_dicts,
     jsonld_to_job,
@@ -75,7 +76,16 @@ class _JsonLdHttpAdapter:
 
             for posting in postings:
                 try:
-                    yield jsonld_to_job(posting, source_name=self.name, fallback_url=url)
+                    job = jsonld_to_job(
+                        posting, source_name=self.name, fallback_url=url
+                    )
+                    job = enrich_job_from_detail_html(
+                        job,
+                        response.text,
+                        source="page",
+                        page_url=url,
+                    )
+                    yield job
                 except (KeyError, TypeError, ValueError) as exc:
                     logger.warning("skip malformed JSON-LD from %s: %s", url, exc)
 

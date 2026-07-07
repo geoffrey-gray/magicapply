@@ -33,6 +33,16 @@ class TestGlassdoorGuards:
         assert list(adapter.discover()) == []
 
 
+def test_from_config_honors_enrich_apply_urls_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAGICAPPLY_GLASSDOOR_ACK", "1")
+    adapter = GlassdoorAdapter.from_config(
+        GlassdoorSource(name="glassdoor-search", enrich_apply_urls=False)
+    )
+    assert adapter._enrich_apply_urls is False
+
+
 class TestSearchUrlExtractor:
     def test_extracts_job_listing_urls(self) -> None:
         html = """

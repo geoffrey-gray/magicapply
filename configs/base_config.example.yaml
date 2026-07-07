@@ -80,6 +80,7 @@ sources:
   #   rate_limit_per_minute: 30
 
   # W.5a — Indeed (requires MAGICAPPLY_INDEED_ACK=1; often Cloudflare-blocked).
+  # enrich_apply_urls: true extracts "Apply on company site" from detail pages.
   # - name: "indeed-search"
   #   type: "indeed"
   #   enabled: true
@@ -87,6 +88,7 @@ sources:
   #     - "Staff Data Scientist"
   #   location: "Remote"
   #   rate_limit_per_minute: 5
+  #   enrich_apply_urls: true
 
   # W.5b — Glassdoor (requires MAGICAPPLY_GLASSDOOR_ACK=1; optional GLASSDOOR_SESSION).
   # - name: "glassdoor-search"
@@ -95,6 +97,7 @@ sources:
   #   queries:
   #     - "Staff Data Scientist"
   #   rate_limit_per_minute: 5
+  #   enrich_apply_urls: true
 
   # W.5c — LinkedIn last (MAGICAPPLY_LINKEDIN_ACK=1 + LINKEDIN_LI_AT in .env).
   # enrich_apply_urls: true resolves external apply links from listing pages.

@@ -25,6 +25,7 @@ from lxml import html as lhtml
 from magicapply.config.models import GlassdoorSource
 from magicapply.infrastructure.browser.session import PlaywrightSession
 from magicapply.infrastructure.sources.base import SourceError
+from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
 from magicapply.infrastructure.sources.indeed import looks_like_cloudflare
 from magicapply.infrastructure.sources.jsonld import (
     extract_jobposting_dicts,
@@ -49,12 +50,14 @@ class GlassdoorAdapter:
         rate_limit_per_minute: int,
         session_cookie: str | None,
         acknowledged: bool,
+        enrich_apply_urls: bool = True,
     ) -> None:
         self.name = name
         self._queries = list(queries)
         self._rate = rate_limit_per_minute
         self._session = session_cookie
         self._ack = acknowledged
+        self._enrich_apply_urls = enrich_apply_urls
 
     @classmethod
     def from_config(cls, config: GlassdoorSource) -> GlassdoorAdapter:
@@ -64,6 +67,7 @@ class GlassdoorAdapter:
             rate_limit_per_minute=config.rate_limit_per_minute,
             session_cookie=os.environ.get("GLASSDOOR_SESSION") or None,
             acknowledged=os.environ.get("MAGICAPPLY_GLASSDOOR_ACK") == "1",
+            enrich_apply_urls=config.enrich_apply_urls,
         )
 
     def discover(self) -> Iterator[Job]:
@@ -113,9 +117,14 @@ class GlassdoorAdapter:
                 continue
             for posting in extract_jobposting_dicts(job_html):
                 try:
-                    yield jsonld_to_job(
+                    job = jsonld_to_job(
                         posting, source_name=self.name, fallback_url=job_url
                     )
+                    if self._enrich_apply_urls:
+                        job = enrich_job_from_detail_html(
+                            job, job_html, source="glassdoor"
+                        )
+                    yield job
                 except (KeyError, TypeError, ValueError) as exc:
                     logger.warning(
                         "Glassdoor skip malformed JSON-LD from %s: %s", job_url, exc

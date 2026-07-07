@@ -93,3 +93,21 @@ class TestJobUrlAdapter:
         jobs = list(adapter.discover())
         assert len(jobs) == 1
         assert jobs[0].title == "SWE"
+
+    def test_enriches_apply_url_from_page_anchor(self) -> None:
+        listing = "https://acme.com/careers/staff-ds"
+        external = "https://boards.greenhouse.io/acme/jobs/99"
+        cfg = JobUrlSource(name="watched", urls=[listing])
+        html = f"""
+<script type="application/ld+json">
+{{"@type": "JobPosting", "title": "SWE", "url": "{listing}",
+ "hiringOrganization": {{"name": "Acme"}}}}
+</script>
+<a href="{external}">Apply now</a>
+"""
+        http = _mock_http({listing: (200, html)})
+        jobs = list(JobUrlAdapter.from_config(cfg, http=http).discover())
+        assert len(jobs) == 1
+        assert jobs[0].url == listing
+        assert jobs[0].apply_url == external
+        assert jobs[0].raw["platform"] == "greenhouse"
