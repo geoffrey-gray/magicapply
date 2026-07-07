@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from magicapply.infrastructure.browser.ats.factory import ATSHandlerFactory
+from magicapply.infrastructure.browser.ats.generic import GenericHandler
 from magicapply.infrastructure.browser.ats.greenhouse import GreenhouseHandler
 
 
@@ -21,5 +22,6 @@ def test_greenhouse_urls_dispatch(url: str) -> None:
     assert isinstance(handler, GreenhouseHandler)
 
 
-def test_unknown_url_returns_none() -> None:
-    assert ATSHandlerFactory.for_url("https://unknown-ats.com/jobs/1") is None
+def test_unknown_url_returns_generic_handler() -> None:
+    handler = ATSHandlerFactory.for_url("https://careers.unknown-custom.com/jobs/1")
+    assert isinstance(handler, GenericHandler)

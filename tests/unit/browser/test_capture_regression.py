@@ -224,6 +224,7 @@ def capture_dir(request: pytest.FixtureRequest) -> Path:
 class TestCaptureLoader:
     def test_lists_all_promoted_fixtures(self) -> None:
         names = [p.name for p in list_capture_dirs()]
+        assert "custom-e2e-smoke-20260707" in names
         assert "greenhouse-e2e-smoke-20260707" in names
         assert "lever-e2e-smoke-20260707" in names
         assert "ashby-e2e-smoke-20260707" in names

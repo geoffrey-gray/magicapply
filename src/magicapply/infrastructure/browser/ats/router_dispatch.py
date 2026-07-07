@@ -20,6 +20,7 @@ _HANDLER_TO_ATS = {
     "Workday": "workday",
     "Lever": "lever",
     "Ashby": "ashby",
+    "Generic": "generic",
 }
 
 

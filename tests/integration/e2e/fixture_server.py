@@ -34,6 +34,7 @@ _E2E_SMOKE_CAPTURES: dict[str, str] = {
     "workday": "workday-e2e-smoke-20260707",
     "lever": "lever-e2e-smoke-20260707",
     "ashby": "ashby-e2e-smoke-20260707",
+    "generic": "custom-e2e-smoke-20260707",
 }
 
 # Promoted W.4 live DOM snapshots — dry-run E2E only (no traditional form POST).
@@ -214,6 +215,8 @@ def _resolve_capture_html(path: str) -> str | None:
         norm.endswith("/apply") or norm.endswith("/application")
     ):
         return _load_captured_dom(_E2E_SMOKE_CAPTURES["ashby"])
+    if norm.startswith("/careers.example-custom.com/") and norm.endswith("/apply"):
+        return _load_captured_dom(_E2E_SMOKE_CAPTURES["generic"])
 
     return None
 

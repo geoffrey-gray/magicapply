@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head><title>Apply — Example Careers</title></head>
+  <body>
+    <h1>Staff Data Scientist</h1>
+    <form method="POST" action="/submit" enctype="multipart/form-data" id="application-form">
+      <label>First name <input id="first_name" name="first_name" type="text"></label>
+      <label>Last name <input id="last_name" name="last_name" type="text"></label>
+      <label>Email <input id="email" name="email" type="email"></label>
+      <label>Phone <input id="phone" name="phone" type="tel"></label>
+      <label>LinkedIn profile <input name="linkedin_url" type="url"></label>
+      <label>Resume <input type="file" name="resume" accept=".pdf,.doc,.docx"></label>
+      <label>Are you authorized to work in the United States?
+        <select name="authorized" id="authorized">
+          <option value="">Select one</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </label>
+      <label>Why are you interested in this role?
+        <textarea name="interest" id="interest"></textarea>
+      </label>
+      <button type="submit">Submit application</button>
+    </form>
+  </body>
+</html>

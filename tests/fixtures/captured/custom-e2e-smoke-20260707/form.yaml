@@ -1,0 +1,50 @@
+capture:
+  ats: generic
+  e2e_smoke: true
+  form_selectors:
+    - form#application-form
+    - form
+  schema_id: generic_e2e_smoke
+  allowed_unhandled: []
+app_id: fixture-custom-careers
+job_url: https://careers.example-custom.com/jobs/staff-ds/apply
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: First name
+    kind: text
+    selector: "#first_name"
+    resolved_strategy: static
+    required: true
+  - label: Last name
+    kind: text
+    selector: "#last_name"
+    resolved_strategy: static
+    required: true
+  - label: Email
+    kind: text
+    selector: "#email"
+    resolved_strategy: static
+    required: true
+  - label: Phone
+    kind: text
+    selector: "#phone"
+    resolved_strategy: static
+  - label: LinkedIn profile
+    kind: text
+    selector: "input[name='linkedin_url']"
+    resolved_strategy: static
+  - label: Resume
+    kind: file
+    selector: "input[name='resume']"
+    resolved_strategy: file
+    required: true
+  - label: "Are you authorized to work in the United States? Select one Yes No"
+    kind: select
+    selector: "#authorized"
+    resolved_strategy: select
+    required: true
+  - label: Why are you interested in this role?
+    kind: textarea
+    selector: "#interest"
+    resolved_strategy: narrative
+    required: true

@@ -17,6 +17,7 @@ from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import TailoredResume
 from magicapply.infrastructure.browser.ats.base import ApplicationData
 from magicapply.infrastructure.browser.ats.factory import ATSHandlerFactory
+from magicapply.infrastructure.browser.ats.generic import GenericHandler
 from magicapply.infrastructure.browser.ats.greenhouse import GreenhouseHandler
 from magicapply.infrastructure.browser.ats.workday import WorkdayHandler
 from magicapply.infrastructure.persistence.repositories.applications import (
@@ -44,7 +45,7 @@ def test_effective_apply_url_selects_workday_handler() -> None:
         title="Data Science Manager",
         company="The Home Depot",
     )
-    assert ATSHandlerFactory.for_url(job.url) is None
+    assert isinstance(ATSHandlerFactory.for_url(job.url), GenericHandler)
     handler = ATSHandlerFactory.for_url(job.effective_apply_url)
     assert isinstance(handler, WorkdayHandler)
 
@@ -123,7 +124,7 @@ def test_apply_pipeline_routes_via_apply_url_not_listing(
         application_data=data,
     )
 
-    assert ATSHandlerFactory.for_url(job.url) is None
+    assert isinstance(ATSHandlerFactory.for_url(job.url), GenericHandler)
     assert isinstance(
         ATSHandlerFactory.for_url(job.effective_apply_url), GreenhouseHandler
     )
