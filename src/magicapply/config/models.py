@@ -175,6 +175,7 @@ class LinkedInSource(_SourceBase):
     enabled: bool = False
     queries: list[str] = Field(default_factory=list)
     rate_limit_per_minute: int = Field(default=10, gt=0)
+    enrich_apply_urls: bool = True
 
 
 class IndeedSource(_SourceBase):

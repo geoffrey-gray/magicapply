@@ -97,9 +97,11 @@ sources:
   #   rate_limit_per_minute: 5
 
   # W.5c — LinkedIn last (MAGICAPPLY_LINKEDIN_ACK=1 + LINKEDIN_LI_AT in .env).
+  # enrich_apply_urls: true resolves external apply links from listing pages.
   # - name: "linkedin-search"
   #   type: "linkedin"
   #   enabled: false
   #   queries:
   #     - "Staff Data Scientist"
   #   rate_limit_per_minute: 10
+  #   enrich_apply_urls: true

@@ -26,8 +26,12 @@ from typing import TYPE_CHECKING, Any
 from lxml import html as lhtml
 
 from magicapply.config.models import LinkedInSource
-from magicapply.domain.models.job import Job
+from magicapply.domain.models.job import Job, canonicalize_url
 from magicapply.infrastructure.browser.session import PlaywrightSession
+from magicapply.infrastructure.sources.apply_url import (
+    apply_url_from_linkedin_detail_html,
+    sniff_platform,
+)
 from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.jsonld import (
     extract_jobposting_dicts,
@@ -56,12 +60,14 @@ class LinkedInAdapter:
         rate_limit_per_minute: int,
         li_at: str | None,
         acknowledged: bool,
+        enrich_apply_urls: bool = True,
     ) -> None:
         self.name = name
         self._queries = list(queries)
         self._rate = rate_limit_per_minute
         self._li_at = li_at
         self._ack = acknowledged
+        self._enrich_apply_urls = enrich_apply_urls
 
     @classmethod
     def from_config(cls, config: LinkedInSource) -> LinkedInAdapter:
@@ -71,6 +77,7 @@ class LinkedInAdapter:
             rate_limit_per_minute=config.rate_limit_per_minute,
             li_at=os.environ.get("LINKEDIN_LI_AT") or None,
             acknowledged=os.environ.get("MAGICAPPLY_LINKEDIN_ACK") == "1",
+            enrich_apply_urls=config.enrich_apply_urls,
         )
 
     def discover(self) -> Iterator[Job]:
@@ -119,7 +126,10 @@ class LinkedInAdapter:
 
         jobs = extract_jobs_from_search(html, source_name=self.name)
         if jobs:
-            yield from jobs
+            for job in jobs:
+                if self._enrich_apply_urls:
+                    job = _enrich_apply_url(session, job, rate)
+                yield job
             return
 
         # Legacy fallback: detail-page JSON-LD when Voyager cards are absent.
@@ -147,6 +157,46 @@ class LinkedInAdapter:
                     logger.warning(
                         "LinkedIn skip malformed JSON-LD from %s: %s", job_url, exc
                     )
+
+
+def _enrich_apply_url(
+    session: PlaywrightSession,
+    job: Job,
+    rate: RateLimiter,
+) -> Job:
+    """Fetch the LinkedIn listing page and resolve the external apply URL."""
+    rate.wait()
+    page = session.new_page()
+    try:
+        try:
+            page.goto(job.url, wait_until="domcontentloaded", timeout=30_000)
+            page.wait_for_timeout(1500)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "LinkedIn apply-url enrich failed for %s: %s", job.url, exc
+            )
+            return job
+        apply_url = apply_url_from_linkedin_detail_html(page.content())
+    finally:
+        page.close()
+
+    if not apply_url:
+        return job
+
+    platform = sniff_platform(apply_url)
+    logger.info(
+        "LinkedIn enriched apply URL for %s → %s (%s)", job.url, apply_url, platform
+    )
+    return job.model_copy(
+        update={
+            "apply_url": canonicalize_url(apply_url),
+            "raw": {
+                **job.raw,
+                "listing_url": job.url,
+                "platform": platform,
+            },
+        }
+    )
 
 
 def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:

@@ -12,6 +12,7 @@ from magicapply.config.models import (
     JobUrlSource,
     LinkedInSource,
 )
+from magicapply.domain.models.job import Job
 from magicapply.infrastructure.sources import build_source
 from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.custom_url import (
@@ -19,6 +20,7 @@ from magicapply.infrastructure.sources.custom_url import (
     JobUrlAdapter,
 )
 from magicapply.infrastructure.sources.greenhouse import GreenhouseAdapter
+from magicapply.infrastructure.sources.apply_url import apply_url_from_linkedin_detail_html
 from magicapply.infrastructure.sources.linkedin import (
     LinkedInAdapter,
     extract_job_urls,
@@ -107,6 +109,44 @@ class TestSearchUrlExtractor:
     def test_strips_query_string(self) -> None:
         html = '<html><body><a href="/jobs/view/999?a=1&b=2">X</a></body></html>'
         assert extract_job_urls(html) == ["https://www.linkedin.com/jobs/view/999"]
+
+
+class TestApplyUrlEnrichment:
+    def test_detail_html_yields_workday_apply_url(self) -> None:
+        safety = (
+            "https://www.linkedin.com/safety/go/?url=https%3A%2F%2Fhomedepot.wd5"
+            ".myworkdayjobs.com%2FCareerDepot%2Fjob%2FReq185496"
+        )
+        html = f'<html><body><a aria-label="Apply" href="{safety}">Apply</a></body></html>'
+        apply_url = apply_url_from_linkedin_detail_html(html)
+        assert apply_url is not None
+        assert "myworkdayjobs.com" in apply_url
+
+    def test_enriched_job_model_copy_preserves_listing_id(self) -> None:
+        listing = "https://www.linkedin.com/jobs/view/4432714211"
+        apply_url = "https://homedepot.wd5.myworkdayjobs.com/CareerDepot/job/1"
+        job = Job.new(
+            source_name="linkedin-search",
+            url=listing,
+            title="Data Science Manager",
+            company="The Home Depot",
+        )
+        enriched = job.model_copy(
+            update={
+                "apply_url": apply_url,
+                "raw": {**job.raw, "platform": "workday", "listing_url": listing},
+            }
+        )
+        assert enriched.id == job.id
+        assert enriched.url == listing
+        assert enriched.apply_url == apply_url
+        assert enriched.effective_apply_url == apply_url
+
+    def test_from_config_honors_enrich_apply_urls_flag(self) -> None:
+        adapter = LinkedInAdapter.from_config(
+            LinkedInSource(name="linkedin-search", enrich_apply_urls=False)
+        )
+        assert adapter._enrich_apply_urls is False
 
 
 class TestFactory:
