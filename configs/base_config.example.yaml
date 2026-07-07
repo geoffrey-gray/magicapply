@@ -79,11 +79,27 @@ sources:
   #     - "principal data scientist"
   #   rate_limit_per_minute: 30
 
-  # LinkedIn is opt-in. Uncomment + set enabled: true only if you accept the
-  # ToS risk documented in README.md.
+  # W.5a — Indeed (requires MAGICAPPLY_INDEED_ACK=1; often Cloudflare-blocked).
+  # - name: "indeed-search"
+  #   type: "indeed"
+  #   enabled: true
+  #   queries:
+  #     - "Staff Data Scientist"
+  #   location: "Remote"
+  #   rate_limit_per_minute: 5
+
+  # W.5b — Glassdoor (requires MAGICAPPLY_GLASSDOOR_ACK=1; optional GLASSDOOR_SESSION).
+  # - name: "glassdoor-search"
+  #   type: "glassdoor"
+  #   enabled: true
+  #   queries:
+  #     - "Staff Data Scientist"
+  #   rate_limit_per_minute: 5
+
+  # W.5c — LinkedIn last (MAGICAPPLY_LINKEDIN_ACK=1 + LINKEDIN_LI_AT in .env).
   # - name: "linkedin-search"
   #   type: "linkedin"
   #   enabled: false
   #   queries:
-  #     - "senior software engineer remote"
+  #     - "Staff Data Scientist"
   #   rate_limit_per_minute: 10

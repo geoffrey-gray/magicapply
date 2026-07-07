@@ -47,5 +47,5 @@ def test_promote_observed_capture_copies_dom_and_form(tmp_path: Path) -> None:
 def test_captured_fixtures_root_points_at_tests_fixtures() -> None:
     root = captured_fixtures_root()
     assert root.name == "captured"
-    assert (root / "greenhouse-acme-20260707" / "dom.html").exists()
+    assert (root / "greenhouse-e2e-smoke-20260707" / "dom.html").exists()
     assert (root / "workday-circle-staff-ds-20260707" / "dom.html").exists()

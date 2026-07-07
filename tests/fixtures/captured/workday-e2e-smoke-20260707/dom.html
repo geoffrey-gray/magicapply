@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+  <head><title>Workday Apply</title></head>
+  <body>
+    <h1>Workday Apply</h1>
+    <div data-automation-id="applyFlowPage">
+    <form method="POST" action="/submit" enctype="multipart/form-data">
+      <label>First name
+        <input data-automation-id="legalNameSection_firstName"
+               name="first_name">
+      </label>
+      <label>Last name
+        <input data-automation-id="legalNameSection_lastName"
+               name="last_name">
+      </label>
+      <label>Email
+        <input data-automation-id="email" name="email">
+      </label>
+      <label>Phone
+        <input data-automation-id="phone-number" name="phone">
+      </label>
+      <label>Resume
+        <input type="file" data-automation-id="file-upload-input-ref"
+               name="resume">
+      </label>
+      <button type="submit"
+              data-automation-id="submitApplication">Submit</button>
+    </form>
+    </div>
+  </body>
+</html>

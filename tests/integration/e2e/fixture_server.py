@@ -1,19 +1,15 @@
-"""Local HTTP fixture that impersonates a careers page + Greenhouse form.
+"""Local HTTP fixture that serves captured DOM fixtures for hermetic E2E.
 
-The server:
+Routes:
 
-- Serves ``GET /careers`` — a listing page with three ``JobPosting`` JSON-LD
-  blocks. The URLs contain ``greenhouse.io`` as a path segment so
-  ``GreenhouseHandler.matches`` accepts them without any handler-side change
-  (see ``infrastructure/browser/ats/greenhouse.py``:``_MATCH_HOSTS``, which
-  does a substring check on the full URL).
-- Serves ``GET /greenhouse.io/<slug>/apply`` — a form with the exact
-  selectors ``GreenhouseHandler._fill_static`` / ``_submit`` use.
-- Records every ``POST /submit`` payload on ``.submissions`` for
-  assertion by the test.
+- ``GET /careers`` — JSON-LD listing for the Greenhouse pipeline test.
+- ``GET /careers-cross-ats`` — four ATS JSON-LD blocks for acceptance.
+- ``GET <live-capture-path>`` — promoted W.4 DOM snapshots (dry-run E2E).
+- ``GET <e2e-smoke-path>`` — submittable HTML forms for yes-submit tests.
+- ``POST /submit`` — records multipart submissions on ``.submissions``.
 
-Deliberately does not include any of the substrings ``captcha.detect_captcha``
-looks for; the CAPTCHA branch in ``BaseATSHandler.apply`` never fires.
+E2E-smoke captures live under ``tests/fixtures/captured/*-e2e-smoke-*``.
+Live W.4 captures are promoted snapshots under ``tests/fixtures/captured/*``.
 """
 
 from __future__ import annotations
@@ -28,15 +24,49 @@ from email.policy import HTTP as EMAIL_HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 _CAPTURED_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "captured"
+
+# Submittable minimal forms — POST /submit assertions in E2E yes-submit tests.
+_E2E_SMOKE_CAPTURES: dict[str, str] = {
+    "greenhouse": "greenhouse-e2e-smoke-20260707",
+    "workday": "workday-e2e-smoke-20260707",
+    "lever": "lever-e2e-smoke-20260707",
+    "ashby": "ashby-e2e-smoke-20260707",
+}
+
+# Promoted W.4 live DOM snapshots — dry-run E2E only (no traditional form POST).
+_LIVE_CAPTURE_ROUTES: list[tuple[str, str]] = [
+    (
+        "greenhouse-reddit-20260707",
+        "/job-boards.greenhouse.io/reddit/jobs/7772274",
+    ),
+    (
+        "lever-foodsmart-20260707",
+        "/jobs.lever.co/foodsmart/c711b611-ac13-4167-8b60-5c0adb32af26",
+    ),
+    (
+        "ashby-trm-20260707",
+        "/jobs.ashbyhq.com/trm-labs/b20af02a-0701-415e-9279-65ea5c2b6f12",
+    ),
+    (
+        "workday-circle-staff-ds-20260707",
+        "/circle.wd1.myworkdayjobs.com/en-US/Circle/job/Staff-Data-Scientist---Digital-Assets_JR101068",
+    ),
+]
 
 
 def _load_captured_dom(capture_id: str) -> str:
     return (_CAPTURED_ROOT / capture_id / "dom.html").read_text(encoding="utf-8")
 
 
-# --- The three JSON-LD JobPostings --------------------------------------------
+def _normalize_path(path: str) -> str:
+    parsed = urlparse(path)
+    return parsed.path.rstrip("/") or "/"
+
+
+# --- JSON-LD careers fixtures (discovery tests) --------------------------------
 
 _JOBS: list[dict[str, Any]] = [
     {
@@ -54,9 +84,7 @@ _JOBS: list[dict[str, Any]] = [
         "title": "iOS Designer",
         "company": "Beta",
         "location": "San Francisco",
-        "description": (
-            "Design beautiful iOS surfaces. Portfolio required."
-        ),
+        "description": "Design beautiful iOS surfaces. Portfolio required.",
     },
     {
         "slug": "director",
@@ -103,8 +131,6 @@ def _careers_html(base_url: str) -> str:
     )
 
 
-# Cross-ATS careers page used by the acceptance suite: one job per ATS,
-# each URL routed to the matching handler by its path segment.
 _CROSS_ATS_JOBS: list[dict[str, Any]] = [
     {
         "path": "/greenhouse.io/senior-backend/apply",
@@ -167,51 +193,29 @@ def _cross_ats_careers_html(base_url: str) -> str:
     )
 
 
-_APPLY_FORM_HTML = _load_captured_dom("greenhouse-acme-20260707")
-
-# Workday-shaped single-page form: data-automation-id selectors matching the
-# real Workday wizard's convention. Single page (no multi-step navigation)
-# because a fixture-side wizard would just be JavaScript we do not need to
-# ship. The handler's Next-button loop terminates because there is no Next
-# button on this page -- exactly the "you have reached the Review step"
-# terminal state.
-_WORKDAY_FORM_HTML = """\
-<!doctype html>
-<html>
-  <head><title>Workday Apply</title></head>
-  <body>
-    <h1>Workday Apply</h1>
-    <form method="POST" action="/submit" enctype="multipart/form-data">
-      <label>First name
-        <input data-automation-id="legalNameSection_firstName"
-               name="first_name">
-      </label>
-      <label>Last name
-        <input data-automation-id="legalNameSection_lastName"
-               name="last_name">
-      </label>
-      <label>Email
-        <input data-automation-id="email" name="email">
-      </label>
-      <label>Phone
-        <input data-automation-id="phone-number" name="phone">
-      </label>
-      <label>Resume
-        <input type="file" data-automation-id="file-upload-input-ref"
-               name="resume">
-      </label>
-      <button type="submit"
-              data-automation-id="submitApplication">Submit</button>
-    </form>
-  </body>
-</html>
-"""
-
-_LEVER_FORM_HTML = _load_captured_dom("lever-acme-20260707")
-
-_ASHBY_FORM_HTML = _load_captured_dom("ashby-acme-20260707")
-
 _THANK_YOU_HTML = "<!doctype html><html><body><h1>Thanks!</h1></body></html>"
+
+
+def _resolve_capture_html(path: str) -> str | None:
+    """Map a request path to a captured DOM, if any."""
+    norm = _normalize_path(path)
+
+    for capture_id, prefix in _LIVE_CAPTURE_ROUTES:
+        if norm == prefix or norm.startswith(f"{prefix}/"):
+            return _load_captured_dom(capture_id)
+
+    if norm.startswith("/greenhouse.io/") and norm.endswith("/apply"):
+        return _load_captured_dom(_E2E_SMOKE_CAPTURES["greenhouse"])
+    if norm.startswith("/myworkdayjobs.com/") and norm.endswith("/apply"):
+        return _load_captured_dom(_E2E_SMOKE_CAPTURES["workday"])
+    if norm.startswith("/jobs.lever.co/") and norm.endswith("/apply"):
+        return _load_captured_dom(_E2E_SMOKE_CAPTURES["lever"])
+    if norm.startswith("/jobs.ashbyhq.com/") and (
+        norm.endswith("/apply") or norm.endswith("/application")
+    ):
+        return _load_captured_dom(_E2E_SMOKE_CAPTURES["ashby"])
+
+    return None
 
 
 class FixtureServer:
@@ -237,19 +241,9 @@ class FixtureServer:
                 if self.path == "/careers-cross-ats":
                     self._html(_cross_ats_careers_html(base_url))
                     return
-                if self.path.startswith("/greenhouse.io/") and self.path.endswith("/apply"):
-                    self._html(_APPLY_FORM_HTML)
-                    return
-                if self.path.startswith("/myworkdayjobs.com/") and self.path.endswith("/apply"):
-                    self._html(_WORKDAY_FORM_HTML)
-                    return
-                if self.path.startswith("/jobs.lever.co/") and self.path.endswith("/apply"):
-                    self._html(_LEVER_FORM_HTML)
-                    return
-                if self.path.startswith("/jobs.ashbyhq.com/") and (
-                    self.path.endswith("/apply") or self.path.endswith("/application")
-                ):
-                    self._html(_ASHBY_FORM_HTML)
+                captured = _resolve_capture_html(self.path)
+                if captured is not None:
+                    self._html(captured)
                     return
                 if self.path == "/submit" or self.path == "/thanks":
                     self._html(_THANK_YOU_HTML)
@@ -285,7 +279,6 @@ class FixtureServer:
                 self.end_headers()
                 self.wfile.write(data)
 
-        # Bind to an ephemeral port so parallel test runs don't collide.
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         port = self._httpd.server_address[1]
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
@@ -312,13 +305,18 @@ def fixture_server() -> Iterator[FixtureServer]:
         server.stop()
 
 
+def live_capture_path(capture_id: str) -> str:
+    """URL path prefix for a promoted live capture on the fixture server."""
+    for cid, prefix in _LIVE_CAPTURE_ROUTES:
+        if cid == capture_id:
+            return prefix
+    raise KeyError(f"unknown live capture_id: {capture_id!r}")
+
+
 def _parse_multipart(
     content_type: str, body: bytes
 ) -> tuple[dict[str, str], dict[str, bytes]]:
-    """Return (fields, files) parsed from a multipart/form-data POST.
-
-    Uses stdlib `email` because Python 3.11 removed `cgi.parse_multipart`.
-    """
+    """Return (fields, files) parsed from a multipart/form-data POST."""
     header_bytes = f"Content-Type: {content_type}\r\nMIME-Version: 1.0\r\n\r\n".encode()
     msg = message_from_bytes(header_bytes + body, policy=EMAIL_HTTP)
     fields: dict[str, str] = {}

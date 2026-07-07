@@ -74,6 +74,9 @@ class TestCloudflareDetection:
     def test_detects_checking_your_browser(self) -> None:
         assert looks_like_cloudflare("<h1>Checking your browser</h1>")
 
+    def test_detects_indeed_blocked_title(self) -> None:
+        assert looks_like_cloudflare("<title>Blocked - Indeed.com</title>")
+
     def test_clean_html_is_not_flagged(self) -> None:
         assert not looks_like_cloudflare(
             "<html><body><h1>Software Engineer</h1></body></html>"

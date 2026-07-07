@@ -1,0 +1,32 @@
+capture:
+  ats: workday
+  e2e_smoke: true
+  form_selectors:
+    - "[data-automation-id='applyFlowPage']"
+    - form
+  schema_id: workday_e2e_smoke
+  allowed_unhandled: []
+app_id: fixture-workday-e2e-smoke
+job_url: https://acme.wd1.myworkdayjobs.com/en-US/Acme/job/senior-backend/apply
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: First name
+    kind: text
+    selector: "input[data-automation-id='legalNameSection_firstName']"
+    resolved_strategy: static
+  - label: Last name
+    kind: text
+    selector: "input[data-automation-id='legalNameSection_lastName']"
+    resolved_strategy: static
+  - label: Email
+    kind: text
+    selector: "input[data-automation-id='email']"
+    resolved_strategy: static
+  - label: Phone
+    kind: text
+    selector: "input[data-automation-id='phone-number']"
+    resolved_strategy: static
+  - label: Resume
+    kind: file
+    selector: "input[data-automation-id='file-upload-input-ref']"
+    resolved_strategy: file

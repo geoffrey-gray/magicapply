@@ -1,0 +1,241 @@
+app_id: c24b3b4de0286f07
+job_url: https://jobs.ashbyhq.com/trm-labs/b20af02a-0701-415e-9279-65ea5c2b6f12/application
+timestamp: '2026-07-07T15:16:25.808953+00:00'
+fields:
+- label: Full Name
+  kind: text
+  selector: '#_systemfield_name'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Resume
+  kind: file
+  selector: '#_systemfield_resume'
+  options: []
+  required: true
+  resolved_strategy: file
+  resolved_value: /home/ggray/magicapply/data/tailored/000c259f19154b20b0280fd5b47a0350/resume.docx
+  variant: file
+- label: Email
+  kind: text
+  selector: '#_systemfield_email'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Phone
+  kind: text
+  selector: '#12d057e6-fe6b-4655-8c19-a3a13172600c'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Preferred First Name
+  kind: text
+  selector: '#c99132d4-b73a-477a-bf90-c7acf7aba61b'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Are you legally authorized to work in your current country of employment?
+  kind: checkbox
+  selector: input[name='f1787b93-cd38-40ed-a0ff-357056af73f2']
+  options: []
+  required: false
+  resolved_strategy: check
+  resolved_value: ''
+  variant: checkbox
+- label: Linkedin Profile
+  kind: text
+  selector: '#e2d95d14-0273-4a8c-9786-cb931634d9cd'
+  options: []
+  required: false
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Please list your most recent employer
+  kind: text
+  selector: '#75184292-45eb-4c5b-b34f-c20f76cc334c'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: 'Search Motivation: Please describe the reason for your selection:'
+  kind: text
+  selector: '#25e3e3b1-adb7-4886-8be4-bd9cb27fdf5d'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: 'Yes — based on my resume, I can address search motivation: please
+    describe the reason for your selection:'
+  variant: text
+- label: 'Describe the fastest #1 measurable outcome you initiated and delivered in
+    the past 12 months.Please include: • What made it particularly challenging?'
+  kind: textarea
+  selector: '#a9b7a69d-09f8-4523-a8e5-da595658abb4'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: 'Yes — based on my resume, I can address describe the fastest #1
+    measurable outcome you initiated and delivered in the past 12 months.please include:
+    • what made it particularly challenging?'
+  variant: textarea
+- label: What is your current job search timeline?
+  kind: textarea
+  selector: '#2dc0a1cb-2cfe-4c5c-9ad3-f38ffaddab5a'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address what is your current job
+    search timeline?
+  variant: textarea
+- label: Please provide relevant work samples you’d like to share with the hiring
+    team
+  kind: text
+  selector: '#47f0a78e-9cb1-4592-b406-63e0cb6a2711'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: text
+- label: Will you now or in the future require visa sponsorship?
+  kind: checkbox
+  selector: input[name='8b37d98f-6fb2-41ac-b867-d35612a24a39']
+  options: []
+  required: false
+  resolved_strategy: check
+  resolved_value: ''
+  variant: checkbox
+- label: 'If yes, please provide details regarding your current visa status and future
+    sponsorship needs:'
+  kind: textarea
+  selector: '#741d5624-c240-4cd6-a000-eec46c30168a'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: textarea
+- label: Have you previously worked in a remote or hybrid environment?
+  kind: radio
+  selector: '#efe7e2e7-f14c-4f08-ab3e-deae0d2ddaa2_68fd0781-2a61-4f31-a4c5-aa8d808d4afb-labeled-radio-0'
+  options:
+  - Yes, fully remote
+  - Yes, hybrid
+  - 'No'
+  required: false
+  resolved_strategy: select
+  resolved_value: 'No'
+  variant: radio
+- label: We are a distributed company. What are your preferred working hours, and
+    what hours are you willing to work?
+  kind: textarea
+  selector: '#bf0d6d24-2c27-4c84-981b-ecbc0320f205'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address we are a distributed company.
+    what are your preferred working hours, and what hours are you willing to work?
+  variant: textarea
+- label: Why are you considering leaving your most recent or current position?
+  kind: textarea
+  selector: '#3c5e332f-dc28-4a5b-afda-dfb78c6dde9a'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address why are you considering
+    leaving your most recent or current position?
+  variant: textarea
+- label: 'Please share your base compensation expectations in USD:'
+  kind: text
+  selector: '#5e4f33ed-64a5-4c47-83f7-8cc4b94306ba'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: What is your current notice period (if applicable)?
+  kind: radio
+  selector: '#efe7e2e7-f14c-4f08-ab3e-deae0d2ddaa2_da99b6c3-04cf-4e6a-bcf0-81e3cea5663c-labeled-radio-0'
+  options:
+  - 1-2 weeks
+  - 3-4 weeks
+  - 1 month
+  - 2 months
+  - 3+ months
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: radio
+- label: 'On-Call Requirements: Are you willing and able to participate in this job''s
+    on-call requirements?'
+  kind: checkbox
+  selector: input[name='af25caee-c3b7-4776-91ef-d6e554701f4c']
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: checkbox
+- label: Outside Work / Advisory DisclosureDo you currently have, or do you anticipate
+    having, any outside employment, consulting, or advisory commitments outside of
+    TRM Labs?
+  kind: checkbox
+  selector: input[name='53228f1f-68a4-46ce-928c-d06345f7a26c']
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: checkbox
+- label: Have you heard of TRM before applying?
+  kind: checkbox
+  selector: input[name='af130b08-8d63-4942-812b-51b6a8f90937']
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: checkbox
+- label: I have read and understand the expectations of working at TRM. I understand
+    this is a high intensity, high ownership environment, and I wish to be considered
+    for a role with these expectations.
+  kind: radio
+  selector: '#efe7e2e7-f14c-4f08-ab3e-deae0d2ddaa2_764b6651-0e15-4d19-af58-ca21294cdd3b-labeled-radio-0'
+  options:
+  - I have read and understand the expectations of working at TRM. I understand this
+    is a high intensity, high ownership environment, and I wish to be considered for
+    a role with these expectations.
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: radio
+- label: I agree
+  kind: radio
+  selector: '#efe7e2e7-f14c-4f08-ab3e-deae0d2ddaa2_b8b84bc4-a847-41c7-b1b0-8b4b7df06d19-labeled-radio-0'
+  options:
+  - I agree
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: radio
+- label: I agree
+  kind: radio
+  selector: '#efe7e2e7-f14c-4f08-ab3e-deae0d2ddaa2_5a49f203-7e4e-45bf-8181-d999d7fc920f-labeled-radio-0'
+  options:
+  - I agree
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: radio
+capture:
+  ats: ashby
+  live: true
+  form_selectors:
+  - form
+  - '[data-testid=''application-form'']'
+  - main
+  schema_id: ashby_trm_labs
+  job_url: https://jobs.ashbyhq.com/trm-labs/b20af02a-0701-415e-9279-65ea5c2b6f12/application

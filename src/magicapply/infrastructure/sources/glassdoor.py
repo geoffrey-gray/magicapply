@@ -95,7 +95,9 @@ class GlassdoorAdapter:
         if content is None:
             return
         if looks_like_cloudflare(content):
-            logger.warning("Glassdoor hit Cloudflare for %r; skipping query", query)
+            logger.warning(
+                "Glassdoor blocked by bot protection for %r; skipping query", query
+            )
             return
 
         for job_url in extract_job_urls(content):
@@ -104,7 +106,10 @@ class GlassdoorAdapter:
             if job_html is None:
                 continue
             if looks_like_cloudflare(job_html):
-                logger.warning("Glassdoor Cloudflare on detail %s; skipping", job_url)
+                logger.warning(
+                    "Glassdoor blocked by bot protection on detail %s; skipping",
+                    job_url,
+                )
                 continue
             for posting in extract_jobposting_dicts(job_html):
                 try:

@@ -1,0 +1,184 @@
+app_id: 65a741b40ec7806c
+job_url: https://job-boards.greenhouse.io/reddit/jobs/7772274
+timestamp: '2026-07-07T14:24:22.519085+00:00'
+fields:
+- label: First Name*
+  kind: text
+  selector: '#first_name'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Last Name*
+  kind: text
+  selector: '#last_name'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Preferred First Name
+  kind: text
+  selector: '#preferred_name'
+  options: []
+  required: false
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Email*
+  kind: text
+  selector: '#email'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Country*
+  kind: text
+  selector: '#country'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Location (City)*
+  kind: text
+  selector: '#candidate-location'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Attach
+  kind: file
+  selector: '#cover_letter'
+  options: []
+  required: false
+  resolved_strategy: file
+  resolved_value: /home/ggray/magicapply/data/tailored/80b1b69d314441f49a1786ed89cb1c83/resume.docx
+  variant: file
+- label: LinkedIn Profile
+  kind: text
+  selector: '#question_65125034'
+  options: []
+  required: false
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: How did you hear about this job?*
+  kind: text
+  selector: '#question_65125035'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address how did you hear about this
+    job?*
+  variant: text
+- label: Please provide the name of your current (or most recent) company*
+  kind: text
+  selector: '#question_65125036'
+  options: []
+  required: true
+  resolved_strategy: library
+  resolved_value: Intrinsic
+  variant: text
+- label: Are you currently authorized to work in the U.S.?*
+  kind: text
+  selector: '#question_65125037'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address are you currently authorized
+    to work in the u.s.?*
+  variant: text
+- label: Do you now, or will you in the future, require immigration sponsorship to
+    work at Reddit?*
+  kind: text
+  selector: '#question_65125038'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address do you now, or will you
+    in the future, require immigration sponsorship to work at reddit?*
+  variant: text
+- label: By selecting "I agree," I understand that the information I have provided
+    as part of this job application will be processed in accordance with Reddit's
+    Candidate Privacy Policy. *
+  kind: text
+  selector: '#question_65125039'
+  options: []
+  required: true
+  resolved_strategy: library
+  resolved_value: I agree
+  variant: text
+- label: What gender identity do you most closely identify with? *
+  kind: text
+  selector: '#430'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address what gender identity do
+    you most closely identify with? *
+  variant: text
+- label: Are you a person of transgender experience? *
+  kind: text
+  selector: '#431'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address are you a person of transgender
+    experience? *
+  variant: text
+- label: What sexual orientation do you most closely identify with? *
+  kind: text
+  selector: '#432'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address what sexual orientation
+    do you most closely identify with? *
+  variant: text
+- label: Do you live with a disability (as outlined by the ADA)?*
+  kind: text
+  selector: '#433'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address do you live with a disability
+    (as outlined by the ada)?*
+  variant: text
+- label: Are you a veteran/have you served in the military? *
+  kind: text
+  selector: '#434'
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address are you a veteran/have you
+    served in the military? *
+  variant: text
+- label: Please select up to 2 ethnicities that you most closely identify with.*
+  kind: text
+  selector: '#436'
+  options: []
+  required: true
+  resolved_strategy: library
+  resolved_value: Decline to state
+  variant: text
+- label: By checking this box, I consent to Reddit collecting, storing, and processing
+    my responses to the demographic data surveys above.*
+  kind: checkbox
+  selector: '#gdpr_demographic_data_consent_given_1'
+  options: []
+  required: true
+  resolved_strategy: check
+  resolved_value: ''
+  variant: checkbox
+capture:
+  ats: greenhouse
+  live: true
+  form_selectors:
+  - form
+  - '#application-form'
+  schema_id: greenhouse_reddit_7772274
+  job_url: https://job-boards.greenhouse.io/reddit/jobs/7772274

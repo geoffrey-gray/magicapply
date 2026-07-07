@@ -1,8 +1,9 @@
 capture:
   ats: greenhouse
+  e2e_smoke: true
   form_selectors:
     - form
-  schema_id: greenhouse_acme_fixture
+  schema_id: greenhouse_e2e_smoke
   allowed_unhandled:
     - Cover letter
 app_id: fixture-greenhouse-acme

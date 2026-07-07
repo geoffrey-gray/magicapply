@@ -1,0 +1,184 @@
+app_id: b533479541ed7708
+job_url: https://jobs.lever.co/foodsmart/c711b611-ac13-4167-8b60-5c0adb32af26
+timestamp: '2026-07-07T14:37:50.739536+00:00'
+fields:
+- label: Resume/CV ✱resume.docxATTACH RESUME/CVCouldn't auto-read resume.Analyzing
+    resume...Success!
+  kind: file
+  selector: '#resume-upload-input'
+  options: []
+  required: false
+  resolved_strategy: file
+  resolved_value: /home/ggray/magicapply/data/tailored/0f59db5512b741d7bed9a10d119b1502/resume.docx
+  variant: file
+- label: Current location ✱No location found. Try entering a different locationLoading
+  kind: text
+  selector: '#location-input'
+  options: []
+  required: true
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Current company
+  kind: text
+  selector: input[name='org']
+  options: []
+  required: false
+  resolved_strategy: library
+  resolved_value: Intrinsic
+  variant: text
+- label: Twitter URL
+  kind: text
+  selector: input[name='urls[Twitter]']
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: text
+- label: GitHub URL
+  kind: text
+  selector: input[name='urls[GitHub]']
+  options: []
+  required: false
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Portfolio URL
+  kind: text
+  selector: input[name='urls[Portfolio]']
+  options: []
+  required: false
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Other website
+  kind: text
+  selector: input[name='urls[Other]']
+  options: []
+  required: false
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+- label: Are you eligible to work in the US without Sponsorship?
+  kind: radio
+  selector: input[name='cards[9c28ec02-0994-41b3-9755-1209092431d7][field0]']
+  options:
+  - Yes (Citizen/Green-card)
+  - No (H1-B or other Visa sponsorship required)
+  required: true
+  resolved_strategy: select
+  resolved_value: Yes (Citizen/Green-card)
+  variant: radio
+- label: Are you located in the United States?
+  kind: radio
+  selector: input[name='cards[9c28ec02-0994-41b3-9755-1209092431d7][field1]']
+  options:
+  - 'Yes'
+  - No, I live outside of the country
+  required: true
+  resolved_strategy: select
+  resolved_value: 'Yes'
+  variant: radio
+- label: Do you have 8+ years of professional data science experience with a proven
+    track record of driving measurable impact on growth, acquisition, or lifecycle
+    outcomes?
+  kind: radio
+  selector: input[name='cards[a282c43d-89ab-42f6-9864-4cb4eb9b0459][field0]']
+  options:
+  - 'Yes'
+  - 'No'
+  required: true
+  resolved_strategy: select
+  resolved_value: 'Yes'
+  variant: radio
+- label: Do you have experience owning lifecycle analytics, ideally including hands-on
+    work with Customer.io, Braze, Iterable, or a similar platform?
+  kind: radio
+  selector: input[name='cards[a282c43d-89ab-42f6-9864-4cb4eb9b0459][field1]']
+  options:
+  - 'Yes'
+  - 'No'
+  required: true
+  resolved_strategy: select
+  resolved_value: 'Yes'
+  variant: radio
+- label: Do you have deep, production-level experience with dbt — including source
+    and mart-layer modeling, testing, documentation, and semantic layer design?
+  kind: radio
+  selector: input[name='cards[a282c43d-89ab-42f6-9864-4cb4eb9b0459][field2]']
+  options:
+  - 'Yes'
+  - 'No'
+  required: true
+  resolved_strategy: select
+  resolved_value: 'Yes'
+  variant: radio
+- label: Are you expert-level in Python (e.g., pandas, scikit-learn, statsmodels,
+    etc.)?
+  kind: radio
+  selector: input[name='cards[a282c43d-89ab-42f6-9864-4cb4eb9b0459][field3]']
+  options:
+  - 'Yes'
+  - 'No'
+  required: true
+  resolved_strategy: select
+  resolved_value: 'Yes'
+  variant: radio
+- label: Tell us briefly about why you think your skillset is a fit for this role?
+  kind: textarea
+  selector: textarea[name='cards[a282c43d-89ab-42f6-9864-4cb4eb9b0459][field4]']
+  options: []
+  required: true
+  resolved_strategy: narrative
+  resolved_value: Yes — based on my resume, I can address tell us briefly about why
+    you think your skillset is a fit for this role?
+  variant: textarea
+- label: Gender
+  kind: select
+  selector: select[name='eeo[gender]']
+  options:
+  - ''
+  - Male
+  - Female
+  - Decline to self-identify
+  required: false
+  resolved_strategy: select
+  resolved_value: Decline to self-identify
+  variant: select
+- label: Race
+  kind: select
+  selector: select[name='eeo[race]']
+  options:
+  - ''
+  - Hispanic or Latino
+  - White (Not Hispanic or Latino)
+  - Black or African American (Not Hispanic or Latino)
+  - Native Hawaiian or Other Pacific Islander (Not Hispanic or Latino)
+  - Asian (Not Hispanic or Latino)
+  - American Indian or Alaska Native (Not Hispanic or Latino)
+  - Two or More Races (Not Hispanic or Latino)
+  - Decline to self-identify
+  required: false
+  resolved_strategy: select
+  resolved_value: Decline to self-identify
+  variant: select
+- label: Veteran
+  kind: select
+  selector: select[name='eeo[veteran]']
+  options:
+  - ''
+  - I am a veteran
+  - I am not a veteran
+  - Decline to self-identify
+  required: false
+  resolved_strategy: select
+  resolved_value: Decline to self-identify
+  variant: select
+capture:
+  ats: lever
+  live: true
+  form_selectors:
+  - form.posting-form
+  - form
+  schema_id: lever_foodsmart
+  job_url: https://jobs.lever.co/foodsmart/c711b611-ac13-4167-8b60-5c0adb32af26

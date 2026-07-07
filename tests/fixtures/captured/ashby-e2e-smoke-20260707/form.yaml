@@ -1,8 +1,9 @@
 capture:
   ats: ashby
+  e2e_smoke: true
   form_selectors:
     - form
-  schema_id: ashby_acme_fixture
+  schema_id: ashby_e2e_smoke
   allowed_unhandled: []
 app_id: fixture-ashby-acme
 job_url: https://jobs.ashbyhq.com/acme/staff-swe/application

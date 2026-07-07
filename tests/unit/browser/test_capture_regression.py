@@ -224,9 +224,13 @@ def capture_dir(request: pytest.FixtureRequest) -> Path:
 class TestCaptureLoader:
     def test_lists_all_promoted_fixtures(self) -> None:
         names = [p.name for p in list_capture_dirs()]
-        assert "greenhouse-acme-20260707" in names
-        assert "lever-acme-20260707" in names
-        assert "ashby-acme-20260707" in names
+        assert "greenhouse-e2e-smoke-20260707" in names
+        assert "lever-e2e-smoke-20260707" in names
+        assert "ashby-e2e-smoke-20260707" in names
+        assert "workday-e2e-smoke-20260707" in names
+        assert "greenhouse-reddit-20260707" in names
+        assert "lever-foodsmart-20260707" in names
+        assert "ashby-trm-20260707" in names
         assert "workday-voluntary-20260707" in names
         assert "workday-self-identify-20260707" in names
         assert "workday-circle-staff-ds-20260707" in names
@@ -241,7 +245,7 @@ class TestCaptureLoader:
         assert any(f.variant == "workday_date_spin" for f in bundle.fields)
 
     def test_loads_dom_and_meta(self) -> None:
-        bundle = load_capture(captured_fixtures_root() / "greenhouse-acme-20260707")
+        bundle = load_capture(captured_fixtures_root() / "greenhouse-e2e-smoke-20260707")
         assert "first_name" in bundle.dom_html
         assert bundle.meta.ats == "greenhouse"
         assert bundle.meta.form_selectors == ("form",)

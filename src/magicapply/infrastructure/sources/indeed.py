@@ -40,11 +40,12 @@ logger = logging.getLogger(__name__)
 
 _SEARCH_URL = "https://www.indeed.com/jobs?q={query}{location}"
 
-_CLOUDFLARE_MARKERS = (
+_BOT_BLOCK_MARKERS = (
     "challenges.cloudflare.com",
     "cf-challenge",
     "just a moment...",
     "checking your browser",
+    "blocked - indeed.com",
 )
 
 
@@ -107,8 +108,10 @@ class IndeedAdapter:
         content = _fetch(session, url)
         if content is None:
             return
-        if looks_like_cloudflare(content):
-            logger.warning("Indeed hit Cloudflare challenge for %r; skipping query", query)
+        if looks_like_bot_block(content):
+            logger.warning(
+                "Indeed blocked by bot protection for %r; skipping query", query
+            )
             return
 
         job_urls = extract_job_urls(content)
@@ -117,8 +120,11 @@ class IndeedAdapter:
             job_html = _fetch(session, job_url)
             if job_html is None:
                 continue
-            if looks_like_cloudflare(job_html):
-                logger.warning("Indeed hit Cloudflare on detail page %s; skipping", job_url)
+            if looks_like_bot_block(job_html):
+                logger.warning(
+                    "Indeed blocked by bot protection on detail page %s; skipping",
+                    job_url,
+                )
                 continue
             for posting in extract_jobposting_dicts(job_html):
                 try:
@@ -168,7 +174,12 @@ def extract_job_urls(html: str) -> list[str]:
     return sorted(urls)
 
 
-def looks_like_cloudflare(html: str) -> bool:
-    """Return True if the response HTML is a Cloudflare challenge page."""
+def looks_like_bot_block(html: str) -> bool:
+    """Return True if the HTML is a bot-protection or access-denied page."""
     lowered = html.lower()
-    return any(marker in lowered for marker in _CLOUDFLARE_MARKERS)
+    return any(marker in lowered for marker in _BOT_BLOCK_MARKERS)
+
+
+def looks_like_cloudflare(html: str) -> bool:
+    """Alias kept for Glassdoor + tests."""
+    return looks_like_bot_block(html)

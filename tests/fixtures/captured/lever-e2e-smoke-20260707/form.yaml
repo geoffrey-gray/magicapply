@@ -1,9 +1,10 @@
 capture:
   ats: lever
+  e2e_smoke: true
   form_selectors:
     - form.posting-form
     - form
-  schema_id: lever_acme_fixture
+  schema_id: lever_e2e_smoke
   allowed_unhandled:
     - Cover letter
 app_id: fixture-lever-acme

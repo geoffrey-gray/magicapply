@@ -58,7 +58,12 @@ class RulesBasedDriver:
                 return _try_check(page, field.selector)
             return True
         if strategy == "file":
-            return True
+            if not answer.value or not field.selector:
+                return False
+            with contextlib.suppress(Exception):
+                page.set_input_files(field.selector, answer.value)
+                return True
+            return False
         return False
 
 

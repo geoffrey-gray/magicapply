@@ -116,12 +116,37 @@ CLI (Typer) → pipelines/ (Facade) → domain/ → infrastructure/
 | **W.4b (partial)** | Circle Staff DS (`b55def1b256b5d48`) dry-run reaches Review + Submit (`20260707-131006` capture promoted to `tests/fixtures/captured/workday-circle-staff-ds-20260707/`). Legacy imperative DEI/disability fallbacks **removed** — composable recipes + scan enrichment only. **Remaining:** stable zero-unhandled on Self Identify (date spin + disability checkbox) across 2 consecutive dry-runs (CF.4 gate). |
 | **W.7 (partial)** | `capture_loader.py` + `test_capture_regression.py`; synthetic + promoted live captures for GH/Lever/Ashby/Workday. Circle capture marked `live: true` (snapshot only). |
 
+### Done on branch `feature/composable-forms-refactor` (committed `7bbe961`)
+
+| Phase | Summary |
+|-------|---------|
+| **W.4a–d** | All four ATS handlers verified live (GH Reddit `7772274`, Circle Workday, FoodSmart Lever, TRM Ashby). Each dry-run reaches Submit with zero required unhandled; captures under `data/observed_forms/`. |
+
 ### In progress
 
-- **W.4a:** live Greenhouse apply + capture (Reddit `7772274`).
-- **W.4b:** stabilize Circle Self Identify via composable gaps (no legacy fallbacks).
-- **W.4c–d:** Lever + Ashby live apply loops.
-- **W.5–W.8:** sources, aggregation, full capture E2E migration, runbook.
+- **W.5a–b:** Indeed + Glassdoor wired in `staff-ds` config; live discover attempted 2026-07-07 — **both blocked by bot protection** (Indeed: `<title>Blocked - Indeed.com</title>`; Glassdoor: Cloudflare "Just a moment…"). HTML snapshots: `data/w5_indeed_search.html`, `data/w5_glassdoor_search.html`. Adapters log+skip; 0 jobs ingested. **Acceptable Phase 1 outcome per §4 criterion #5.**
+- **W.5c:** LinkedIn — blocked on operator action (`LINKEDIN_LI_AT` not in `~/magicapply/.env`).
+- **W.8:** operator runbook + README refresh.
+
+### Done — W.7 E2E fixture migration (2026-07-07)
+
+| Item | Result |
+|------|--------|
+| E2E-smoke captures | `*-e2e-smoke-20260707` (submittable HTML) replace inline synthetic Workday + renamed acme fixtures |
+| Live W.4 captures | Promoted GH Reddit, Lever FoodSmart, Ashby TRM + existing Circle Workday under `tests/fixtures/captured/` |
+| `fixture_server.py` | Serves smoke + live capture DOM via registry; no inline form HTML |
+| `test_e2e_captured_live.py` | Dry-run apply against all four live captures |
+| `test_capture_regression.py` | Offline FormComposer regression (unchanged path) |
+
+### Done — W.6 aggregation (2026-07-07)
+
+| Check | Result |
+|-------|--------|
+| Multi-source config | 7 active sources (`greenhouse-boards`, 4× `job_url`, Indeed, Glassdoor) |
+| In-run dedup | 29 raw postings → 22 unique `dedup_key`s (**7 collapsed**, incl. `lever-foodsmart` + mirror + Reddit title dupes) |
+| Daily-update run 1→2 | `discovered: 0`, `already_seen: 22` both runs (stable queue) |
+| Rediscover probe | Deleted Ashby TRM row → run 3: `discovered: 1`, `scored: 1`; run 4: `discovered: 0`, `already_seen: 22` |
+| Keyword expansion | Added `staff ml engineer` to GH `title_keywords`; 0 new (already ingested) |
 
 ### Architecture notes (composable forms)
 
@@ -477,16 +502,16 @@ Each row = one commit. Small, reviewable, tree stays green.
 - [x] **W.1** Format-preserving DOCX tailorer + unit tests. — `3786d86`
 - [x] **W.2** Defer cover-letter step (kwarg-gated, not deleted) + green suite. — `a8251da`
 - [x] **W.3** Answer library + observed-forms log + tests. — `35c2a45`
-- [ ] **W.4a** Greenhouse: URL approved (`job-boards.greenhouse.io/reddit/jobs/7772274`). `GreenhouseSource` wired; discovery verified. **Remaining:** live tailor → apply → capture.
-- [ ] **W.4b** Workday: Circle Staff DS (`b55def1b256b5d48`) — dry-run reaches Review + Submit (`20260707-131006`). **Remaining:** CF.4 stable Self Identify (2 consecutive dry-runs, zero required unhandled).
+- [x] **W.4a** Greenhouse: Reddit `7772274` — discover → tailor → dry-run apply; 0 required unhandled.
+- [x] **W.4b** Workday: Circle Staff DS — dry-run Submit; CF.4 closed (0 required unhandled).
 - [x] **CF.0–CF.6** Composable forms migration complete on branch; legacy fallbacks removed.
-- [ ] **W.4c** Lever: live apply loop.
-- [ ] **W.4d** Ashby: live apply loop.
-- [ ] **W.5a** Indeed source verify; documented-blocked or working.
-- [ ] **W.5b** Glassdoor source verify; documented-blocked or working.
+- [x] **W.4c** Lever: FoodSmart — dry-run Submit; 0 required unhandled.
+- [x] **W.4d** Ashby: TRM Labs — dry-run Submit; 0 required unhandled.
+- [x] **W.5a** Indeed: **documented blocked** — bot protection (`Blocked - Indeed.com`); adapter logs+skips.
+- [x] **W.5b** Glassdoor: **documented blocked** — Cloudflare challenge; adapter logs+skips.
 - [ ] **W.5c** LinkedIn cookie retrieval → source verify against real search HTML.
-- [ ] **W.6** Multi-source aggregation + daily-update semantics verify.
-- [ ] **W.7** Real captures → offline regression tests; synthetic HTML retired. **Partial:** `tests/fixtures/captured/` + `test_capture_regression.py` ship on branch.
+- [x] **W.6** Multi-source aggregation + daily-update semantics verified (2026-07-07).
+- [x] **W.7** Real captures → E2E + offline regression; synthetic inline HTML retired (`*-e2e-smoke-*` for yes-submit only).
 - [ ] **W.8** Runbook + README + CLAUDE.md refresh; supersede banners on old plan files.
 
 ---
