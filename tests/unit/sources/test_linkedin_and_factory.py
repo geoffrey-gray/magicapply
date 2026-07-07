@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from magicapply.config.models import (
@@ -20,6 +22,7 @@ from magicapply.infrastructure.sources.greenhouse import GreenhouseAdapter
 from magicapply.infrastructure.sources.linkedin import (
     LinkedInAdapter,
     extract_job_urls,
+    extract_jobs_from_search,
 )
 
 
@@ -56,6 +59,30 @@ class TestLinkedInGuards:
         )
         # No queries -> no browser open, no jobs, no error.
         assert list(adapter.discover()) == []
+
+
+class TestSearchJobExtractor:
+    def test_extracts_voyager_job_posting_cards(self) -> None:
+        payload = {
+            "included": [
+                {
+                    "$type": "com.linkedin.voyager.dash.jobs.JobPostingCard",
+                    "entityUrn": "urn:li:fsd_jobPostingCard:(4375938610,JOBS_SEARCH)",
+                    "jobPostingUrn": "urn:li:fsd_jobPosting:4375938610",
+                    "jobPostingTitle": "Data Scientist 5 - Infrastructure Experimentation",
+                    "primaryDescription": {"text": "Netflix"},
+                    "secondaryDescription": {"text": "United States (Remote)"},
+                }
+            ]
+        }
+        html = f"<html><body><code>{json.dumps(payload)}</code></body></html>"
+        jobs = extract_jobs_from_search(html, source_name="linkedin-search")
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.title == "Data Scientist 5 - Infrastructure Experimentation"
+        assert job.company == "Netflix"
+        assert job.location == "United States (Remote)"
+        assert job.url == "https://www.linkedin.com/jobs/view/4375938610"
 
 
 class TestSearchUrlExtractor:

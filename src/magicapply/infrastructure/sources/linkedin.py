@@ -2,9 +2,9 @@
 
 Uses a PlaywrightSession seeded with an ``li_at`` session cookie (from the
 ``LINKEDIN_LI_AT`` env var). Per-query the adapter loads the LinkedIn search
-page, extracts the ``/jobs/view/<id>`` URLs from the results, and then
-fetches each job detail page and pulls its ``schema.org`` ``JobPosting``
-JSON-LD block (LinkedIn embeds one on every real job listing).
+page and extracts job cards from the embedded Voyager JSON (``<code>`` blocks).
+LinkedIn no longer serves schema.org JSON-LD on job detail pages reliably, so
+we avoid per-job detail fetches when the search payload is parseable.
 
 **ToS-sensitive.** LinkedIn's terms forbid automated access. This adapter
 refuses to run unless ``MAGICAPPLY_LINKEDIN_ACK=1`` is set — an explicit,
@@ -15,14 +15,18 @@ tune down further if LinkedIn starts throttling.
 
 from __future__ import annotations
 
+import html as html_lib
+import json
 import logging
 import os
+import re
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from lxml import html as lhtml
 
 from magicapply.config.models import LinkedInSource
+from magicapply.domain.models.job import Job
 from magicapply.infrastructure.browser.session import PlaywrightSession
 from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.jsonld import (
@@ -32,11 +36,13 @@ from magicapply.infrastructure.sources.jsonld import (
 from magicapply.infrastructure.sources.rate_limit import RateLimiter
 
 if TYPE_CHECKING:
-    from magicapply.domain.models.job import Job
+    pass
 
 logger = logging.getLogger(__name__)
 
 _SEARCH_URL_TEMPLATE = "https://www.linkedin.com/jobs/search/?keywords={query}"
+_CODE_BLOCK_RE = re.compile(r"<code[^>]*>(.*?)</code>", re.DOTALL)
+_JOB_ID_RE = re.compile(r"fsd_jobPosting:(\d+)")
 
 
 class LinkedInAdapter:
@@ -103,14 +109,21 @@ class LinkedInAdapter:
         try:
             try:
                 page.goto(search_url, wait_until="domcontentloaded", timeout=30_000)
+                page.wait_for_timeout(2000)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("LinkedIn search failed for %r: %s", query, exc)
                 return
-            job_urls = extract_job_urls(page.content())
+            html = page.content()
         finally:
             page.close()
 
-        for job_url in job_urls:
+        jobs = extract_jobs_from_search(html, source_name=self.name)
+        if jobs:
+            yield from jobs
+            return
+
+        # Legacy fallback: detail-page JSON-LD when Voyager cards are absent.
+        for job_url in extract_job_urls(html):
             rate.wait()
             job_page = session.new_page()
             try:
@@ -136,6 +149,22 @@ class LinkedInAdapter:
                     )
 
 
+def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
+    """Parse Voyager ``JobPostingCard`` objects embedded in search HTML."""
+    jobs: list[Job] = []
+    seen: set[str] = set()
+    for block in _code_json_blocks(html):
+        for card in _walk_nodes(block):
+            if not _is_search_job_card(card):
+                continue
+            job = _card_to_job(card, source_name=source_name)
+            if job is None or job.url in seen:
+                continue
+            seen.add(job.url)
+            jobs.append(job)
+    return jobs
+
+
 def extract_job_urls(html: str) -> list[str]:
     """Pull ``/jobs/view/<id>`` URLs out of a LinkedIn search HTML page.
 
@@ -155,6 +184,68 @@ def extract_job_urls(html: str) -> list[str]:
         if base:
             urls.add(base)
     return sorted(urls)
+
+
+def _code_json_blocks(html: str) -> list[Any]:
+    out: list[Any] = []
+    for match in _CODE_BLOCK_RE.finditer(html):
+        try:
+            out.append(json.loads(match.group(1).strip()))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def _walk_nodes(node: Any) -> Iterator[dict[str, Any]]:
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from _walk_nodes(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _walk_nodes(item)
+
+
+def _is_search_job_card(node: dict[str, Any]) -> bool:
+    if "JobPostingCard" not in str(node.get("$type", "")):
+        return False
+    urn = str(node.get("entityUrn", ""))
+    if "JOBS_SEARCH" not in urn:
+        return False
+    return bool(node.get("jobPostingUrn") or node.get("jobPostingTitle"))
+
+
+def _card_to_job(card: dict[str, Any], *, source_name: str) -> Job | None:
+    posting_urn = str(card.get("jobPostingUrn") or "")
+    match = _JOB_ID_RE.search(posting_urn)
+    if not match:
+        return None
+    url = f"https://www.linkedin.com/jobs/view/{match.group(1)}"
+    title = _text_value(card.get("jobPostingTitle")) or _text_value(card.get("title"))
+    if not title:
+        return None
+    company = _text_value(card.get("primaryDescription")) or "(unknown company)"
+    location = _text_value(card.get("secondaryDescription"))
+    return Job.new(
+        source_name=source_name,
+        url=url,
+        title=title,
+        company=company,
+        description="",
+        location=location,
+        raw=card,
+    )
+
+
+def _text_value(node: Any) -> str | None:
+    if isinstance(node, str):
+        text = html_lib.unescape(node).replace("\xa0", " ").strip()
+        return text or None
+    if isinstance(node, dict):
+        text = node.get("text")
+        if isinstance(text, str):
+            return _text_value(text)
+    return None
 
 
 def _li_at_cookie(li_at: str) -> dict:

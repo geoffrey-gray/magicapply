@@ -125,7 +125,7 @@ CLI (Typer) → pipelines/ (Facade) → domain/ → infrastructure/
 ### In progress
 
 - **W.5a–b:** Indeed + Glassdoor wired in `staff-ds` config; live discover attempted 2026-07-07 — **both blocked by bot protection** (Indeed: `<title>Blocked - Indeed.com</title>`; Glassdoor: Cloudflare "Just a moment…"). HTML snapshots: `data/w5_indeed_search.html`, `data/w5_glassdoor_search.html`. Adapters log+skip; 0 jobs ingested. **Acceptable Phase 1 outcome per §4 criterion #5.**
-- **W.5c:** LinkedIn — blocked on operator action (`LINKEDIN_LI_AT` not in `~/magicapply/.env`).
+- **W.5c:** LinkedIn — verified 2026-07-07; Voyager search-card parser; 7 jobs ingested.
 - **W.8:** operator runbook + README refresh.
 
 ### Done — W.7 E2E fixture migration (2026-07-07)
@@ -509,7 +509,7 @@ Each row = one commit. Small, reviewable, tree stays green.
 - [x] **W.4d** Ashby: TRM Labs — dry-run Submit; 0 required unhandled.
 - [x] **W.5a** Indeed: **documented blocked** — bot protection (`Blocked - Indeed.com`); adapter logs+skips.
 - [x] **W.5b** Glassdoor: **documented blocked** — Cloudflare challenge; adapter logs+skips.
-- [ ] **W.5c** LinkedIn cookie retrieval → source verify against real search HTML.
+- [x] **W.5c** LinkedIn cookie retrieval → source verify against real search HTML (7 jobs, 2026-07-07).
 - [x] **W.6** Multi-source aggregation + daily-update semantics verified (2026-07-07).
 - [x] **W.7** Real captures → E2E + offline regression; synthetic inline HTML retired (`*-e2e-smoke-*` for yes-submit only).
 - [x] **W.8** Runbook + README + CLAUDE.md refresh; supersede banners on old plan files.
