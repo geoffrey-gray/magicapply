@@ -45,3 +45,54 @@ def test_unknown_host_falls_back_to_generic() -> None:
     recipes = load_ats_recipes(bundled_recipes_dir().parent)
     recipe = resolve_recipe("https://careers.example-custom.com/jobs/1", recipes)
     assert recipe.platform == "generic"
+
+
+def test_loads_pr6_platform_and_employer_recipes() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    assert "phenom" in recipes
+    assert "icims" in recipes
+    assert "custom_careers" in recipes
+    assert "netflix" in recipes
+
+
+def test_resolve_icims_from_paramount_job_path() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    job_url = (
+        "https://careers.paramount.com/job/New-York-Senior-Data-Scientist-NY-10036/1394334600/"
+    )
+    assert resolve_recipe(job_url, recipes).platform == "icims"
+
+
+def test_resolve_icims_navigation_rewrite() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    job_url = (
+        "https://careers.paramount.com/job/New-York-Senior-Data-Scientist-NY-10036/1394334600/"
+    )
+    url = resolve_navigation_url(job_url, recipes["icims"])
+    assert url == (
+        "https://careers.paramount.com/talentcommunity/apply/1394334600/?locale=en_US"
+    )
+
+
+def test_resolve_netflix_employer_override() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    recipe = resolve_recipe("https://explore.jobs.netflix.net/careers/job/1", recipes)
+    assert recipe.platform == "netflix"
+
+
+def test_resolve_hyatt_custom_careers_host() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    recipe = resolve_recipe(
+        "https://careers.hyatt.com/en-US/careers/jobdetails/4437468321",
+        recipes,
+    )
+    assert recipe.platform == "custom_careers"
+
+
+def test_resolve_phenom_host() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    recipe = resolve_recipe(
+        "https://careers.acme.phenompeople.com/us/en/job/12345",
+        recipes,
+    )
+    assert recipe.platform == "phenom"

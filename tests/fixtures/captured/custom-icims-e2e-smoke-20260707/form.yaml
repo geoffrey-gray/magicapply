@@ -1,0 +1,41 @@
+capture:
+  ats: icims
+  e2e_smoke: true
+  form_selectors:
+    - form#application-form
+    - form
+  schema_id: icims_e2e_smoke
+  allowed_unhandled: []
+app_id: fixture-paramount-icims
+job_url: https://careers.paramount.com/talentcommunity/apply/1394334600/?locale=en_US
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: First name
+    kind: text
+    selector: "#first_name"
+    resolved_strategy: static
+    required: true
+  - label: Last name
+    kind: text
+    selector: "#last_name"
+    resolved_strategy: static
+    required: true
+  - label: Email
+    kind: text
+    selector: "#email"
+    resolved_strategy: static
+    required: true
+  - label: Phone
+    kind: text
+    selector: "#phone"
+    resolved_strategy: static
+  - label: Resume
+    kind: file
+    selector: "input[name='resume']"
+    resolved_strategy: file
+    required: true
+  - label: "Are you authorized to work in the US? Select one Yes No"
+    kind: select
+    selector: "#authorized"
+    resolved_strategy: select
+    required: true

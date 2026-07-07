@@ -1,0 +1,24 @@
+platform: icims
+match_hosts:
+  - icims.com
+match_paths:
+  - /talentcommunity/apply/
+  - /job/
+apply_path_template: "/talentcommunity/apply/{pid}/?locale=en_US"
+pid_regex: "/job/[^/]*/(\\d+)/"
+form_selectors:
+  - form#application-form
+  - form.iCIMS_AppForm
+  - form
+submit_selectors:
+  - input[type='submit']
+  - button[type='submit']
+  - "button:has-text('Submit')"
+resume_selectors:
+  - input[type='file'][name='resume']
+  - input[type='file']
+pre_steps:
+  - action: click
+    selector: "a.dialogApplyBtn"
+  - action: click
+    selector: "a.apply"

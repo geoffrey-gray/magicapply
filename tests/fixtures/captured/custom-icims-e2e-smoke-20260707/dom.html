@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <body>
+    <h1>Apply — Paramount</h1>
+    <form id="application-form" class="iCIMS_AppForm" method="POST" action="/submit">
+      <label>First name <input id="first_name" name="first_name" type="text"></label>
+      <label>Last name <input id="last_name" name="last_name" type="text"></label>
+      <label>Email <input id="email" name="email" type="email"></label>
+      <label>Phone <input id="phone" name="phone" type="tel"></label>
+      <label>Resume <input type="file" name="resume"></label>
+      <label>Are you authorized to work in the US?
+        <select name="authorized" id="authorized">
+          <option value="">Select one</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </label>
+      <input type="submit" value="Submit application">
+    </form>
+  </body>
+</html>

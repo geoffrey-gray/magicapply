@@ -223,7 +223,13 @@ def _resolve_listing_apply_href(
 
 def sniff_platform(url: str) -> str:
     """Classify an apply URL by ATS / platform family."""
-    host = urlparse(url).netloc.lower()
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    if "/talentcommunity/apply/" in path:
+        return "icims"
+    if "/phenompeople.net/" in path or "ph-at-" in path:
+        return "phenom"
     for platform, markers in PLATFORM_HOST_MARKERS.items():
         if any(marker in host for marker in markers):
             return platform

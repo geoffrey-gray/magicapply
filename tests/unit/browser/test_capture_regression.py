@@ -226,6 +226,9 @@ class TestCaptureLoader:
         names = [p.name for p in list_capture_dirs()]
         assert "custom-e2e-smoke-20260707" in names
         assert "custom-eightfold-wizard-20260707" in names
+        assert "custom-phenom-e2e-smoke-20260707" in names
+        assert "custom-icims-e2e-smoke-20260707" in names
+        assert "custom-netflix-e2e-smoke-20260707" in names
         assert "greenhouse-e2e-smoke-20260707" in names
         assert "lever-e2e-smoke-20260707" in names
         assert "ashby-e2e-smoke-20260707" in names

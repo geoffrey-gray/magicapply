@@ -1,0 +1,29 @@
+platform: phenom
+match_hosts:
+  - phenom.com
+  - phenompeople.com
+form_selectors:
+  - form#application-form
+  - "[data-ph-at-id='job-apply-form']"
+  - form
+submit_selectors:
+  - button[type='submit']
+  - "button:has-text('Submit')"
+  - "#ph-submit-btn"
+pre_steps:
+  - action: click
+    selector: "#ph-apply-btn"
+  - action: click
+    selector: "button:has-text('Apply')"
+resume_selectors:
+  - input[type='file'][name='resume']
+  - input[type='file']
+wizard:
+  next_selectors:
+    - "#wizard-next"
+    - "button:has-text('Next')"
+    - "button:has-text('Continue')"
+  max_steps: 10
+  review_selectors:
+    - button[type='submit']
+    - "button:has-text('Submit')"

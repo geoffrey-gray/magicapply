@@ -266,6 +266,34 @@ def test_wizard_loop_advances_and_fills_both_steps() -> None:
     assert any(a[0] == "fill" and "interest" in str(a) for a in page.actions)
 
 
+def test_icims_navigate_rewrites_paramount_job_to_apply_shell() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    job_url = (
+        "https://careers.paramount.com/job/New-York-Senior-Data-Scientist-NY-10036/1394334600/"
+    )
+    bundle = load_capture(captured_fixtures_root() / "custom-icims-e2e-smoke-20260707")
+    page = _FakePage(bundle.dom_html)
+    static = StaticAnswers(full_name="Jane Doe", email="jane@example.com", phone="555-0100")
+    narrative = _RecordingNarrative()
+    router = AnswerRouter(
+        static_answers=static,
+        narrative=narrative,
+        resume_docx_path=Path("/tmp/resume.docx"),
+    )
+    data = ApplicationData(
+        job_url=job_url,
+        static_answers=static,
+        tailored_resume=TailoredResume(base_name="R", job_id="abc", name="Jane Doe"),
+        resume_docx_path=Path("/tmp/resume.docx"),
+        answer_router=router,
+    )
+    GenericHandler(recipes=recipes)._navigate(page, data)
+    assert (
+        "goto",
+        "https://careers.paramount.com/talentcommunity/apply/1394334600/?locale=en_US",
+    ) in page.actions
+
+
 def test_eightfold_yes_submit_clicks_submit_on_review_step() -> None:
     page, data = _eightfold_wizard_data()
     handler = GenericHandler(recipes=_eightfold_recipes())

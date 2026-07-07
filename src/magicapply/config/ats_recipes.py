@@ -80,6 +80,8 @@ class ATSRecipe(BaseModel):
     # Rewrite listing URLs to the apply shell (Eightfold: /careers/apply?pid=…).
     apply_path_template: str | None = None
     pid_regex: str | None = None
+    # Path substring fallbacks when the host is a vanity domain (iCIMS, Phenom).
+    match_paths: tuple[str, ...] = ()
 
 
 def default_recipe() -> ATSRecipe:
@@ -91,7 +93,7 @@ def bundled_recipes_dir() -> Path:
 
 
 def load_ats_recipes(root: Path | None = None) -> dict[str, ATSRecipe]:
-    """Load all ``ats_recipes/*.yaml`` from *root*, falling back to bundled defaults."""
+    """Load platform + employer recipes from ``ats_recipes/`` (incl. ``employers/``)."""
     recipes: dict[str, ATSRecipe] = {}
     for directory in _recipe_search_dirs(root):
         if not directory.is_dir():
@@ -101,20 +103,41 @@ def load_ats_recipes(root: Path | None = None) -> dict[str, ATSRecipe]:
                 continue
             recipe = _load_recipe_file(path)
             recipes[recipe.platform] = recipe
+        employers = directory / "employers"
+        if employers.is_dir():
+            for path in sorted(employers.glob("*.yaml")):
+                recipe = _load_recipe_file(path)
+                recipes[recipe.platform] = recipe
     if not recipes:
         recipes["generic"] = default_recipe()
     return recipes
 
 
 def resolve_recipe(url: str, recipes: dict[str, ATSRecipe] | None = None) -> ATSRecipe:
-    """Pick the best recipe for an apply URL by host substring match."""
+    """Pick the best recipe — longest host marker wins, then path markers."""
     catalog = recipes if recipes is not None else load_ats_recipes()
-    host = urlparse(url).netloc.lower()
+    parsed = urlparse(url)
+    host = parsed.netloc.lower()
+    path = parsed.path.lower()
+    best: ATSRecipe | None = None
+    best_score = 0
     for recipe in catalog.values():
         if recipe.platform == "generic":
             continue
-        if any(marker in host for marker in recipe.match_hosts):
-            return recipe
+        for marker in recipe.match_hosts:
+            if marker in host:
+                score = len(marker) + 100
+                if score > best_score:
+                    best = recipe
+                    best_score = score
+        for marker in recipe.match_paths:
+            if marker in path:
+                score = len(marker)
+                if score > best_score:
+                    best = recipe
+                    best_score = score
+    if best is not None:
+        return best
     return catalog.get("generic", default_recipe())
 
 
@@ -172,9 +195,13 @@ def _load_recipe_file(path: Path) -> ATSRecipe:
     hosts = payload.get("match_hosts") or ()
     if isinstance(hosts, str):
         hosts = [hosts]
+    paths = payload.get("match_paths") or ()
+    if isinstance(paths, str):
+        paths = [paths]
     return ATSRecipe(
         platform=str(payload.get("platform", path.stem)),
         match_hosts=tuple(hosts),
+        match_paths=tuple(paths),
         form_selectors=tuple(selectors or default_recipe().form_selectors),
         submit_selectors=tuple(submit or default_recipe().submit_selectors),
         resume_selectors=tuple(resume or default_recipe().resume_selectors),

@@ -1,0 +1,18 @@
+platform: netflix
+match_hosts:
+  - explore.jobs.netflix.net
+  - jobs.netflix.com
+form_selectors:
+  - form#application-form
+  - form
+submit_selectors:
+  - button[type='submit']
+  - "button:has-text('Submit application')"
+resume_selectors:
+  - input[type='file'][name='resume']
+  - input[type='file']
+pre_steps:
+  - action: click
+    selector: "#netflix-apply-btn"
+  - action: click
+    selector: "a:has-text('Apply')"

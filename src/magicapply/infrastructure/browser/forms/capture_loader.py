@@ -222,6 +222,14 @@ def _ats_from_host(host_slug: str) -> str:
         return "generic"
     if "eightfold" in host_slug:
         return "eightfold"
+    if "phenom" in host_slug:
+        return "phenom"
+    if "icims" in host_slug or "paramount" in host_slug:
+        return "icims"
+    if "netflix" in host_slug:
+        return "netflix"
+    if "hyatt" in host_slug:
+        return "custom_careers"
     return "unknown"
 
 
@@ -233,5 +241,9 @@ def _default_selectors(ats: str) -> tuple[str, ...]:
         "workday": ("[data-automation-id='applyFlowPage']", "form"),
         "generic": ("form#application-form", "form", "main form"),
         "eightfold": ("form#application-form", "form"),
+        "phenom": ("form#application-form", "form"),
+        "icims": ("form#application-form", "form.iCIMS_AppForm", "form"),
+        "netflix": ("form#application-form", "form"),
+        "custom_careers": ("form#application-form", "form"),
     }
     return defaults.get(ats, ("form",))

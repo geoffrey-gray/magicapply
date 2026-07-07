@@ -82,6 +82,14 @@ class TestSniffPlatform:
     def test_unknown_is_generic(self) -> None:
         assert sniff_platform("https://careers.hyatt.com/en-US/careers/jobdetails/1") == "generic"
 
+    def test_icims_talentcommunity_path(self) -> None:
+        assert (
+            sniff_platform(
+                "https://careers.paramount.com/talentcommunity/apply/1394334600/"
+            )
+            == "icims"
+        )
+
     def test_big_four_helper(self) -> None:
         assert is_big_four_platform("workday")
         assert not is_big_four_platform("eightfold")

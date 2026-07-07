@@ -1,0 +1,19 @@
+platform: custom_careers
+match_hosts:
+  - careers.hyatt.com
+  - careers.hyatt.io
+form_selectors:
+  - form#application-form
+  - form[action*='apply']
+  - form
+submit_selectors:
+  - button[type='submit']
+  - "button:has-text('Submit')"
+pre_steps:
+  - action: click
+    selector: "button:has-text('Apply')"
+  - action: click
+    selector: "a:has-text('Apply Now')"
+resume_selectors:
+  - input[type='file'][name='resume']
+  - input[type='file']
