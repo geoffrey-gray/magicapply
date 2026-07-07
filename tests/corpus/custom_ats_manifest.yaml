@@ -112,6 +112,35 @@
   live_gate: true
   status: pending
 
+# Awaiting-enrichment seeds — real LinkedIn listings pulled from
+# data/w5_linkedin_search.html. apply_url will be filled by the LinkedIn
+# adapter's Voyager detail fetch (PR2) the next time `magicapply discover`
+# runs against these; until then they represent the shape of the pending
+# custom-ATS corpus without pretending the routing has been proven.
+- id: linkedin-4375938610-pending-20260707
+  source: linkedin-search
+  listing_url: https://www.linkedin.com/jobs/view/4375938610
+  apply_url: null
+  platform: unknown
+  live_gate: false
+  status: pending
+
+- id: linkedin-4432714211-pending-20260707
+  source: linkedin-search
+  listing_url: https://www.linkedin.com/jobs/view/4432714211
+  apply_url: null
+  platform: unknown
+  live_gate: false
+  status: pending
+
+- id: linkedin-4437468321-pending-20260707
+  source: linkedin-search
+  listing_url: https://www.linkedin.com/jobs/view/4437468321
+  apply_url: null
+  platform: unknown
+  live_gate: false
+  status: pending
+
 # Documented out-of-scope example — LinkedIn Easy Apply has no external URL
 # (in-LinkedIn modal only). Excluded from every denominator; kept here so the
 # operator sees why we don't chase it.

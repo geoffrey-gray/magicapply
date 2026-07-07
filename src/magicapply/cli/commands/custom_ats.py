@@ -22,6 +22,10 @@ from rich.table import Table
 from magicapply.config import ConfigError, load_config
 from magicapply.config.paths import default_config_root
 from magicapply.infrastructure.corpus.custom_ats import load_manifest
+from magicapply.infrastructure.sources.apply_url import (
+    is_big_four_platform,
+    sniff_platform,
+)
 
 app = typer.Typer(help="Custom ATS corpus reporting.", no_args_is_help=True)
 console = Console()
@@ -65,17 +69,40 @@ def _print_status_table(title: str, grouped: dict[str, Counter]) -> None:
     console.print(table)
 
 
-def _top_unhandled(proposals_path: Path, limit: int) -> list[tuple[str, int]]:
-    """Return the top-N `resolved_strategy: unhandled` question labels."""
-    if not proposals_path.exists():
+def _top_required_unhandled(
+    observed_forms_dir: Path, limit: int
+) -> list[tuple[str, int]]:
+    """Return the top-N *required* + unhandled labels across custom-ATS captures.
+
+    Reads ``data/observed_forms/*/form.yaml`` — that stream has both
+    ``resolved_strategy`` and ``required`` per field, which
+    ``answer_proposals.yaml`` does not. Non-required unhandled fields are
+    interesting to nobody (soft gaps); required unhandled fields block real
+    dry-runs. Big-four ATS captures are filtered out via ``sniff_platform``
+    on the recorded ``job_url`` so the count reflects the custom-stack
+    surface the 80% gate covers.
+    """
+    if not observed_forms_dir.is_dir():
         return []
-    payload = yaml.safe_load(proposals_path.read_text(encoding="utf-8")) or {}
-    proposals = payload.get("proposals") or []
-    labels = Counter(
-        (p.get("question") or "").strip()
-        for p in proposals
-        if p.get("resolved_strategy") == "unhandled" and p.get("question")
-    )
+    labels: Counter[str] = Counter()
+    for form_path in observed_forms_dir.glob("*/form.yaml"):
+        try:
+            payload = yaml.safe_load(form_path.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            continue
+        job_url = str(payload.get("job_url") or "")
+        if job_url and is_big_four_platform(sniff_platform(job_url)):
+            continue
+        for field in payload.get("fields") or []:
+            if not isinstance(field, dict):
+                continue
+            if field.get("resolved_strategy") != "unhandled":
+                continue
+            if not field.get("required"):
+                continue
+            label = str(field.get("label") or "").strip()
+            if label:
+                labels[label] += 1
     return labels.most_common(limit)
 
 
@@ -127,12 +154,14 @@ def report(
     except ConfigError:
         loaded = None
     if loaded is not None:
-        proposals_path = loaded.data_dir() / "answer_proposals.yaml"
-        top_unhandled = _top_unhandled(proposals_path, top)
+        observed_dir = loaded.data_dir() / "observed_forms"
+        top_unhandled = _top_required_unhandled(observed_dir, top)
         if top_unhandled:
-            table = Table(title=f"top {len(top_unhandled)} unhandled labels")
+            table = Table(
+                title=f"top {len(top_unhandled)} required unhandled labels (custom ATS)"
+            )
             table.add_column("count", justify="right")
-            table.add_column("question")
+            table.add_column("label")
             for label, count in top_unhandled:
                 table.add_row(str(count), label)
             console.print(table)

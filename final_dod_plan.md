@@ -106,6 +106,10 @@ CLI (Typer) → pipelines/ (Facade) → domain/ → infrastructure/
 | W.1 | `3786d86` | `InPlaceDocxTailorer` (format-preserving DOCX keyword swap at run-text level); Builder bypass documented; 8 new unit tests. |
 | W.2 | `a8251da` | Cover-letter path kwarg-gated (`generate_cover_letter=False` in Phase 1). Code NOT deleted per ARCHITECTURE.md FR-07. Existing tailoring tests parameterized. |
 | W.3 | `35c2a45` | `AnswerLibrary` config models + `configs/answer_library.yaml`; `AnswerRouter` grows a `library` tier; `BaseATSHandler.apply` invokes `log_observed_form` once per run (Template Method extension); handler-specific `_apply_router` duplication consolidated into `router_dispatch.apply_router_to_form`; 14 new unit tests. **367 pass, 7 skipped.** |
+| CF + W.4 | `7bbe961` | Composable forms across all four ATS handlers (see `ARCHITECTURE_COMPOSABLE_FORMS.md`). |
+| W.5–W.8 | `cbe95bc`…`d8bb811` | Source verification, aggregation, E2E capture migration, runbook, LinkedIn Voyager. |
+| Custom ATS PR1–PR6 | `14aafab`…`791c004` | `Job.apply_url` split, LinkedIn/Indeed/Glassdoor/job_url apply-url enrichment, `GenericHandler` catch-all, YAML `ats_recipes/`, Phenom/iCIMS/Netflix recipes + fixtures. See [`plan.md`](plan.md). |
+| Custom ATS PR7 | `79292e4`+ | 80% offline gate at [`tests/acceptance/test_custom_ats_coverage.py`](tests/acceptance/test_custom_ats_coverage.py); `magicapply custom-ats report` CLI; live driver at [`tests/integration/e2e/test_e2e_custom_ats_live.py`](tests/integration/e2e/test_e2e_custom_ats_live.py) gated on `MAGICAPPLY_CUSTOM_ATS_LIVE=1`; [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) §11 covers the corpus workflow. |
 
 ### Done on branch `feature/composable-forms-refactor` (uncommitted)
 
@@ -484,6 +488,7 @@ The plan is complete when all of the following hold on the dev VM:
 7. **Offline regression tests** — every fixture E2E test loads either a real captured DOM from W.4 or is explicitly marked synthetic-smoke.
 8. **Answer library** — `configs/answer_library.yaml` starts empty; `data/answer_proposals.yaml` grows with each real form run so the operator can review + promote entries.
 9. **Runbook** — `docs/OPERATOR_RUNBOOK.md` walks the operator through the daily loop end-to-end.
+10. **Custom ATS 80% gate** (Phase 1.5, see [`plan.md`](plan.md)) — `magicapply custom-ats report --root configs` exits 0 with `pass / (pass + fail) >= 0.80` on offline-eligible rows of [`tests/corpus/custom_ats_manifest.yaml`](tests/corpus/custom_ats_manifest.yaml), enforced by `tests/acceptance/test_custom_ats_coverage.py`. Live opt-in driver at `tests/integration/e2e/test_e2e_custom_ats_live.py` (`MAGICAPPLY_CUSTOM_ATS_LIVE=1`).
 
 **Not in scope of this plan (Phase 2 targets):**
 - Real Anthropic LLM validation for scoring / narrative / bullet rewriting / cover letters.

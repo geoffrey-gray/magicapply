@@ -104,3 +104,76 @@ class TestCustomAtsReport:
         )
         assert result.exit_code == 1
         assert "no offline-eligible" in result.stdout
+
+    def test_top_required_unhandled_filters_bigfour_and_optional_fields(
+        self, tmp_path: Path
+    ) -> None:
+        # Config root that resolves to a temp data_dir so the report can find
+        # observed_forms/ from a known location.
+        cfg_root = tmp_path / "configs"
+        cfg_root.mkdir()
+        data_dir = tmp_path / "data"
+        (data_dir / "observed_forms").mkdir(parents=True)
+        (tmp_path / "resumes").mkdir()
+        (cfg_root / "profiles").mkdir()
+        (cfg_root / "base_config.yaml").write_text(
+            "version: 1\n"
+            "static_answers:\n  full_name: X\n  email: x@example.com\n"
+            "paths:\n  resumes_dir: ../resumes\n  data_dir: ../data\n"
+            "sources: []\n"
+        )
+        (cfg_root / "prompts.yaml").write_text(
+            "version: 1\nscoring: |\n  s\nsummary: |\n  s\n"
+            "cover_letter: |\n  s\nanswer: |\n  s\n"
+        )
+
+        # Big-4 form.yaml — must be filtered out.
+        gh_dir = data_dir / "observed_forms" / "20260701-000000-greenhouse.io-jobs-1"
+        gh_dir.mkdir()
+        (gh_dir / "form.yaml").write_text(
+            "job_url: https://job-boards.greenhouse.io/reddit/jobs/1\n"
+            "fields:\n"
+            "- {label: 'Big Four Required Label', required: true, "
+            "resolved_strategy: unhandled}\n"
+        )
+
+        # Custom-ATS form.yaml — required unhandled counts.
+        cu_dir = data_dir / "observed_forms" / "20260702-000000-symetra.eightfold.ai-jobs-1"
+        cu_dir.mkdir()
+        (cu_dir / "form.yaml").write_text(
+            "job_url: https://symetra.eightfold.ai/careers/job/1\n"
+            "fields:\n"
+            "- {label: 'Ethnicity', required: true, resolved_strategy: unhandled}\n"
+            "- {label: 'Ethnicity', required: true, resolved_strategy: unhandled}\n"
+            "- {label: 'Optional Note', required: false, resolved_strategy: unhandled}\n"
+            "- {label: 'Filled Name', required: true, resolved_strategy: static}\n"
+        )
+
+        # Provide a manifest with one pass entry so the gate is satisfied and
+        # the unhandled table renders.
+        cap = tmp_path / "cap_x"
+        _make_capture(cap)
+        manifest = tmp_path / "manifest.yaml"
+        _write_manifest(
+            manifest,
+            [{"id": "x", "platform": "eightfold", "status": "pass", "capture_dir": str(cap)}],
+        )
+
+        result = runner.invoke(
+            app,
+            [
+                "custom-ats",
+                "report",
+                "--manifest",
+                str(manifest),
+                "--root",
+                str(cfg_root),
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "Ethnicity" in result.stdout
+        # Big-4 label filtered out; optional (non-required) field filtered out;
+        # resolved (non-unhandled) field filtered out.
+        assert "Big Four Required Label" not in result.stdout
+        assert "Optional Note" not in result.stdout
+        assert "Filled Name" not in result.stdout
