@@ -75,13 +75,21 @@ class TailoringPipeline:
         self._data_dir = data_dir
         self._generate_cover_letter = generate_cover_letter
 
-    def run(self) -> TailoringReport:
+    def run(self, *, job_id: str | None = None) -> TailoringReport:
         report = TailoringReport()
         tailored_root = self._data_dir / "tailored"
 
         scored = self._apps.list_by_state_and_profile(
             ApplicationState.SCORED, self._profile
         )
+        if job_id is not None:
+            scored = [a for a in scored if a.job_id == job_id]
+            if not scored:
+                report.errors.append(
+                    f"no SCORED application for job {job_id} (profile {self._profile!r})"
+                )
+                return report
+
         for app in scored:
             job = self._jobs.get(app.job_id)
             if job is None:

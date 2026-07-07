@@ -1,19 +1,151 @@
 # MagicApply — Real Definition-of-Done Plan
 
-**Status:** proposed 2026-07-04
+**Status:** in progress — see §0 for the 2026-07-07 snapshot.
 **Scope:** Phase 1 verification against real employer forms + real search sources. LLM plumbing runs but returns canned (mock-provider) outputs — real LLM validation is a separate Phase 2 that layers on top after Phase 1 is proven.
 
-**Why this plan exists:** the previous `dryrun_plan.md` (Phases A–J) and `dod_plan.md` (Phases K–U) shipped code + hermetic tests I authored on both sides of the contract. Nothing had touched a real employer's ATS form. This plan discards the "done means tests pass" claim and defines done as **`magicapply apply <real-job-id> --no-headless --no-submit` drives visible Chromium all the way to the Submit button on a real employer form** — for each of Greenhouse / Workday / Lever / Ashby — and **`magicapply discover <profile>` returns real jobs from real sources**.
+**Document hierarchy:**
+- **`ARCHITECTURE.md`** — single source of truth for layered architecture, patterns, and design principles.
+- **`docs/GOF_PATTERNS.md`** — concrete pattern map and the **extend, don't multiply** meta-principle.
+- **`final_dod_plan.md` (this file)** — single source of truth for the Phase 1 **workflow** (W.0–W.8) and **DoD acceptance criteria**. When architecture guidance here previously conflicted with `ARCHITECTURE.md`, this revision realigns architecture notes only; operator-facing steps and verification targets are unchanged.
+
+---
+
+## Changes in this revision (2026-07-05)
+
+Architecture sections realigned to `ARCHITECTURE.md` and `docs/GOF_PATTERNS.md`. **Workflow steps, targets, exit criteria, and §4 acceptance criteria are unchanged in intent.**
+
+| Area | Before (drifted) | After (aligned) |
+|------|------------------|-----------------|
+| **Top of plan** | No explicit duplication guard | **ANTI-DUPLICATION RULE** + **LAW OF SIMPLICITY** added (non-negotiable; work together) |
+| **§0 W.4a** | Described as "blocked on architecture" | Reflects agreed `GreenhouseSource` Adapter; rejected `page_parsers/` / `custom_url` fallback documented as forbidden |
+| **§1 D3** | Said cover letters "**Deleted**" | Corrected to **kwarg-gated / deferred** (FR-07 code path retained) |
+| **§2a GoF** | Three notes only | Expanded: layered architecture, Adapter vs Strategy placement, when new siblings are justified, explicit rejections |
+| **§3 W.4 step 2** | Always "`job_url` seed" | **Source-type matches upstream**: `GreenhouseSource` for boards-api; `job_url` only when JSON-LD exists; no generic parser layer |
+| **§3 W.4 step 3** | "Proves JSON-LD works" | "Proves **discovery** lands the job in SQLite" (outcome unchanged; mechanism corrected) |
+| **§3 W.4a** | Generic candidate URLs + `job_url` assumption | Approved Reddit URL + `GreenhouseSource` via `boards-api.greenhouse.io` |
+| **Factory naming** | "SourceFactory" | `infrastructure/sources/factory.py:build_source` (existing Factory Method) |
+| **New-class language** | Some steps said "New …" without justification | New siblings only where Adapter/Strategy pattern requires a per-platform peer; otherwise extend via kwarg/method/Template Method |
+
+---
+
+## Design rules (non-negotiable)
+
+Two rules that work together. Neither trumps the other in the abstract — apply both, then pick the simpler outcome.
+
+### ANTI-DUPLICATION RULE
+
+- Never create new classes, functions, or files that share **80%+ overlap** with existing code.
+- Before adding anything new, ask in order:
+  1. Can I add a **kwarg** or **mode** to an existing class?
+  2. Can I add a **method** to an existing class?
+  3. Can I **extend the Template Method** (`BaseATSHandler.apply`, pipeline hooks)?
+  4. Can I add a **new case** to an existing factory/strategy (`build_source`, `ATSHandlerFactory.for_url`, `AnswerRouter` tier)?
+- Only after all four fail does a **new sibling class** earn its place.
+- Document the justification in the **commit message**. If the pattern recurs, add a one-line note to `docs/GOF_PATTERNS.md`.
+
+**Explicitly forbidden (W.4a lessons):**
+- Provider-specific parsing inside `custom_url.py` (`JobUrlAdapter` / `CareerPageAdapter`).
+- A `page_parsers/` Strategy package iterated by a generic URL adapter.
+- Duplicate adapter/handler files created to refactor — **edit in place** or `git mv`.
+
+### LAW OF SIMPLICITY
+
+- **Goal:** keep the code as clean and simple as possible. Fewer moving parts beats clever indirection.
+- Extend-don't-multiply is the *default*, not a mandate to contort existing code. If honoring the four questions above would mean ~100 lines of conditionals, wrappers, or architectural gymnastics to avoid a 15-line sibling that does one clear thing with **no meaningful overlap**, take the 15-line path.
+- **This is not an 80% overlap scenario.** Anti-duplication blocks near-copies; simplicity blocks forced extensions that make the tree harder to read.
+- **Tie-breaker:** when extend vs. new is ambiguous, ask: *which version would a new contributor understand faster in five minutes?* Prefer that one.
+- Simplicity does **not** license bypassing the layered architecture (`ARCHITECTURE.md`), stitching provider logic into generic adapters, or skipping the full pipeline. A simple solution still lives in the right layer and pattern slot.
+
+---
+
+## Architecture alignment (ARCHITECTURE.md + GOF_PATTERNS.md)
+
+### Layered architecture (unchanged invariant)
+
+```
+CLI (Typer) → pipelines/ (Facade) → domain/ → infrastructure/
+```
+
+- **Config over code:** static data in `configs/`; prompts in `configs/prompts.yaml`; keyword bank in YAML.
+- **Composition root:** `cli/composition.py` wires collaborators — no DI framework, no Singleton.
+- **Domain must not import infrastructure** (except the documented `LLMClient` Protocol exception).
+
+### Pattern placement
+
+| Concern | Pattern | Location | Extend-before-multiply |
+|---------|---------|----------|------------------------|
+| ATS form filling | **Strategy** + **Template Method** | `infrastructure/browser/ats/` | Cross-cutting behavior (CAPTCHA, dry-run, observation log) → `BaseATSHandler.apply`, not per-handler copies |
+| Job discovery | **Adapter** | `infrastructure/sources/` | One adapter class per upstream platform/API; register via `build_source` |
+| ATS selection | **Factory Method** | `infrastructure/browser/ats/factory.py` | New ATS → new handler sibling + factory registration (justified: distinct URL surface) |
+| Source selection | **Factory Method** | `infrastructure/sources/factory.py` | New source type → new `*Source` config model + adapter sibling + `build_source` case |
+| Persistence | **Repository** | `domain/repositories.py` + `infrastructure/persistence/` | No second jobs DB access path |
+| Resume tailoring (Phase 2 path) | **Builder** | `domain/resumes/tailor.py` | Phase 1 DOCX uses `InPlaceDocxTailorer` alongside Builder (audit `resume.yaml` only) |
+| Pipelines | **Facade** | `pipelines/discovery.py`, `tailoring.py`, `apply.py` | Extend pipeline kwargs; no parallel runner classes |
+
+### When a new sibling class *is* justified
+
+- **`GreenhouseAdapter`** (W.4a): distinct upstream (`boards-api.greenhouse.io`) — same Adapter pattern as `LinkedInAdapter` / `IndeedAdapter` / `GlassdoorAdapter`. Not an extension of `JobUrlAdapter` (JSON-LD-only).
+- **`InPlaceDocxTailorer`** (W.1): distinct rendering strategy (run-level in-place swap); no overlap with removed `docxtpl` path.
+- **`log_observed_form`** (W.3): module-level helper invoked once from Template Method — not a handler sibling; avoids duplicating YAML write logic in four ATS classes.
+
+### Deferred patterns (do not introduce in Phase 1)
+
+- **Chain of Responsibility** for `AnswerRouter` — stays imperative until a tier owns independent state (see `# NOTE: CoR threshold` in `answer_router.py`).
+- **Observer** for application state — direct calls suffice.
+- **Generic page-parser Strategy** under `custom_url` — rejected; violates Adapter-per-platform.
+
+---
+
+## 0. Status snapshot — 2026-07-07
+
+### Done (committed to `main`)
+
+| Phase | Commit | Summary |
+|-------|--------|---------|
+| W.0 | `7a7d0df` | Baseline: `resumes/geoffrey.yaml`, `configs/base_config.yaml`, `configs/keyword_bank.yaml`, `configs/profiles/staff-ds.yaml`; `BaseResume.source_docx_path` added. |
+| W.1 | `3786d86` | `InPlaceDocxTailorer` (format-preserving DOCX keyword swap at run-text level); Builder bypass documented; 8 new unit tests. |
+| W.2 | `a8251da` | Cover-letter path kwarg-gated (`generate_cover_letter=False` in Phase 1). Code NOT deleted per ARCHITECTURE.md FR-07. Existing tailoring tests parameterized. |
+| W.3 | `35c2a45` | `AnswerLibrary` config models + `configs/answer_library.yaml`; `AnswerRouter` grows a `library` tier; `BaseATSHandler.apply` invokes `log_observed_form` once per run (Template Method extension); handler-specific `_apply_router` duplication consolidated into `router_dispatch.apply_router_to_form`; 14 new unit tests. **367 pass, 7 skipped.** |
+
+### Done on branch `feature/composable-forms-refactor` (uncommitted)
+
+| Phase | Summary |
+|-------|---------|
+| **CF.0–CF.6** | Composable forms shipped: `infrastructure/browser/forms/` (`FormComposer`, `FormSchema`, `FormField` variants, `RulesBasedDriver` / `HybridDriver` / `LLMDriver`, `DriverRegistry`). All four ATS handlers fill dynamic fields via `fill_dynamic_fields` → `FormComposer`. `use_composable_forms` flag removed; `form_composer` wired in `composition.build_application_data`. Workday widget steps use recipe schemas (`workday_recipes.py`). Capture regression fixtures in `tests/fixtures/captured/`. **463+ unit tests pass.** |
+| **W.4a (partial)** | `GreenhouseSource` + `GreenhouseAdapter` wired; `discover staff-ds` returns Reddit board matches. Hermetic GH/Lever/Ashby fixtures load captured DOM. **Remaining:** live Reddit apply → capture loop. |
+| **W.4b (partial)** | Circle Staff DS (`b55def1b256b5d48`) dry-run reaches Review + Submit (`20260707-131006` capture promoted to `tests/fixtures/captured/workday-circle-staff-ds-20260707/`). Legacy imperative DEI/disability fallbacks **removed** — composable recipes + scan enrichment only. **Remaining:** stable zero-unhandled on Self Identify (date spin + disability checkbox) across 2 consecutive dry-runs (CF.4 gate). |
+| **W.7 (partial)** | `capture_loader.py` + `test_capture_regression.py`; synthetic + promoted live captures for GH/Lever/Ashby/Workday. Circle capture marked `live: true` (snapshot only). |
+
+### In progress
+
+- **W.4a:** live Greenhouse apply + capture (Reddit `7772274`).
+- **W.4b:** stabilize Circle Self Identify via composable gaps (no legacy fallbacks).
+- **W.4c–d:** Lever + Ashby live apply loops.
+- **W.5–W.8:** sources, aggregation, full capture E2E migration, runbook.
+
+### Architecture notes (composable forms)
+
+- **Single fill path:** `fill_dynamic_fields` / `FormComposer.fill_scanned` / `FormComposer.fill_recipe`. No `composer_from_router` fallback.
+- **Workday:** recipe schemas for voluntary disclosures + self identify; imperative helpers remain only for experience/widgets/questionnaire (next migration targets).
+- **Design doc:** `ARCHITECTURE_COMPOSABLE_FORMS.md` (C.0–C.6 complete).
+
+### Handoff artifact
+
+`docs/AI_HANDOFF.md` — VM topology, command routing, operator hard constraints.
+
+---
+
+**Why this plan exists:** the previous `dryrun_plan.md` (Phases A–J) and `dod_plan.md` (Phases K–U) shipped code + hermetic tests on both sides of the contract. Nothing had touched a real employer's ATS form. This plan defines done as **`magicapply apply <real-job-id> --no-headless --no-submit` drives Chromium all the way to the Submit button on a real employer form** — for each of Greenhouse / Workday / Lever / Ashby — and **`magicapply discover <profile>` returns real jobs from real sources**.
 
 ---
 
 ## 1. Locked decisions
 
 | # | Decision | Choice |
-|---|---|---|
+|---|----------|--------|
 | D1 | LLM path | Kept as-is. `provider: mock` throughout Phase 1. Real Anthropic gets layered in during a later Phase 2. No changes to the LLM Protocol, no changes to scoring/tailoring/narrative interfaces. |
 | D2 | Resume tailoring | **Format-preserving DOCX in-place keyword swap** on the operator's original file. `docxtpl` template rendering is out. `python-docx` walks paragraphs → runs and swaps only text within existing runs, so bold/italic/font/margins survive byte-for-byte. |
-| D3 | Cover letters | **Deleted** from Phase 1. The narrative engine still exists for screening questions; cover-letter generation gets restored in Phase 2 alongside real LLM. |
+| D3 | Cover letters | **Deferred (kwarg-gated), not deleted.** `TailoringPipeline(generate_cover_letter=False)` in Phase 1. `NarrativeEngine.cover_letter()` and FR-07 code path remain; Phase 2 re-enables via flag flip. |
 | D4 | Prefilter location | Remote-only (US timezones). |
 | D5 | Verification order | **ATS-first, source-second.** Prove each ATS handler drives real Chromium to Submit on one real posting per ATS. THEN prove each source returns real jobs for a real query. THEN combine. |
 | D6 | LinkedIn cookie timing | Last. When we reach W.5c I re-send the retrieval instructions and the operator pastes the `li_at` value into `~/magicapply/.env`. |
@@ -21,13 +153,14 @@
 | D8 | Real personal data | Extract as much as possible from the resume DOCX. Fill in missing bits per operator's Phase 1 answers: US citizen, no sponsorship needed, not willing to relocate, desired salary ~$200k, EEO = Decline to state. Real static answers get typed into real forms; browser stops one click short of Submit. |
 | D9 | Screening question policy | Router tier: `static` (from `StaticAnswers`) → `library` (from `configs/answer_library.yaml`) → `narrative` (LLM via mock). Every field the router resolves via `narrative` OR marks `unhandled` gets logged to `data/answer_proposals.yaml` for later human review + promotion to the permanent library. Speed of mock now, fidelity via library growth later. |
 | D10 | Failure discipline | If any real employer's form blocks progress via CAPTCHA / account creation / unbypassable challenge, document + move on. Do not fake around it. Skipping is a documented outcome, not a hidden failure. |
+| D11 | Architecture changes | Follow **Design rules** (Anti-Duplication + Law of Simplicity). `ARCHITECTURE.md` + `GOF_PATTERNS.md` govern *how*; this plan governs *what to verify*. |
 
 ---
 
 ## 2. What Phase 1 does NOT do
 
 - Does NOT validate LLM output quality. Mock canned responses only.
-- Does NOT generate cover letters at pipeline run time (code path stays; wire-up disabled).
+- Does NOT generate cover letters at pipeline run time (code path stays; wire-up disabled via kwarg).
 - Does NOT actually click Submit anywhere. Every real run is `--no-submit`.
 - Does NOT test career-page sources (deferred).
 - Does NOT rewrite bullets via LLM into the uploaded DOCX. Only bank-synonym-driven in-place keyword swaps.
@@ -36,11 +169,13 @@
 
 ## 2a. GoF pattern compliance notes
 
-Audited against `docs/GOF_PATTERNS.md` before locking. Three deliberate calls worth flagging:
+Audited against `docs/GOF_PATTERNS.md` and `ARCHITECTURE.md` §4. Deliberate calls worth flagging:
 
 - **Builder bypass in W.1 (intentional, Phase 1 only).** `TailoredResumeBuilder` documents the Builder pattern for tailored resumes. The Phase 1 DOCX path uses `InPlaceDocxTailorer` which takes `(source_docx, matched_bank, jd_terms)` directly — it does not consume `TailoredResumeBuilder.build()` output. Rationale: keyword-only in-place swaps preserve formatting byte-for-byte; the Builder was designed for the LLM-rewrites-and-renders path that Phase 2 restores. `TailoredResumeBuilder` still runs to populate `resume.yaml` (audit trail) but its output does not drive the DOCX. Phase 2 wires Builder → renderer back together when LLM output actually influences resume content beyond synonym swaps.
-- **Template Method extension over per-handler duplication in W.3.** `log_observed_form` is a cross-cutting concern (every handler needs it) — same shape as CAPTCHA detection and the Phase F dry-run guard. Per the "extend, don't multiply" meta-principle, the log call lives inside `BaseATSHandler.apply` (the template method), not in each of Greenhouse / Workday / Lever / Ashby. Handlers append to `ApplicationData.resolutions_log`; the template method writes the observation once after `_fill_dynamic`.
+- **Template Method extension over per-handler duplication in W.3.** `log_observed_form` is a cross-cutting concern (every handler needs it) — same shape as CAPTCHA detection and the dry-run guard. Per extend-don't-multiply, the log call lives inside `BaseATSHandler.apply`, not in each of Greenhouse / Workday / Lever / Ashby. Handlers append to `ApplicationData.resolutions_log`; the template method writes the observation once after `_fill_dynamic`. The `observed_form_log.py` module is a single helper, not a fifth ATS handler.
+- **Router dispatch consolidation (W.3).** Shared `router_dispatch.apply_router_to_form` extended existing handlers instead of four copies of router-walk logic — prefer method extraction over new handler classes.
 - **Chain-of-Responsibility deliberately deferred despite crossing the threshold.** `AnswerRouter` grows a sixth strategy (`library`) between `static` and `narrative`. `GOF_PATTERNS.md` deferred CoR "if resolution grows past ~3 strategies." The router remains imperative because all six branches evaluate in one priority ladder inside one method — they are not independently registered handlers competing for the same input. A CoR refactor becomes warranted when a strategy grows its own state (e.g., an LLM-memoization tier that caches by question hash). W.3 leaves a `# NOTE: CoR threshold` comment at the top of `answer_router.py` so future contributors see the escape hatch.
+- **Greenhouse discovery (W.4a) — Adapter sibling, not URL-adapter extension.** `GreenhouseAdapter` is justified: boards-api is a distinct upstream from JSON-LD pages. Extending `JobUrlAdapter` would mix HTTP+JSON API translation with HTML JSON-LD extraction (80%+ overlap risk without shared benefit). Register via existing `build_source` factory — no second source factory.
 
 ---
 
@@ -76,10 +211,10 @@ Each phase leaves the tree green (`uv run pytest tests/unit -q` passes) unless e
 
 ### W.1 — Format-preserving DOCX tailorer
 
-> **GoF note:** this phase intentionally bypasses `TailoredResumeBuilder` for the DOCX output path. See §2a for rationale. `TailoredResumeBuilder` continues to populate `resume.yaml` as an audit trail.
+> **GoF note:** this phase intentionally bypasses `TailoredResumeBuilder` for the DOCX output path. See §2a for rationale. `TailoredResumeBuilder` continues to populate `resume.yaml` as an audit trail. New class justified: no existing renderer performs run-level in-place keyword swap.
 
 **Files:**
-- New `src/magicapply/infrastructure/rendering/docx_inplace.py`:
+- `src/magicapply/infrastructure/rendering/docx_inplace.py`:
   ```python
   class InPlaceDocxTailorer:
       def render(
@@ -112,7 +247,7 @@ Each phase leaves the tree green (`uv run pytest tests/unit -q` passes) unless e
 
 ### W.2 — Defer cover letter (do NOT delete)
 
-> ARCHITECTURE.md §2 FR-07 lists Narrative Mode (cover letters + screening answers) as High priority. This phase defers the wire-up for Phase 1 without deleting the code — Phase 2 re-enables it via a single flag flip. No functional-requirement regression on the code surface.
+> ARCHITECTURE.md §2 FR-07 lists Narrative Mode (cover letters + screening answers) as High priority. This phase defers the wire-up for Phase 1 without deleting the code — Phase 2 re-enables it via a single flag flip. No functional-requirement regression on the code surface. **Extend** `TailoringPipeline` with a kwarg; do not add a parallel pipeline class.
 
 **Files:**
 - `src/magicapply/pipelines/tailoring.py` — `TailoringPipeline.__init__` grows `generate_cover_letter: bool = False`. The `narrative.cover_letter(job)` call + `(app_dir / "cover_letter.md").write_text(cover)` write become guarded on `self._generate_cover_letter`. Default False in Phase 1.
@@ -131,15 +266,15 @@ Each phase leaves the tree green (`uv run pytest tests/unit -q` passes) unless e
 
 ### W.3 — Answer library infrastructure + Template-Method observation log
 
-> **GoF notes:** the observation log is a cross-cutting concern; it lives inside `BaseATSHandler.apply` (Template Method), not per handler. The router's new library tier crosses the deferred-CoR threshold (§2a); the router stays imperative and gets a comment marker so future contributors see the escape hatch.
+> **GoF notes:** the observation log is a cross-cutting concern; it lives inside `BaseATSHandler.apply` (Template Method), not per handler. Extend `AnswerRouter` with a `library` tier; do not introduce a parallel router class. The router's new library tier crosses the deferred-CoR threshold (§2a); the router stays imperative and gets a comment marker so future contributors see the escape hatch.
 
 **Files (config layer):**
-- New `configs/answer_library.yaml`:
+- `configs/answer_library.yaml`:
   ```yaml
   version: 1
   answers: []
   ```
-- New `AnswerLibrary` + `LibraryEntry` Pydantic models in `src/magicapply/config/models.py`. `LibraryEntry` fields:
+- `AnswerLibrary` + `LibraryEntry` Pydantic models in `src/magicapply/config/models.py`. `LibraryEntry` fields:
   - `question: str` — canonical form of the question (as pasted from a real form's label).
   - `question_regex: str | None` — optional secondary regex match.
   - `canonical_answer: str` — verified answer to type.
@@ -160,8 +295,8 @@ Each phase leaves the tree green (`uv run pytest tests/unit -q` passes) unless e
   - After `_fill_dynamic` (before the pre-submit CAPTCHA check), the template calls `log_observed_form(...)` **once**. Every handler subclass — Greenhouse / Workday / Lever / Ashby, and any future ATS — inherits the observation log for free. Same shape as the CAPTCHA + dry-run invariants already living in the template.
 - Each handler's `_fill_dynamic` (`greenhouse.py`, `workday.py`, `lever.py`, `ashby.py`) appends to `data.resolutions_log` as it walks the router — one line per resolved field. **No handler calls `log_observed_form` directly.**
 
-**Files (observation-log helper):**
-- New `src/magicapply/infrastructure/browser/ats/observed_form_log.py`:
+**Files (observation-log helper — single module, not a handler sibling):**
+- `src/magicapply/infrastructure/browser/ats/observed_form_log.py`:
   ```python
   def log_observed_form(
       app_id: str,
@@ -189,14 +324,11 @@ Each phase leaves the tree green (`uv run pytest tests/unit -q` passes) unless e
 Four sub-phases (a/b/c/d), one per ATS. **Same loop for each:**
 
 1. I find one real currently-open Staff Data Scientist posting on that ATS. I present the URL to the operator before driving Chromium at it — no live navigation without approval.
-2. Seed the URL as a `job_url` source in the scratch config:
-   ```yaml
-   sources:
-     - type: job_url
-       name: verify-<ats>
-       urls: ["<real URL>"]
-   ```
-3. `magicapply discover staff-ds --root configs` — verify Job row lands in DB with the correct title / company / URL. Proves JSON-LD works on this employer's page.
+2. Configure a **first-class source** in `configs/base_config.yaml` and reference it from `configs/profiles/staff-ds.yaml` so `discover` can ingest the approved posting through the full pipeline — **never** seed the DB by hand, **never** bypass discovery.
+   - **Greenhouse (W.4a):** `GreenhouseSource` — `boards-api.greenhouse.io/v1/boards/<slug>/jobs?content=true`; `boards: [<slug>]`, `title_keywords: [...]`.
+   - **Workday / Lever / Ashby (W.4b–d):** use `job_url` **only if** the approved page embeds JSON-LD `JobPosting`; otherwise add or extend the appropriate per-platform Adapter (same pattern as W.4a) before proceeding.
+   - **Forbidden:** provider-specific logic in `custom_url.py`; `page_parsers/` Strategy under a generic adapter.
+3. `magicapply discover staff-ds --root configs` — verify Job row lands in DB with the correct title / company / URL.
 4. `magicapply tailor staff-ds --root configs` — verify `data/tailored/<app_id>/resume.docx` is the original DOCX with keyword swaps applied. Spot-check by opening the DOCX.
 5. `magicapply apply <job-id> --root configs --no-headless --no-submit` — the operator watches visible Chromium drive the real form.
 6. Capture:
@@ -205,14 +337,16 @@ Four sub-phases (a/b/c/d), one per ATS. **Same loop for each:**
    - Screenshot at the Submit button: `data/observed_forms/<...>/screenshot.png` via `page.screenshot(path=...)`.
    - Every unhandled question already flowing to `data/answer_proposals.yaml` via W.3.
 7. Fix loop:
-   - Selector miss (identity field not found) → widen candidate list in the handler.
-   - Router `unhandled` on required field → add regex pattern to `_IDENTITY_PATTERNS` / `_YES_NO_PATTERNS` / `_DEI_PATTERNS` OR add a library entry (`configs/answer_library.yaml`) once operator verifies the desired answer.
+   - Selector miss (identity field not found) → widen candidate list in the **existing** ATS handler (`greenhouse.py`, etc.) — extend selectors, do not fork a handler class.
+   - Router `unhandled` on required field → extend `AnswerRouter` regex tables OR add a library entry (`configs/answer_library.yaml`) once operator verifies the desired answer.
    - Handler crash → fix the crash.
-   - Multi-step wizard stall (Workday) → improve Next-button logic + landmark waits.
+   - Multi-step wizard stall (Workday) → improve Next-button logic + landmark waits in the existing handler.
    - Re-run apply until: browser lands on Submit button with **zero unhandled required fields**.
 
 **W.4a — Greenhouse handler**
-- Target: one real Greenhouse-hosted Staff DS URL (probable candidates: `boards.greenhouse.io/anthropic`, `job-boards.greenhouse.io/cohereai`, `boards.greenhouse.io/databricks`). Specific URL surfaced for approval before running.
+- **Approved target:** `https://job-boards.greenhouse.io/reddit/jobs/7772274` (Reddit — Senior Staff Machine Learning Engineer, GenAI Platform).
+- **Discovery:** `GreenhouseSource` with `boards: [reddit]` and staff-level `title_keywords` (see §0).
+- **Apply:** existing `GreenhouseATSHandler` (Strategy) — extend selectors/router patterns per observation; no new handler class.
 - Expected fixes: per-role custom fields (education dropdowns, "How did you hear about us?", location dropdowns) that the current `AnswerRouter` regex table doesn't cover.
 
 **W.4b — Workday handler**
@@ -244,7 +378,7 @@ Four sub-phases (a/b/c/d), one per ATS. **Same loop for each:**
 - Run `magicapply discover staff-ds --root configs`.
 - Expected: near-certain Cloudflare challenge on first fetch. Adapter surfaces "Cloudflare hit, skipping query".
 - Iteration options:
-  1. Try `playwright-stealth` as an added dep, realistic UA + viewport args, retry.
+  1. Extend **existing** `IndeedAdapter` (stealth UA, viewport, retry) — no parallel Indeed client class.
   2. If still blocked → document Indeed as blocked, disable the adapter for real usage with a clear operator-facing message, move on.
 
 **W.5b — Glassdoor**
@@ -263,7 +397,7 @@ Four sub-phases (a/b/c/d), one per ATS. **Same loop for each:**
   ```
 - `MAGICAPPLY_LINKEDIN_ACK=1`.
 - Run `magicapply discover staff-ds --root configs`.
-- Iterate parser against captured real LinkedIn search HTML until ≥ 5 real jobs come back with plausible apply URLs. LinkedIn search markup uses React with hashed class names; the current parser almost certainly needs rewrites against real captures.
+- Iterate parser against captured real LinkedIn search HTML until ≥ 5 real jobs come back with plausible apply URLs. LinkedIn search markup uses React with hashed class names; extend **existing** `LinkedInAdapter` / `extract_job_urls` — do not add a second LinkedIn source class.
 - Then pipeline one of those LinkedIn-discovered jobs through tailor + apply as a smoke check.
 
 **Exit criterion:** each source that isn't intractably blocked returns ≥ 5 real Staff Data Scientist jobs with plausible URLs.
@@ -294,7 +428,7 @@ Four sub-phases (a/b/c/d), one per ATS. **Same loop for each:**
 
 ### W.8 — Runbook + README refresh
 
-- New `docs/OPERATOR_RUNBOOK.md`:
+- `docs/OPERATOR_RUNBOOK.md`:
   - **Daily loop** — commands and expected output.
   - **Review + promote answer proposals** — how to walk `data/answer_proposals.yaml`, decide on a canonical answer, and promote to `configs/answer_library.yaml` with `status: verified`.
   - **Add / tune keyword bank** — editing `configs/keyword_bank.yaml`. When to add a term, when to add a synonym.
@@ -339,19 +473,20 @@ The plan is complete when all of the following hold on the dev VM:
 
 Each row = one commit. Small, reviewable, tree stays green.
 
-- [ ] **W.0** Extract resume + baseline config; operator sign-off.
-- [ ] **W.1** Format-preserving DOCX tailorer + unit tests.
-- [ ] **W.2** Delete cover-letter step + green suite.
-- [ ] **W.3** Answer library + observed-forms log + tests.
-- [ ] **W.4a** Greenhouse: URL approval → discover → tailor → apply → capture → fix → clean run.
-- [ ] **W.4b** Workday: same loop.
-- [ ] **W.4c** Lever: same loop.
-- [ ] **W.4d** Ashby: same loop.
+- [x] **W.0** Extract resume + baseline config; operator sign-off. — `7a7d0df`
+- [x] **W.1** Format-preserving DOCX tailorer + unit tests. — `3786d86`
+- [x] **W.2** Defer cover-letter step (kwarg-gated, not deleted) + green suite. — `a8251da`
+- [x] **W.3** Answer library + observed-forms log + tests. — `35c2a45`
+- [ ] **W.4a** Greenhouse: URL approved (`job-boards.greenhouse.io/reddit/jobs/7772274`). `GreenhouseSource` wired; discovery verified. **Remaining:** live tailor → apply → capture.
+- [ ] **W.4b** Workday: Circle Staff DS (`b55def1b256b5d48`) — dry-run reaches Review + Submit (`20260707-131006`). **Remaining:** CF.4 stable Self Identify (2 consecutive dry-runs, zero required unhandled).
+- [x] **CF.0–CF.6** Composable forms migration complete on branch; legacy fallbacks removed.
+- [ ] **W.4c** Lever: live apply loop.
+- [ ] **W.4d** Ashby: live apply loop.
 - [ ] **W.5a** Indeed source verify; documented-blocked or working.
 - [ ] **W.5b** Glassdoor source verify; documented-blocked or working.
 - [ ] **W.5c** LinkedIn cookie retrieval → source verify against real search HTML.
 - [ ] **W.6** Multi-source aggregation + daily-update semantics verify.
-- [ ] **W.7** Real captures → offline regression tests; synthetic HTML retired.
+- [ ] **W.7** Real captures → offline regression tests; synthetic HTML retired. **Partial:** `tests/fixtures/captured/` + `test_capture_regression.py` ship on branch.
 - [ ] **W.8** Runbook + README + CLAUDE.md refresh; supersede banners on old plan files.
 
 ---
@@ -370,7 +505,7 @@ At any point when a real employer form / real source blocks progress:
 ## 7. What operator action unblocks each phase
 
 | Phase | Operator action required |
-|---|---|
+|-------|--------------------------|
 | W.0 | Approve extracted `resumes/geoffrey.yaml` + `configs/keyword_bank.yaml`. |
 | W.1 | None (unit tests). |
 | W.2 | None. |

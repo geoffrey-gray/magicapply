@@ -4,10 +4,7 @@ Greenhouse (boards.greenhouse.io / job-boards.greenhouse.io) uses relatively
 consistent field names across companies, which is why the plan picks it as
 the first ATS. Standard identity fields are filled by ``_fill_static``.
 Per-role custom questions — screening prompts, DEI, work-authorization —
-are discovered dynamically in ``_fill_dynamic`` via the form scanner +
-AnswerRouter (Phase L) when the ApplicationData carries one; otherwise
-the handler falls back to the cover-letter + resume upload path from
-Phase K.
+are discovered dynamically in ``_fill_dynamic`` via ``FormComposer``.
 """
 
 from __future__ import annotations
@@ -15,13 +12,13 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from magicapply.infrastructure.browser.ats.router_dispatch import apply_router_to_form
+from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
 from magicapply.infrastructure.browser.ats.base import (
     ApplicationData,
     BaseATSHandler,
     PageDriver,
 )
-from magicapply.infrastructure.browser.ats.form_scan import scan_form
+
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +28,12 @@ _RESUME_FILE_SELECTORS = (
     "input[type='file'][name='resume']",
     "input[type='file'][id*='resume']",
     "input[type='file']",
+)
+
+# Reddit inline forms use ``id="application-form"``; hermetic fixture uses plain ``form``.
+_GREENHOUSE_FORM_SELECTORS = (
+    "form#application-form",
+    "form",
 )
 
 
@@ -48,9 +51,12 @@ class GreenhouseHandler(BaseATSHandler):
         page.fill("#last_name", _last_name(answers.full_name))
         page.fill("#email", answers.email)
         if answers.phone:
-            page.fill("#phone", answers.phone)
+            with contextlib.suppress(Exception):
+                page.fill("#phone", answers.phone)
         if answers.linkedin_url:
-            page.fill("input[name='linkedin_url']", answers.linkedin_url)
+            # Not every Greenhouse form exposes LinkedIn; never block the flow.
+            with contextlib.suppress(Exception):
+                page.fill("input[name='linkedin_url']", answers.linkedin_url)
 
     def _fill_dynamic(self, page: PageDriver, data: ApplicationData) -> None:
         # Cover letter often goes into a "cover_letter_text" textarea.
@@ -69,10 +75,14 @@ class GreenhouseHandler(BaseATSHandler):
             except Exception:  # noqa: BLE001
                 continue
 
-        # Per-role custom fields — walk the form and let the AnswerRouter
-        # decide how to fill each. When no router is attached (older
-        # composition, unit tests) the shared helper no-ops.
-        apply_router_to_form(page, data, handler_name="Greenhouse")
+        fill_dynamic_fields(
+            page,
+            data,
+            ats="greenhouse",
+            form_selectors=_GREENHOUSE_FORM_SELECTORS,
+            schema_id="greenhouse_application",
+            handler_label="Greenhouse",
+        )
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
         page.click("input[type='submit']")

@@ -5,10 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from magicapply.config.models import StaticAnswers
+from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import TailoredResume
+from magicapply.infrastructure.browser.ats.answer_router import AnswerRouter
 from magicapply.infrastructure.browser.ats.base import ApplicationData
 from magicapply.infrastructure.browser.ats.factory import ATSHandlerFactory
 from magicapply.infrastructure.browser.ats.lever import LeverHandler
+from magicapply.infrastructure.browser.forms.composer import FormComposer
+from magicapply.infrastructure.browser.forms.registry import build_driver_registry
 
 
 class _RecordingPage:
@@ -101,3 +105,96 @@ class TestFlow:
             a[0] == "click" and a[1][0] == "button[type='submit']"
             for a in page.actions
         )
+
+
+class _RecordingNarrative:
+    def answer(self, job: Job, question: str) -> str:
+        return "Because I like the mission."
+
+
+_LEVER_FORM_HTML = """
+<form class="posting-form">
+  <label>Full name <input name="name" type="text"></label>
+  <label>Are you authorized to work in the US?
+    <select name="authorized" id="authorized">
+      <option value="">--</option>
+      <option value="Yes">Yes</option>
+      <option value="No">No</option>
+    </select>
+  </label>
+  <label>Why Lever?
+    <textarea id="why" name="why"></textarea>
+  </label>
+  <input type="file" name="resume">
+  <button type="submit">Apply</button>
+</form>
+"""
+
+
+def _composable_data() -> tuple[_RecordingPage, ApplicationData]:
+    static = StaticAnswers(
+        full_name="Jane Doe",
+        email="j@example.com",
+        authorized_to_work_us=True,
+    )
+    narrative = _RecordingNarrative()
+    router = AnswerRouter(
+        static_answers=static,
+        narrative=narrative,
+        resume_docx_path=Path("/tmp/resume.docx"),
+    )
+    job = Job.new(
+        source_name="lever",
+        url="https://jobs.lever.co/acme/abc-def/apply",
+        title="Senior Engineer",
+        company="Acme",
+    )
+    data = ApplicationData(
+        job_url=job.url,
+        static_answers=static,
+        tailored_resume=TailoredResume(base_name="R", job_id="abc", name="Jane Doe"),
+        resume_docx_path=Path("/tmp/resume.docx"),
+        answer_router=router,
+        job=job,
+    )
+    registry = build_driver_registry(router, narrative)
+    data = data.model_copy(
+        update={"form_composer": FormComposer(drivers=registry, data=data)}
+    )
+    page = _RecordingPage(f"<html><body>{_LEVER_FORM_HTML}</body></html>")
+    return page, data
+
+
+class TestComposablePath:
+    def test_fill_scanned_fills_custom_fields(self) -> None:
+        page, data = _composable_data()
+        LeverHandler()._fill_dynamic(page, data)
+        assert any(a[0] == "select_option" for a in page.actions)
+        assert any(a[0] == "fill" and "why" in a[1][0] for a in page.actions)
+        assert data.resolutions_log
+
+    def test_composable_apply_happy_path(self) -> None:
+        page, data = _composable_data()
+        result = LeverHandler().apply(page, data)
+        assert result.state == "applied"
+        assert ("click", ("button[type='submit']",)) in page.actions
+
+    def test_router_dispatch_alias_still_fills(self) -> None:
+        from magicapply.infrastructure.browser.ats.router_dispatch import apply_router_to_form
+
+        page, data = _composable_data()
+        apply_router_to_form(page, data, handler_name="Lever", form_selector="form.posting-form")
+        assert data.resolutions_log
+
+    def test_form_selector_prefers_posting_form(self) -> None:
+        html = """
+        <form id="noise"><input name="noise" type="text"></form>
+        <form class="posting-form">
+          <label>Why?<textarea name="why" id="why"></textarea></label>
+        </form>
+        """
+        page, data = _composable_data()
+        page = _RecordingPage(f"<html><body>{html}</body></html>")
+        LeverHandler()._fill_dynamic(page, data)
+        assert data.resolutions_log
+        assert data.resolutions_log[0].field.selector == "#why"

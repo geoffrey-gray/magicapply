@@ -37,6 +37,7 @@ class TestLabels:
         )
         assert fields[0].label == "First name"
         assert fields[0].selector == "#fn"
+        assert fields[0].variant == "text"
 
     def test_wrapping_label(self) -> None:
         fields = _scan(
@@ -120,6 +121,22 @@ class TestKindClassification:
         assert fields[0].kind == "radio"
         assert fields[0].options == ["f", "m", "nb"]
 
+    def test_radio_group_uses_fieldset_legend_not_option_label(self) -> None:
+        fields = _scan(
+            """
+            <form>
+              <fieldset>
+                <legend>Have you previously worked for Acme?</legend>
+                <label><input id="yes" name="prev" type="radio" value="true"> Yes</label>
+                <label><input id="no" name="prev" type="radio" value="false"> No</label>
+              </fieldset>
+            </form>
+            """
+        )
+        assert len(fields) == 1
+        assert fields[0].label == "Have you previously worked for Acme?"
+        assert fields[0].options == ["true", "false"]
+
     def test_file_input(self) -> None:
         [f] = _scan("<form><input name='resume' type='file'></form>")
         assert f.kind == "file"
@@ -164,8 +181,41 @@ class TestFormSelector:
         page = _FakePage("<html><body></body></html>")
         assert scan_form(page, "form") == []
 
+    def test_scoped_to_form_by_class(self) -> None:
+        html = """
+        <form id="noise"><input name="noise" type="text"></form>
+        <form class="posting-form"><input name="target" id="target" type="text"></form>
+        """
+        page = _FakePage(f"<html><body>{html}</body></html>")
+        fields = scan_form(page, form_selector="form.posting-form")
+        assert [f.name for f in fields] == ["target"]
+
+    def test_scoped_to_data_automation_id_root(self) -> None:
+        html = """
+        <div data-automation-id="applyFlowPage">
+          <input name="inside" type="text">
+        </div>
+        <form><input name="outside" type="text"></form>
+        """
+        page = _FakePage(f"<html><body>{html}</body></html>")
+        fields = scan_form(
+            page,
+            form_selector="[data-automation-id='applyFlowPage']",
+        )
+        assert [f.name for f in fields] == ["inside"]
+
 
 class TestSelector:
+    def test_data_testid_bracket_selector(self) -> None:
+        html = """
+        <div data-testid="application-form">
+          <input name="custom_q" type="text">
+        </div>
+        """
+        page = _FakePage(f"<html><body>{html}</body></html>")
+        fields = scan_form(page, form_selector="[data-testid='application-form']")
+        assert [f.name for f in fields] == ["custom_q"]
+
     def test_prefers_id_over_name(self) -> None:
         [f] = _scan("<form><input id='email' name='e' type='email'></form>")
         assert f.selector == "#email"
@@ -173,3 +223,100 @@ class TestSelector:
     def test_falls_back_to_name(self) -> None:
         [f] = _scan("<form><input name='e' type='email'></form>")
         assert f.selector == "input[name='e']"
+
+
+class TestAshbyLabels:
+    def test_fieldset_prompt_without_legend(self) -> None:
+        fields = _scan(
+            """
+            <form>
+              <fieldset class="_container_1258i_28">
+                Have you previously worked in a remote or hybrid environment?
+                <label><input type="radio" name="q1" id="r0">Yes, fully remote</label>
+                <label><input type="radio" name="q1" id="r1">No</label>
+              </fieldset>
+            </form>
+            """
+        )
+        assert len(fields) == 1
+        assert "remote or hybrid" in fields[0].label.lower()
+        assert fields[0].options == ["Yes, fully remote", "No"]
+
+    def test_uuid_checkbox_uses_parent_prompt(self) -> None:
+        fields = _scan(
+            """
+            <form>
+              <div class="_fieldEntry_1e3gg_28">
+                Are you legally authorized to work in your current country of employment?
+                <input type="checkbox" name="f1787b93-cd38-40ed-a0ff-357056af73f2">
+              </div>
+            </form>
+            """
+        )
+        assert len(fields) == 1
+        assert "legally authorized" in fields[0].label.lower()
+
+
+class TestLeverLabels:
+    def test_custom_question_radio_uses_prompt_not_option(self) -> None:
+        fields = _scan(
+            """
+            <form>
+              <li class="application-question custom-question">
+                <div class="application-label">
+                  Are you eligible to work in the US without Sponsorship?
+                </div>
+                <ul>
+                  <li><label><input type="radio" name="cards[x][field0]"
+                    value="Yes (Citizen/Green-card)">Yes (Citizen/Green-card)</label></li>
+                  <li><label><input type="radio" name="cards[x][field0]"
+                    value="No (H1-B)">No (H1-B)</label></li>
+                </ul>
+              </li>
+            </form>
+            """
+        )
+        assert len(fields) == 1
+        assert "eligible to work" in fields[0].label.lower()
+
+
+class TestWorkdayVariants:
+    def test_signature_date_spinbuttons_get_workday_variant(self) -> None:
+        fields = _scan(
+            """
+            <form>
+              <input id="selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-input" type="text">
+              <input id="selfIdentifiedDisabilityData--dateSignedOn-dateSectionDay-input" type="text">
+              <input id="selfIdentifiedDisabilityData--dateSignedOn-dateSectionYear-input" type="text">
+            </form>
+            """
+        )
+        assert len(fields) == 3
+        assert all(f.variant == "workday_date_spin" for f in fields)
+        assert fields[0].recipe_value
+        assert fields[0].step_id == "self_identify"
+
+
+class TestScanNoise:
+    def test_bare_input_without_id_or_name_is_dropped(self) -> None:
+        fields = _scan(
+            """
+            <form>
+              <label for="fn">First name</label>
+              <input id="fn" name="first_name" type="text" required>
+              <input type="text" required>
+            </form>
+            """
+        )
+        assert len(fields) == 1
+        assert fields[0].selector == "#fn"
+
+    def test_search_widget_input_is_dropped(self) -> None:
+        fields = _scan(
+            """
+            <form>
+              <input id="iti-0__search-input" type="text">
+            </form>
+            """
+        )
+        assert fields == []

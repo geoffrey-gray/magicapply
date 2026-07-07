@@ -85,9 +85,18 @@ class TestTransitions:
         with pytest.raises(InvalidTransition, match="illegal transition"):
             app.transition_to(ApplicationState.APPLIED)
 
-    def test_terminal_applied_rejects_further(self) -> None:
+    def test_applied_can_reopen_for_dry_run_retry(self) -> None:
         app = _make(ApplicationState.APPLIED)
-        for target in ApplicationState:
+        app.transition_to(ApplicationState.APPLYING)
+        assert app.state is ApplicationState.APPLYING
+
+    def test_applied_rejects_other_transitions(self) -> None:
+        app = _make(ApplicationState.APPLIED)
+        for target in (
+            ApplicationState.TAILORED,
+            ApplicationState.SCORED,
+            ApplicationState.FAILED,
+        ):
             with pytest.raises(InvalidTransition):
                 app.transition_to(target)
 
@@ -106,6 +115,11 @@ class TestTransitions:
         # NEEDS_INTERVENTION -> APPLIED is allowed (user finishes manually).
         app.transition_to(ApplicationState.APPLIED)
         assert app.state is ApplicationState.APPLIED
+
+    def test_needs_intervention_can_retry_apply(self) -> None:
+        app = _make(ApplicationState.NEEDS_INTERVENTION)
+        app.transition_to(ApplicationState.APPLYING)
+        assert app.state is ApplicationState.APPLYING
 
     def test_is_terminal(self) -> None:
         assert not _make().is_terminal()

@@ -22,8 +22,13 @@ from urllib.parse import urlparse
 
 import yaml
 
+from typing import TYPE_CHECKING
+
 from magicapply.infrastructure.browser.ats.answer_router import ResolvedAnswer
 from magicapply.infrastructure.browser.ats.form_scan import FormField
+
+if TYPE_CHECKING:
+    from magicapply.infrastructure.browser.ats.base import PageDriver
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,7 @@ def log_observed_form(
     job_url: str,
     resolutions: list[ResolvedField],
     data_dir: Path,
+    page: PageDriver | None = None,
 ) -> Path | None:
     """Write the per-form observation to disk. Returns the file path.
 
@@ -78,6 +84,9 @@ def log_observed_form(
             yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
         )
 
+        if page is not None:
+            _capture_page_artifacts(page, out_dir)
+
         _append_proposals(data_dir, job_url, resolutions)
         return out_path
     except Exception as exc:  # noqa: BLE001
@@ -85,11 +94,25 @@ def log_observed_form(
         return None
 
 
+def _capture_page_artifacts(page: PageDriver, out_dir: Path) -> None:
+    """Persist DOM + screenshot at the pre-submit observation moment (W.4)."""
+    try:
+        (out_dir / "dom.html").write_text(page.content(), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("dom capture failed: %s", exc)
+    screenshot = getattr(page, "screenshot", None)
+    if callable(screenshot):
+        try:
+            screenshot(path=str(out_dir / "screenshot.png"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("screenshot capture failed: %s", exc)
+
+
 def _field_dict(rf: ResolvedField) -> dict:
     resolved_value = rf.answer.value
     if rf.answer.strategy in _REDACTED_STRATEGIES:
         resolved_value = "<REDACTED>"
-    return {
+    out: dict = {
         "label": rf.field.label,
         "kind": rf.field.kind,
         "selector": rf.field.selector,
@@ -98,6 +121,13 @@ def _field_dict(rf: ResolvedField) -> dict:
         "resolved_strategy": rf.answer.strategy,
         "resolved_value": resolved_value,
     }
+    if rf.field.variant:
+        out["variant"] = rf.field.variant
+    if rf.field.step_id:
+        out["step_id"] = rf.field.step_id
+    if rf.field.widget_id:
+        out["widget_id"] = rf.field.widget_id
+    return out
 
 
 def _url_slug(job_url: str) -> str:

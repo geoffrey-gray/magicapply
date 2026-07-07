@@ -1,0 +1,22 @@
+capture:
+  ats: ashby
+  form_selectors:
+    - form
+  schema_id: ashby_acme_fixture
+  allowed_unhandled: []
+app_id: fixture-ashby-acme
+job_url: https://jobs.ashbyhq.com/acme/staff-swe/application
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: Resume
+    kind: file
+    selector: "input[name='_systemfield_resume']"
+    resolved_strategy: file
+  - label: "Are you authorized to work in the US? -- Yes No"
+    kind: select
+    selector: "select[name='authorized']"
+    resolved_strategy: select
+  - label: Why Ashby?
+    kind: textarea
+    selector: "#why_ashby"
+    resolved_strategy: narrative

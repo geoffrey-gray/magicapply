@@ -229,6 +229,37 @@ class TestPhase1DeferCoverLetter:
         assert (Path(reloaded.tailored_path) / "cover_letter.md").exists()
 
 
+class TestSingleJob:
+    def test_run_with_job_id_tailors_only_that_app(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        pipeline, apps_repo, jobs_repo = _pipeline(engine, tmp_path)
+        _, app_a = _seed_scored_app(jobs_repo, apps_repo, url="https://acme.com/j/1")
+        _, app_b = _seed_scored_app(
+            jobs_repo, apps_repo, url="https://acme.com/j/2"
+        )
+
+        report = pipeline.run(job_id=app_a.job_id)
+
+        assert report.tailored == 1
+        reloaded_a = apps_repo.get(app_a.id)
+        reloaded_b = apps_repo.get(app_b.id)
+        assert reloaded_a is not None and reloaded_a.state is ApplicationState.TAILORED
+        assert reloaded_b is not None and reloaded_b.state is ApplicationState.SCORED
+
+    def test_run_with_unknown_job_id_reports_error(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        pipeline, apps_repo, jobs_repo = _pipeline(engine, tmp_path)
+        _seed_scored_app(jobs_repo, apps_repo)
+
+        report = pipeline.run(job_id="nonexistent00000")
+
+        assert report.tailored == 0
+        assert len(report.errors) == 1
+        assert "nonexistent00000" in report.errors[0]
+
+
 class TestIdempotence:
     def test_second_run_does_nothing(self, engine: Engine, tmp_path: Path) -> None:
         pipeline, apps_repo, jobs_repo = _pipeline(engine, tmp_path)

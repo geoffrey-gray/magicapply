@@ -74,8 +74,10 @@ class TestGreenhouseFlow:
         # Submitted
         assert ("click", ("input[type='submit']",)) in page.actions
 
-    def test_captcha_on_load_returns_needs_intervention(self) -> None:
-        page = FakePage(html='<iframe src="google.com/recaptcha"></iframe>')
+    def test_blocking_captcha_on_load_returns_needs_intervention(self) -> None:
+        page = FakePage(
+            html='<iframe src="https://www.google.com/recaptcha/api2/bframe"></iframe>'
+        )
         result = GreenhouseHandler().apply(page, _data())
         assert result.state == "needs_intervention"
         assert "CAPTCHA" in (result.error or "")
@@ -108,13 +110,21 @@ class TestDryRun:
         )
         assert ("click", ("input[type='submit']",)) not in page.actions
 
-    def test_dry_run_still_catches_captcha_first(self) -> None:
-        page = FakePage(html='<iframe src="google.com/recaptcha"></iframe>')
+    def test_dry_run_still_catches_blocking_captcha_on_load(self) -> None:
+        page = FakePage(
+            html='<iframe src="https://www.google.com/recaptcha/api2/bframe"></iframe>'
+        )
         data = _data().model_copy(update={"dry_run": True})
         result = GreenhouseHandler().apply(page, data)
-        # CAPTCHA branch wins over dry-run branch.
         assert result.state == "needs_intervention"
         assert "CAPTCHA" in (result.error or "")
+
+    def test_dry_run_ignores_dormant_recaptcha_widget(self) -> None:
+        page = FakePage(html='<div class="g-recaptcha" data-sitekey="x"></div>')
+        data = _data().model_copy(update={"dry_run": True})
+        result = GreenhouseHandler().apply(page, data)
+        assert result.state == "applied"
+        assert "dry-run" in (result.error or "")
 
 
 class TestBaseHandlerContract:

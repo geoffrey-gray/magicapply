@@ -194,22 +194,55 @@ def build_application_data(
             f"re-run `magicapply tailor` to regenerate"
         )
     profile = loaded.profile(app.profile_name)
+    data_dir = loaded.data_dir()
+    workday_store = None
+    static_answers = loaded.base.static_answers
+    if "myworkdayjobs.com" in job.url.lower() or ".myworkday.com" in job.url.lower():
+        from magicapply.infrastructure.browser.ats.workday_accounts import (
+            WorkdayAccountStore,
+        )
+
+        workday_store = WorkdayAccountStore(WorkdayAccountStore.default_path(data_dir))
+        tenant = WorkdayAccountStore.tenant_from_url(job.url)
+        stored = workday_store.get(tenant)
+        effective_password = (
+            stored.password
+            if stored
+            else loaded.base.static_answers.workday_apply_password
+        )
+        if effective_password:
+            static_answers = loaded.base.static_answers.model_copy(
+                update={"workday_apply_password": effective_password}
+            )
     router = AnswerRouter(
-        static_answers=loaded.base.static_answers,
+        static_answers=static_answers,
         narrative=build_narrative(loaded, profile),
         resume_docx_path=resume_docx,
         answer_library=loaded.answer_library,
     )
-    return ApplicationData(
+    data = ApplicationData(
         job_url=job.url,
-        static_answers=loaded.base.static_answers,
+        static_answers=static_answers,
         tailored_resume=tailored,
         resume_docx_path=resume_docx,
         cover_letter=cover_text or None,
         dry_run=dry_run,
         answer_router=router,
         job=job,
-        data_dir=loaded.data_dir(),
+        data_dir=data_dir,
+        workday_account_store=workday_store,
+    )
+    from magicapply.infrastructure.browser.forms.composer import composer_from_registry
+    from magicapply.infrastructure.browser.forms.registry import build_driver_registry
+
+    narrative = build_narrative(loaded, profile)
+    registry = build_driver_registry(
+        router,
+        narrative,
+        loaded.base.form_drivers,
+    )
+    return data.model_copy(
+        update={"form_composer": composer_from_registry(registry, data)}
     )
 
 

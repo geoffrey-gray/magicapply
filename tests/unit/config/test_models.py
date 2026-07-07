@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from magicapply.config.models import (
     BaseConfig,
     CareerPageSource,
+    FormDriversConfig,
     LinkedInSource,
     Profile,
     PromptsConfig,
@@ -45,6 +46,23 @@ class TestBaseConfig:
         raw["unknown_key"] = "oops"
         with pytest.raises(ValidationError, match="unknown_key"):
             BaseConfig.model_validate(raw)
+
+    def test_form_drivers_defaults(self) -> None:
+        cfg = BaseConfig.model_validate(_valid_base_dict())
+        assert cfg.form_drivers.default == "hybrid"
+        assert cfg.form_drivers.ats == {}
+
+    def test_form_drivers_from_yaml_shape(self) -> None:
+        raw = _valid_base_dict()
+        raw["form_drivers"] = {
+            "default": "hybrid",
+            "ats": {"workday": "rules"},
+            "variants": {"workday_listbox": "rules"},
+            "fields": [{"label_regex": "why", "driver": "llm"}],
+        }
+        cfg = BaseConfig.model_validate(raw)
+        assert cfg.form_drivers.ats["workday"] == "rules"
+        assert cfg.form_drivers.fields[0].driver == "llm"
 
 
 class TestSources:

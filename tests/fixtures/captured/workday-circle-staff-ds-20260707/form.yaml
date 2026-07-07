@@ -1,0 +1,148 @@
+app_id: b55def1b256b5d48
+job_url: https://circle.wd1.myworkdayjobs.com/en-US/Circle/job/Staff-Data-Scientist---Digital-Assets_JR101068
+timestamp: '2026-07-07T13:10:06.947831+00:00'
+fields:
+- label: I currently work here
+  kind: checkbox
+  selector: '#workExperience-5--currentlyWorkHere'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: checkbox
+- label: School or University*
+  kind: text
+  selector: '#education-4--school'
+  options: []
+  required: true
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: text
+- label: Overall Result (GPA)
+  kind: text
+  selector: '#education-4--gradeAverage'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: text
+- label: Year
+  kind: text
+  selector: '#education-4--firstYearAttended-dateSectionYear-input'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: text
+- label: Year
+  kind: text
+  selector: '#education-4--lastYearAttended-dateSectionYear-input'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: text
+- label: ''
+  kind: textarea
+  selector: '#primaryQuestionnaire--465a9e6413231000080218d818e90002'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: textarea
+- label: I consent and confirm*
+  kind: checkbox
+  selector: '#termsAndConditions--acceptTermsAndAgreements'
+  options: []
+  required: true
+  resolved_strategy: check
+  resolved_value: ''
+  variant: checkbox
+- label: Name
+  kind: text
+  selector: '#selfIdentifiedDisabilityData--name'
+  options: []
+  required: false
+  resolved_strategy: static
+  resolved_value: <REDACTED>
+  variant: text
+  step_id: self_identify
+- label: Signature date month
+  kind: text
+  selector: '#selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-input'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: workday_date_spin
+  step_id: self_identify
+- label: Signature date day
+  kind: text
+  selector: '#selfIdentifiedDisabilityData--dateSignedOn-dateSectionDay-input'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: workday_date_spin
+  step_id: self_identify
+- label: Signature date year
+  kind: text
+  selector: '#selfIdentifiedDisabilityData--dateSignedOn-dateSectionYear-input'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: workday_date_spin
+  step_id: self_identify
+- label: Disability status
+  kind: radio
+  selector: ''
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: radio
+  step_id: self_identify
+- label: Employee ID (if applicable)
+  kind: text
+  selector: '#selfIdentifiedDisabilityData--employeeId'
+  options: []
+  required: false
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: text
+- label: Yes, I have a disability, or have had one in the past
+  kind: checkbox
+  selector: '#64cbff5f364f10000ae7a421cf210000-disabilityStatus'
+  options: []
+  required: true
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: checkbox
+- label: No, I do not have a disability and have not had one in the past
+  kind: checkbox
+  selector: '#64cbff5f364f10000aeec521b4ec0000-disabilityStatus'
+  options: []
+  required: true
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: checkbox
+- label: I do not want to answer
+  kind: checkbox
+  selector: '#64cbff5f364f10000af3af293a050000-disabilityStatus'
+  options: []
+  required: true
+  resolved_strategy: unhandled
+  resolved_value: ''
+  variant: checkbox
+capture:
+  ats: workday
+  form_selectors:
+  - '[data-automation-id="applyFlowPage"]'
+  - form
+  schema_id: workday_circle_staff_ds_review
+  source: scanned
+  step_id: review
+  live: true
+  allowed_unhandled: []
+  job_url: https://circle.wd1.myworkdayjobs.com/en-US/Circle/job/Staff-Data-Scientist---Digital-Assets_JR101068

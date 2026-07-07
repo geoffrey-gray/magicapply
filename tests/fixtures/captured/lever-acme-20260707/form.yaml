@@ -1,0 +1,28 @@
+capture:
+  ats: lever
+  form_selectors:
+    - form.posting-form
+    - form
+  schema_id: lever_acme_fixture
+  allowed_unhandled:
+    - Cover letter
+app_id: fixture-lever-acme
+job_url: https://jobs.lever.co/acme/senior-sre/apply
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: Cover letter
+    kind: textarea
+    selector: "textarea[name='comments']"
+    resolved_strategy: unhandled
+  - label: Resume
+    kind: file
+    selector: "input[name='resume']"
+    resolved_strategy: file
+  - label: "Are you authorized to work in the US? -- Yes No"
+    kind: select
+    selector: "select[name='authorized']"
+    resolved_strategy: select
+  - label: Why Lever?
+    kind: textarea
+    selector: "#why_lever"
+    resolved_strategy: narrative

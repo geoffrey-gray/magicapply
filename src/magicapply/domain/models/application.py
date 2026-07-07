@@ -40,13 +40,21 @@ ALLOWED_TRANSITIONS: dict[ApplicationState, frozenset[ApplicationState]] = {
             ApplicationState.APPLIED,
             ApplicationState.NEEDS_INTERVENTION,
             ApplicationState.FAILED,
+            ApplicationState.APPLYING,  # orphaned mid-run retry (--retry)
+            ApplicationState.SKIPPED,
         }
     ),
     ApplicationState.NEEDS_INTERVENTION: frozenset(
-        {ApplicationState.APPLIED, ApplicationState.FAILED, ApplicationState.SKIPPED}
+        {
+            ApplicationState.APPLYING,  # --retry after CAPTCHA / manual bail-out
+            ApplicationState.APPLIED,
+            ApplicationState.FAILED,
+            ApplicationState.SKIPPED,
+        }
     ),
-    ApplicationState.APPLIED: frozenset(),
-    # Retryable: failed can go back to applying.
+    ApplicationState.APPLIED: frozenset(
+        {ApplicationState.APPLYING}
+    ),  # dry-run re-verify (--retry on a prior dry-run row)
     ApplicationState.FAILED: frozenset({ApplicationState.APPLYING, ApplicationState.SKIPPED}),
     ApplicationState.SKIPPED: frozenset(),
 }
@@ -133,4 +141,8 @@ class Application(BaseModel):
         self.updated_at = now
 
     def is_terminal(self) -> bool:
+        # APPLIED stays terminal for status reporting; --retry is an explicit
+        # CLI path that re-opens the row via APPLIED → APPLYING.
+        if self.state is ApplicationState.APPLIED:
+            return True
         return self.state in TERMINAL_STATES

@@ -1,0 +1,20 @@
+{
+  "jobs": [
+    {
+      "id": 7772274,
+      "title": "Senior Staff Machine Learning Engineer, GenAI Platform",
+      "absolute_url": "https://job-boards.greenhouse.io/reddit/jobs/7772274",
+      "location": {"name": "Remote - United States"},
+      "updated_at": "2026-06-17T10:00:00-04:00",
+      "content": "<p>Build ML platform for GenAI workloads.</p>"
+    },
+    {
+      "id": 8012700,
+      "title": "Client Account Manager",
+      "absolute_url": "https://job-boards.greenhouse.io/reddit/jobs/8012700",
+      "location": {"name": "London, United Kingdom"},
+      "updated_at": "2026-06-17T10:00:00-04:00",
+      "content": "<p>Manage enterprise accounts.</p>"
+    }
+  ]
+}

@@ -17,14 +17,12 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from magicapply.infrastructure.browser.ats.router_dispatch import apply_router_to_form
+from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
 from magicapply.infrastructure.browser.ats.base import (
     ApplicationData,
     BaseATSHandler,
     PageDriver,
 )
-from magicapply.infrastructure.browser.ats.form_scan import scan_form
-
 logger = logging.getLogger(__name__)
 
 _MATCH_HOSTS = ("jobs.lever.co", "lever.co")
@@ -35,6 +33,11 @@ _RESUME_FILE_SELECTORS = (
     "input[type='file']",
 )
 
+_LEVER_FORM_SELECTORS = (
+    "form.posting-form",
+    "form",
+)
+
 
 class LeverHandler(BaseATSHandler):
     @classmethod
@@ -43,7 +46,10 @@ class LeverHandler(BaseATSHandler):
         return any(host in u for host in _MATCH_HOSTS)
 
     def _navigate(self, page: PageDriver, data: ApplicationData) -> None:
-        page.goto(data.job_url)
+        url = data.job_url.rstrip("/")
+        if not url.endswith("/apply"):
+            url = f"{url}/apply"
+        page.goto(url)
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers
@@ -74,10 +80,14 @@ class LeverHandler(BaseATSHandler):
             except Exception:  # noqa: BLE001
                 continue
 
-        # Per-role custom fields via the shared router. Lever's
-        # ul.application-additional block holds these; the scanner walks
-        # the entire form so we do not have to target that container.
-        apply_router_to_form(page, data, handler_name="Lever")
+        fill_dynamic_fields(
+            page,
+            data,
+            ats="lever",
+            form_selectors=_LEVER_FORM_SELECTORS,
+            schema_id="lever_application",
+            handler_label="Lever",
+        )
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
         page.click("button[type='submit']")

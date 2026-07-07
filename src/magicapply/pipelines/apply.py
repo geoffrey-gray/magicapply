@@ -73,7 +73,13 @@ class ApplyPipeline:
         retry: bool = False,
     ) -> ApplyReport:
         allowed = (
-            {ApplicationState.TAILORED, ApplicationState.FAILED}
+            {
+                ApplicationState.TAILORED,
+                ApplicationState.FAILED,
+                ApplicationState.NEEDS_INTERVENTION,
+                ApplicationState.APPLYING,  # orphaned mid-run
+                ApplicationState.APPLIED,  # dry-run re-verify (W.4 fix loop)
+            }
             if retry
             else {ApplicationState.TAILORED}
         )
@@ -81,6 +87,13 @@ class ApplyPipeline:
             raise ValueError(
                 f"apply_one requires {sorted(s.value for s in allowed)}; "
                 f"got {application.state}"
+            )
+        if (
+            application.state is ApplicationState.APPLIED
+            and not application.dry_run
+        ):
+            raise ValueError(
+                "cannot re-apply a real submission; only dry-run rows support --retry"
             )
 
         handler = ATSHandlerFactory.for_url(job.url)
@@ -94,7 +107,8 @@ class ApplyPipeline:
             self._apps.save(application)
             return ApplyReport(application.id, application.state, "unsupported ATS")
 
-        application.transition_to(ApplicationState.APPLYING)
+        if application.state is not ApplicationState.APPLYING:
+            application.transition_to(ApplicationState.APPLYING)
         application.attempts += 1
         self._apps.save(application)
 

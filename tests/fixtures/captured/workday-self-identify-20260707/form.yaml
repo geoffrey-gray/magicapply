@@ -1,0 +1,38 @@
+capture:
+  ats: workday
+  form_selectors:
+    - "#selfIdentifiedDisabilityData--name"
+  schema_id: workday_self_identify_fixture
+  source: recipe
+  recipe: workday_self_identify
+  step_id: self_identify
+  allowed_unhandled: []
+app_id: fixture-workday-self-identify
+job_url: https://acme.wd1.myworkdayjobs.com/careers/job/1/apply
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: Name
+    kind: text
+    variant: text
+    selector: "#selfIdentifiedDisabilityData--name"
+    resolved_strategy: static
+  - label: Signature date month
+    kind: text
+    variant: workday_date_spin
+    selector: "#selfIdentifiedDisabilityData--dateSignedOn-dateSectionMonth-input"
+    resolved_strategy: static
+  - label: Signature date day
+    kind: text
+    variant: workday_date_spin
+    selector: "#selfIdentifiedDisabilityData--dateSignedOn-dateSectionDay-input"
+    resolved_strategy: static
+  - label: Signature date year
+    kind: text
+    variant: workday_date_spin
+    selector: "#selfIdentifiedDisabilityData--dateSignedOn-dateSectionYear-input"
+    resolved_strategy: static
+  - label: Disability status
+    kind: radio
+    variant: radio
+    selector: ""
+    resolved_strategy: select

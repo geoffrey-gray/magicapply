@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import pytest
 
-from magicapply.config.models import CareerPageSource, JobUrlSource, LinkedInSource
+from magicapply.config.models import (
+    CareerPageSource,
+    GreenhouseSource,
+    JobUrlSource,
+    LinkedInSource,
+)
 from magicapply.infrastructure.sources import build_source
 from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.custom_url import (
     CareerPageAdapter,
     JobUrlAdapter,
 )
+from magicapply.infrastructure.sources.greenhouse import GreenhouseAdapter
 from magicapply.infrastructure.sources.linkedin import (
     LinkedInAdapter,
     extract_job_urls,
@@ -88,3 +94,7 @@ class TestFactory:
     def test_linkedin(self) -> None:
         cfg = LinkedInSource(name="c")
         assert isinstance(build_source(cfg), LinkedInAdapter)
+
+    def test_greenhouse(self) -> None:
+        cfg = GreenhouseSource(name="gh", boards=["reddit"])
+        assert isinstance(build_source(cfg), GreenhouseAdapter)

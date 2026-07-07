@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head><title>Lever Apply</title></head>
+  <body>
+    <h1>Lever Apply</h1>
+    <form method="POST" action="/submit" enctype="multipart/form-data"
+          class="posting-form">
+      <label>Full name <input name="name"></label>
+      <label>Email <input name="email"></label>
+      <label>Phone <input name="phone"></label>
+      <label>LinkedIn <input name="urls[LinkedIn]"></label>
+      <label>Cover letter <textarea name="comments"></textarea></label>
+      <label>Resume <input type="file" name="resume"></label>
+      <label>Are you authorized to work in the US?
+        <select name="authorized" id="authorized">
+          <option value="">--</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </label>
+      <label>Why Lever?
+        <textarea name="why_lever" id="why_lever"></textarea>
+      </label>
+      <button type="submit">Apply</button>
+    </form>
+  </body>
+</html>

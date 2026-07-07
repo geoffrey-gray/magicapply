@@ -80,22 +80,37 @@ def discover(
 @app.command()
 def tailor(
     profile: Annotated[str, typer.Argument(help="Profile name from configs/profiles/")],
+    job_id: Annotated[
+        str | None,
+        typer.Argument(
+            help="Optional job id (16-char hash). When set, tailor only that "
+            "SCORED application; otherwise tailor every SCORED row for the profile.",
+        ),
+    ] = None,
     root: Annotated[Path | None, typer.Option(help="Config root")] = None,
 ) -> None:
-    """Tailor every SCORED application for one profile.
+    """Tailor SCORED applications for one profile.
 
-    Reads SCORED applications for the profile, rewrites each resume summary
-    against the job description, generates a cover letter, writes both to
-    `<data_dir>/tailored/<application_id>/`, and transitions the row to
-    TAILORED. Re-running is a no-op — already-TAILORED rows are not touched.
+    With a ``job_id``, tailors only the chosen application (Phase 1 cadence:
+    score all discovered jobs, tailor only the one you intend to apply to).
+    Without ``job_id``, tailors every SCORED row for the profile.
+
+    Writes artifacts to ``<data_dir>/tailored/<application_id>/`` and
+    transitions the row to TAILORED. Re-running is a no-op for already-TAILORED
+    rows.
     """
     loaded = _load(root)
     profile_cfg = loaded.profile(profile)
 
     jobs_repo, apps_repo = build_repos(loaded.data_dir())
     pipeline = build_tailoring_pipeline(loaded, profile_cfg, apps_repo, jobs_repo)
-    report = pipeline.run()
+    report = pipeline.run(job_id=job_id)
 
+    if job_id:
+        job = jobs_repo.get(job_id)
+        if job:
+            console.print(f"[dim]job:[/dim] {job.title} @ {job.company}")
+            console.print(f"[dim]url:[/dim] {job.url}")
     console.print(f"[green]tailored:[/green] {report.tailored}")
     if report.missing_job:
         console.print(f"[yellow]missing job:[/yellow] {report.missing_job}")
@@ -230,7 +245,7 @@ def apply(
         bool,
         typer.Option(
             "--retry",
-            help="Re-run apply against a previously FAILED application "
+            help="Re-run apply after FAILED or NEEDS_INTERVENTION "
             "(re-executes the ATS handler on the same tailored artifacts).",
         ),
     ] = False,
@@ -246,21 +261,43 @@ def apply(
     loaded = _load(root)
     jobs_repo, apps_repo = build_repos(loaded.data_dir())
 
-    # --retry searches FAILED applications; default searches TAILORED.
-    target_state = ApplicationState.FAILED if retry else ApplicationState.TAILORED
-    matches = [
-        a for a in apps_repo.list_by_state(target_state)
-        if a.job_id == job_id
-    ]
+    if retry:
+        retry_states = {
+            ApplicationState.FAILED,
+            ApplicationState.NEEDS_INTERVENTION,
+            ApplicationState.APPLYING,
+            ApplicationState.APPLIED,
+        }
+        matches = [
+            a
+            for a in apps_repo.list_by_state(ApplicationState.FAILED)
+            + apps_repo.list_by_state(ApplicationState.NEEDS_INTERVENTION)
+            + apps_repo.list_by_state(ApplicationState.APPLYING)
+            + apps_repo.list_by_state(ApplicationState.APPLIED)
+            if a.job_id == job_id
+            and a.state in retry_states
+            and (a.state is not ApplicationState.APPLIED or a.dry_run)
+        ]
+    else:
+        matches = [
+            a
+            for a in apps_repo.list_by_state(ApplicationState.TAILORED)
+            if a.job_id == job_id
+        ]
     if not matches:
-        state_word = target_state.value.upper()
-        console.print(f"[red]no {state_word} application for job {job_id}[/red]")
+        if retry:
+            console.print(
+                f"[red]no FAILED, NEEDS_INTERVENTION, APPLYING, or APPLIED "
+                f"application for job {job_id}[/red]"
+            )
+        else:
+            console.print(f"[red]no TAILORED application for job {job_id}[/red]")
         raise typer.Exit(code=1)
     if len(matches) > 1:
         profiles = sorted({a.profile_name for a in matches})
         console.print(
-            f"[red]multiple {target_state.value.upper()} applications for job "
-            f"{job_id} (profiles: {profiles}); ambiguous[/red]"
+            f"[red]multiple applications for job {job_id} "
+            f"(profiles: {profiles}); ambiguous[/red]"
         )
         raise typer.Exit(code=1)
 
@@ -269,6 +306,10 @@ def apply(
     if job is None:
         console.print(f"[red]job {application.job_id} missing from DB[/red]")
         raise typer.Exit(code=1)
+
+    console.print(f"[dim]job:[/dim] {job.title} @ {job.company}")
+    console.print(f"[dim]url:[/dim] {job.url}")
+    console.print(f"[dim]profile:[/dim] {application.profile_name}")
 
     data = build_application_data(loaded, application, job, dry_run=no_submit)
     pipeline = build_apply_pipeline(loaded, apps_repo, jobs_repo)

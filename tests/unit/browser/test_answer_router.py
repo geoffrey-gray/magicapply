@@ -82,6 +82,10 @@ class TestIdentityText:
         field = FormField(selector="#phone", label="Phone Number", kind="text")
         assert _router().resolve(field, _job()) == ResolvedAnswer("static", "555-0100")
 
+    def test_phone_bare_label(self) -> None:
+        field = FormField(selector="#12d057e6", label="Phone", kind="text")
+        assert _router().resolve(field, _job()) == ResolvedAnswer("static", "555-0100")
+
     def test_linkedin(self) -> None:
         field = FormField(
             selector="input[name='linkedin_url']", label="LinkedIn URL", kind="text"
@@ -91,6 +95,121 @@ class TestIdentityText:
     def test_years_of_experience(self) -> None:
         field = FormField(selector="#yoe", label="Years of Experience", kind="text")
         assert _router().resolve(field, _job()) == ResolvedAnswer("static", "8")
+
+    def test_country(self) -> None:
+        answers = _default_static().model_copy(update={"country": "United States"})
+        field = FormField(selector="#country", label="Country*", kind="text")
+        assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+            "static", "United States"
+        )
+
+    def test_current_employer(self) -> None:
+        answers = _default_static().model_copy(update={"current_employer": "Intrinsic"})
+        field = FormField(
+            selector="#q",
+            label="Please provide the name of your current (or most recent) company*",
+            kind="text",
+        )
+        assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+            "static", "Intrinsic"
+        )
+
+    def test_most_recent_employer_label(self) -> None:
+        answers = _default_static().model_copy(update={"current_employer": "Intrinsic"})
+        field = FormField(
+            selector="#75184292",
+            label="Please list your most recent employer",
+            kind="text",
+        )
+        assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+            "static", "Intrinsic"
+        )
+
+    def test_ashby_authorized_checkbox(self) -> None:
+        field = FormField(
+            selector="input[name='f1787b93']",
+            label="Are you legally authorized to work in your current country of employment?",
+            kind="checkbox",
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("check", check=True)
+
+
+class TestWorkdayFields:
+    def test_address_and_postal(self) -> None:
+        answers = _default_static().model_copy(
+            update={"address_line_1": "123 Main St", "postal_code": "33572"}
+        )
+        r = _router(static=answers)
+        addr = FormField(selector="#address--addressLine1", label="Address Line 1*", kind="text")
+        postal = FormField(selector="#address--postalCode", label="Postal Code*", kind="text")
+        assert r.resolve(addr, _job()) == ResolvedAnswer("static", "123 Main St")
+        assert r.resolve(postal, _job()) == ResolvedAnswer("static", "33572")
+
+    def test_previously_employed_radio_true_false_options(self) -> None:
+        answers = _default_static().model_copy(update={"previously_employed": False})
+        field = FormField(
+            selector="#yes",
+            label="Have you previously worked for Pluralsight?",
+            kind="radio",
+            name="candidateIsPreviousWorker",
+            options=["true", "false"],
+        )
+        assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+            "select", "false"
+        )
+
+    def test_previously_employed_circle_wording(self) -> None:
+        answers = _default_static().model_copy(update={"previously_employed": False})
+        field = FormField(
+            selector="#no",
+            label="Have you previously been employed by Circle in any capacity?",
+            kind="radio",
+            name="prev",
+            options=["true", "false"],
+        )
+        assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+            "select", "false"
+        )
+
+    def test_preferred_name_checkbox_left_unchecked(self) -> None:
+        field = FormField(
+            selector="#name--preferredCheck",
+            label="I have a preferred name",
+            kind="checkbox",
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("check", check=False)
+
+    def test_country_phone_code_is_handler_owned_not_country_field(self) -> None:
+        answers = _default_static().model_copy(
+            update={
+                "country": "United States",
+                "country_phone_code": "United States of America (+1)",
+            }
+        )
+        field = FormField(
+            selector="#phoneNumber--countryPhoneCode",
+            label="Country Phone Code*",
+            kind="text",
+        )
+        assert _router(static=answers).resolve(field, _job()).strategy == "unhandled"
+
+    def test_sms_opt_in_by_selector(self) -> None:
+        answers = _default_static().model_copy(update={"workday_sms_opt_in": True})
+        field = FormField(selector="#phone-sms-opt-in", label="", kind="checkbox")
+        assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+            "check", check=True
+        )
+
+    def test_how_did_you_hear_is_handler_owned_not_narrative(self) -> None:
+        narrative = _RecordingNarrative()
+        field = FormField(
+            selector="#source--source",
+            label="How Did You Hear About Us?*",
+            kind="text",
+        )
+        result = _router(narrative=narrative).resolve(field, _job())
+        assert result.strategy == "unhandled"
+        assert narrative.calls == []
 
 
 class TestYesNoSelect:
@@ -120,6 +239,20 @@ class TestYesNoSelect:
             options=["Yes", "No", "Decline to state"],
         )
         assert _router().resolve(field, _job()) == ResolvedAnswer("select", "No")
+
+    def test_lever_citizen_green_card_option(self) -> None:
+        field = FormField(
+            selector="#citizen",
+            label="Are you eligible to work in the US without Sponsorship?",
+            kind="radio",
+            options=[
+                "Yes (Citizen/Green-card)",
+                "No (H1-B or other Visa sponsorship required)",
+            ],
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer(
+            "select", "Yes (Citizen/Green-card)"
+        )
 
     def test_unset_bool_is_unhandled(self) -> None:
         answers = _default_static().model_copy(update={"authorized_to_work_us": None})
@@ -154,9 +287,9 @@ class TestNarrative:
 
     def test_question_mark_text_input_is_narrative(self) -> None:
         # A text input that reads like a question falls through to narrative.
-        narrative = _RecordingNarrative(reply="Ex-alumnus referral.")
+        narrative = _RecordingNarrative(reply="Their platform mission resonates with me.")
         field = FormField(
-            selector="#howheard", label="How did you hear about us?", kind="text"
+            selector="#why-here", label="Why do you want to work here?", kind="text"
         )
         result = _router(narrative=narrative).resolve(field, _job())
         assert result.strategy == "narrative"
@@ -176,6 +309,60 @@ class TestUnhandled:
             selector="input[name='newsletter']", label="Newsletter", kind="checkbox"
         )
         assert _router().resolve(field, _job()).strategy == "unhandled"
+
+    def test_disability_decline_checkbox_is_checked(self) -> None:
+        field = FormField(
+            selector="#abc-disabilityStatus",
+            label="I do not want to answer",
+            kind="checkbox",
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("check", check=True)
+
+    def test_disability_yes_checkbox_left_unchecked_when_declining(self) -> None:
+        field = FormField(
+            selector="#abc-disabilityStatus",
+            label="Yes, I have a disability, or have had one in the past",
+            kind="checkbox",
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("check", check=False)
+
+    def test_consent_checkbox_is_checked(self) -> None:
+        field = FormField(
+            selector="#gdpr",
+            label="By checking this box, I consent to demographic data surveys.*",
+            kind="checkbox",
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("check", check=True)
+
+    def test_terms_of_use_checkbox_is_checked(self) -> None:
+        field = FormField(
+            selector="#terms",
+            label="I understand and acknowledge the terms of use for Circle.",
+            kind="checkbox",
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("check", check=True)
+
+    def test_workday_password_fields_use_static_config(self) -> None:
+        answers = _default_static().model_copy(
+            update={"workday_apply_password": "test-pass-123"}
+        )
+        for label in ("Password*", "Verify New Password*"):
+            field = FormField(selector="#pwd", label=label, kind="text")
+            assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+                "static", "test-pass-123"
+            )
+
+    def test_dei_select_decline_when_unset(self) -> None:
+        answers = _default_static().model_copy(update={"ethnicity": None})
+        field = FormField(
+            selector="#eth",
+            label="Ethnicity",
+            kind="select",
+            options=["Asian", "Decline to state"],
+        )
+        assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+            "select", "Decline to state"
+        )
 
     def test_cover_letter_textarea_is_unhandled(self) -> None:
         # The Greenhouse handler fills the cover letter textarea explicitly;

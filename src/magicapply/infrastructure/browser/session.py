@@ -51,7 +51,11 @@ class PlaywrightSession(AbstractContextManager["PlaywrightSession"]):
             and self._storage_state_path.exists()
         ):
             storage_state = str(self._storage_state_path)
-        self._context = self._browser.new_context(storage_state=storage_state)
+        self._context = self._browser.new_context(
+            storage_state=storage_state,
+            locale="en-US",
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
         return self
 
     def new_page(self) -> Page:

@@ -19,13 +19,42 @@ static_answers:
   full_name: "Geoffrey Gray"
   email: "geoffrey.gray042@gmail.com"
   location: "Boston, MA"
+  city: "Boston"
+  state: "Massachusetts"
+  address_line_1: "123 Main St"
+  postal_code: "02108"
+  country_phone_code: "United States of America (+1)"
+  phone_device_type: "Mobile"
+  how_did_you_hear: "LinkedIn"
+  # Pluralsight: two-level cascade via multiselect. Circle: single listbox pick.
+  how_did_you_hear_parent: "Social Media"
+  previously_employed: false
+  workday_sms_opt_in: true
   linkedin_url: "https://linkedin.com/in/example"
   work_authorization: "US citizen"
+  authorized_to_work_us: true
+  needs_sponsorship_us: false
   requires_sponsorship: false
 
 paths:
   resumes_dir: "../resumes"
   data_dir: "../data"
+
+# Composable form drivers (ARCHITECTURE_COMPOSABLE_FORMS.md).
+# Resolution order: field driver_hint → label_regex → variant → ats → default.
+form_drivers:
+  default: hybrid
+  ats:
+    workday: rules
+  variants:
+    workday_listbox: rules
+    workday_multiselect: rules
+    workday_date_spin: rules
+  fields:
+    - label_regex: "why do you want"
+      driver: llm
+    - label_regex: "describe your experience"
+      driver: llm
 
 sources:
   - name: "starred-companies"
@@ -37,6 +66,18 @@ sources:
   - name: "watched-jobs"
     type: "job_url"
     urls: []
+
+  # Greenhouse boards-api — public JSON, no auth required.
+  # - name: "greenhouse-boards"
+  #   type: "greenhouse"
+  #   enabled: false
+  #   boards:
+  #     - "reddit"
+  #     - "anthropic"
+  #   title_keywords:
+  #     - "staff data scientist"
+  #     - "principal data scientist"
+  #   rate_limit_per_minute: 30
 
   # LinkedIn is opt-in. Uncomment + set enabled: true only if you accept the
   # ToS risk documented in README.md.

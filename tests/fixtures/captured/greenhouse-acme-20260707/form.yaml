@@ -1,0 +1,27 @@
+capture:
+  ats: greenhouse
+  form_selectors:
+    - form
+  schema_id: greenhouse_acme_fixture
+  allowed_unhandled:
+    - Cover letter
+app_id: fixture-greenhouse-acme
+job_url: https://boards.greenhouse.io/acme/jobs/senior-backend/apply
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: Cover letter
+    kind: textarea
+    selector: "textarea[name='cover_letter_text']"
+    resolved_strategy: unhandled
+  - label: Resume
+    kind: file
+    selector: "input[name='resume']"
+    resolved_strategy: file
+  - label: "Are you authorized to work in the US? -- Yes No"
+    kind: select
+    selector: "select[name='authorized']"
+    resolved_strategy: select
+  - label: "Why do you want to work at Acme?"
+    kind: textarea
+    selector: "textarea[name='why_acme']"
+    resolved_strategy: narrative

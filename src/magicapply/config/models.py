@@ -82,13 +82,26 @@ class StaticAnswers(BaseModel):
     email: str
     phone: str | None = None
     location: str | None = None
+    city: str | None = None
+    state: str | None = None
+    address_line_1: str | None = None
+    postal_code: str | None = None
+    country_phone_code: str | None = None
+    phone_device_type: str | None = None
+    how_did_you_hear: str | None = None
+    # Two-level source picker on some tenants (raghuboosetty: Job Board → LinkedIn).
+    how_did_you_hear_parent: str | None = None
     linkedin_url: str | None = None
     github_url: str | None = None
     portfolio_url: str | None = None
+    current_employer: str | None = None
+    country: str | None = None
     # Explicit yes/no forms — some ATS forms ask a radio "authorized to work
     # in the US?" separately from the free-text visa description.
     authorized_to_work_us: bool | None = None
     needs_sponsorship_us: bool | None = None
+    # Workday step 2: "Have you previously worked for <employer>?"
+    previously_employed: bool | None = None
     work_authorization: str | None = None
     requires_sponsorship: bool | None = None
     # Practical numbers a lot of forms ask up front.
@@ -100,6 +113,12 @@ class StaticAnswers(BaseModel):
     hispanic_latino: bool | None = None
     veteran_status: str | None = None
     disability_status: str | None = None
+    # Default password for NEW Workday apply accounts (step 1 Create Account).
+    # Once created, credentials are persisted per tenant in
+    # ``data/workday_accounts.yaml`` and reused on later runs.
+    workday_apply_password: str | None = None
+    # Workday phone step SMS opt-in checkbox (phone-sms-opt-in).
+    workday_sms_opt_in: bool | None = None
 
 
 class Paths(BaseModel):
@@ -188,10 +207,52 @@ class GlassdoorSource(_SourceBase):
     rate_limit_per_minute: int = Field(default=5, gt=0)
 
 
+class GreenhouseSource(_SourceBase):
+    """Greenhouse boards-api discovery.
+
+    Queries ``boards-api.greenhouse.io`` per configured board slug and
+    filters postings client-side by ``title_keywords``. Disabled by default.
+    """
+
+    type: Literal["greenhouse"] = "greenhouse"
+    enabled: bool = False
+    boards: list[str] = Field(default_factory=list)
+    title_keywords: list[str] = Field(default_factory=list)
+    rate_limit_per_minute: int = Field(default=30, gt=0)
+
+
 Source = Annotated[
-    CareerPageSource | JobUrlSource | LinkedInSource | IndeedSource | GlassdoorSource,
+    CareerPageSource
+    | JobUrlSource
+    | LinkedInSource
+    | IndeedSource
+    | GlassdoorSource
+    | GreenhouseSource,
     Field(discriminator="type"),
 ]
+
+
+FormDriverName = Literal["rules", "llm", "hybrid"]
+
+
+class FormDriverFieldOverride(BaseModel):
+    """Per-field driver override matched by label regex."""
+
+    model_config = _Strict
+
+    label_regex: str
+    driver: FormDriverName
+
+
+class FormDriversConfig(BaseModel):
+    """Composable form driver selection — see ARCHITECTURE_COMPOSABLE_FORMS.md §2.6."""
+
+    model_config = _Strict
+
+    default: FormDriverName = "hybrid"
+    ats: dict[str, FormDriverName] = Field(default_factory=dict)
+    variants: dict[str, FormDriverName] = Field(default_factory=dict)
+    fields: list[FormDriverFieldOverride] = Field(default_factory=list)
 
 
 class BaseConfig(BaseModel):
@@ -205,6 +266,7 @@ class BaseConfig(BaseModel):
     static_answers: StaticAnswers
     paths: Paths = Field(default_factory=Paths)
     sources: list[Source] = Field(default_factory=list)
+    form_drivers: FormDriversConfig = Field(default_factory=FormDriversConfig)
 
     def source_names(self) -> set[str]:
         return {s.name for s in self.sources}

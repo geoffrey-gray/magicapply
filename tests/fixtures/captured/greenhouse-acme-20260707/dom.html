@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head><title>Apply</title></head>
+  <body>
+    <h1>Apply</h1>
+    <form method="POST" action="/submit" enctype="multipart/form-data">
+      <label>First name <input id="first_name" name="first_name"></label>
+      <label>Last name <input id="last_name" name="last_name"></label>
+      <label>Email <input id="email" name="email"></label>
+      <label>Phone <input id="phone" name="phone"></label>
+      <label>LinkedIn <input name="linkedin_url"></label>
+      <label>Cover letter <textarea name="cover_letter_text"></textarea></label>
+      <label>Resume <input type="file" name="resume"></label>
+      <label>Are you authorized to work in the US?
+        <select name="authorized">
+          <option value="">--</option>
+          <option value="Yes">Yes</option>
+          <option value="No">No</option>
+        </select>
+      </label>
+      <label>Why do you want to work at Acme?
+        <textarea name="why_acme"></textarea>
+      </label>
+      <input type="submit" value="Apply">
+    </form>
+  </body>
+</html>

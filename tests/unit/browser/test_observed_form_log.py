@@ -8,6 +8,7 @@ import yaml
 
 from magicapply.infrastructure.browser.ats.answer_router import ResolvedAnswer
 from magicapply.infrastructure.browser.ats.form_scan import FormField
+from magicapply.infrastructure.browser.forms.fields import FormField as ComposableFormField
 from magicapply.infrastructure.browser.ats.observed_form_log import (
     ResolvedField,
     log_observed_form,
@@ -23,6 +24,19 @@ def _rf(label: str, strategy: str, value: str = "") -> ResolvedField:
         field=_field(label),
         answer=ResolvedAnswer(strategy=strategy, value=value),
     )
+
+
+class _FakePage:
+    def __init__(self, html: str = "<html><body>filled</body></html>") -> None:
+        self._html = html
+        self.screenshot_paths: list[str] = []
+
+    def content(self) -> str:
+        return self._html
+
+    def screenshot(self, *, path: str) -> None:
+        self.screenshot_paths.append(path)
+        Path(path).write_bytes(b"png-stub")
 
 
 class TestWriteYaml:
@@ -51,6 +65,23 @@ class TestWriteYaml:
         assert by_label["Why us?"]["resolved_strategy"] == "narrative"
         assert by_label["Why us?"]["resolved_value"] == "because."
         assert by_label["Cover letter"]["resolved_strategy"] == "unhandled"
+
+    def test_captures_dom_and_screenshot_when_page_provided(
+        self, tmp_path: Path
+    ) -> None:
+        page = _FakePage("<html><body>submit-ready</body></html>")
+        out = log_observed_form(
+            app_id="abc",
+            job_url="https://boards.greenhouse.io/acme/jobs/123",
+            resolutions=[_rf("Email", "static", "x@y.z")],
+            data_dir=tmp_path,
+            page=page,
+        )
+        assert out is not None
+        out_dir = out.parent
+        assert (out_dir / "dom.html").read_text() == "<html><body>submit-ready</body></html>"
+        assert (out_dir / "screenshot.png").read_bytes() == b"png-stub"
+        assert page.screenshot_paths == [str(out_dir / "screenshot.png")]
 
 
 class TestProposals:
@@ -104,6 +135,33 @@ class TestProposals:
         payload = yaml.safe_load((tmp_path / "answer_proposals.yaml").read_text())
         entry = payload["proposals"][0]
         assert len(entry["seen_on"]) == 2
+
+
+class TestVariantMetadata:
+    def test_form_yaml_records_variant_and_step_id(self, tmp_path: Path) -> None:
+        field = ComposableFormField(
+            selector="#personalInfoUS--ethnicity",
+            label="Ethnicity",
+            kind="select",
+            variant="workday_listbox",
+            step_id="voluntary_disclosures",
+            widget_id="personalInfoUS--ethnicity",
+        )
+        resolutions = [
+            ResolvedField(field=field, answer=ResolvedAnswer("select", "Decline")),
+        ]
+        out = log_observed_form(
+            app_id="abc",
+            job_url="https://acme.wd1.myworkdayjobs.com/careers/job/1",
+            resolutions=resolutions,
+            data_dir=tmp_path,
+        )
+        assert out is not None
+        payload = yaml.safe_load(out.read_text())
+        recorded = payload["fields"][0]
+        assert recorded["variant"] == "workday_listbox"
+        assert recorded["step_id"] == "voluntary_disclosures"
+        assert recorded["widget_id"] == "personalInfoUS--ethnicity"
 
 
 class TestErrorHandling:

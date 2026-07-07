@@ -26,7 +26,14 @@ from collections.abc import Iterator
 from email import message_from_bytes
 from email.policy import HTTP as EMAIL_HTTP
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
+
+_CAPTURED_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "captured"
+
+
+def _load_captured_dom(capture_id: str) -> str:
+    return (_CAPTURED_ROOT / capture_id / "dom.html").read_text(encoding="utf-8")
 
 
 # --- The three JSON-LD JobPostings --------------------------------------------
@@ -160,35 +167,7 @@ def _cross_ats_careers_html(base_url: str) -> str:
     )
 
 
-_APPLY_FORM_HTML = """\
-<!doctype html>
-<html>
-  <head><title>Apply</title></head>
-  <body>
-    <h1>Apply</h1>
-    <form method="POST" action="/submit" enctype="multipart/form-data">
-      <label>First name <input id="first_name" name="first_name"></label>
-      <label>Last name <input id="last_name" name="last_name"></label>
-      <label>Email <input id="email" name="email"></label>
-      <label>Phone <input id="phone" name="phone"></label>
-      <label>LinkedIn <input name="linkedin_url"></label>
-      <label>Cover letter <textarea name="cover_letter_text"></textarea></label>
-      <label>Resume <input type="file" name="resume"></label>
-      <label>Are you authorized to work in the US?
-        <select name="authorized">
-          <option value="">--</option>
-          <option value="Yes">Yes</option>
-          <option value="No">No</option>
-        </select>
-      </label>
-      <label>Why do you want to work at Acme?
-        <textarea name="why_acme"></textarea>
-      </label>
-      <input type="submit" value="Apply">
-    </form>
-  </body>
-</html>
-"""
+_APPLY_FORM_HTML = _load_captured_dom("greenhouse-acme-20260707")
 
 # Workday-shaped single-page form: data-automation-id selectors matching the
 # real Workday wizard's convention. Single page (no multi-step navigation)
@@ -228,44 +207,9 @@ _WORKDAY_FORM_HTML = """\
 </html>
 """
 
-_LEVER_FORM_HTML = """\
-<!doctype html>
-<html>
-  <head><title>Lever Apply</title></head>
-  <body>
-    <h1>Lever Apply</h1>
-    <form method="POST" action="/submit" enctype="multipart/form-data"
-          class="posting-form">
-      <label>Full name <input name="name"></label>
-      <label>Email <input name="email"></label>
-      <label>Phone <input name="phone"></label>
-      <label>LinkedIn <input name="urls[LinkedIn]"></label>
-      <label>Cover letter <textarea name="comments"></textarea></label>
-      <label>Resume <input type="file" name="resume"></label>
-      <button type="submit">Apply</button>
-    </form>
-  </body>
-</html>
-"""
+_LEVER_FORM_HTML = _load_captured_dom("lever-acme-20260707")
 
-_ASHBY_FORM_HTML = """\
-<!doctype html>
-<html>
-  <head><title>Ashby Apply</title></head>
-  <body>
-    <h1>Ashby Apply</h1>
-    <form method="POST" action="/submit" enctype="multipart/form-data">
-      <label>Full name <input name="_systemfield_name"></label>
-      <label>Email <input name="_systemfield_email"></label>
-      <label>Phone <input name="_systemfield_phone"></label>
-      <label>LinkedIn <input name="_systemfield_linkedin"></label>
-      <label>Location <input name="_systemfield_location"></label>
-      <label>Resume <input type="file" name="_systemfield_resume"></label>
-      <button type="submit">Submit application</button>
-    </form>
-  </body>
-</html>
-"""
+_ASHBY_FORM_HTML = _load_captured_dom("ashby-acme-20260707")
 
 _THANK_YOU_HTML = "<!doctype html><html><body><h1>Thanks!</h1></body></html>"
 

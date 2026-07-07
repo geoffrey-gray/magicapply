@@ -13,14 +13,12 @@ from __future__ import annotations
 import contextlib
 import logging
 
-from magicapply.infrastructure.browser.ats.router_dispatch import apply_router_to_form
+from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
 from magicapply.infrastructure.browser.ats.base import (
     ApplicationData,
     BaseATSHandler,
     PageDriver,
 )
-from magicapply.infrastructure.browser.ats.form_scan import scan_form
-
 logger = logging.getLogger(__name__)
 
 _MATCH_HOSTS = ("jobs.ashbyhq.com", "ashbyhq.com")
@@ -31,6 +29,13 @@ _RESUME_FILE_SELECTORS = (
     "input[type='file']",
 )
 
+_ASHBY_FORM_SELECTORS = (
+    "form",
+    "[data-testid='application-form']",
+    "main",
+    "#root",
+)
+
 
 class AshbyHandler(BaseATSHandler):
     @classmethod
@@ -39,7 +44,10 @@ class AshbyHandler(BaseATSHandler):
         return any(host in u for host in _MATCH_HOSTS)
 
     def _navigate(self, page: PageDriver, data: ApplicationData) -> None:
-        page.goto(data.job_url)
+        url = data.job_url.rstrip("/")
+        if not url.endswith("/application"):
+            url = f"{url}/application"
+        page.goto(url)
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers
@@ -73,8 +81,14 @@ class AshbyHandler(BaseATSHandler):
             except Exception:  # noqa: BLE001
                 continue
 
-        # Custom questions via the shared router.
-        apply_router_to_form(page, data, handler_name="Ashby")
+        fill_dynamic_fields(
+            page,
+            data,
+            ats="ashby",
+            form_selectors=_ASHBY_FORM_SELECTORS,
+            schema_id="ashby_application",
+            handler_label="Ashby",
+        )
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
         page.click("button[type='submit']")

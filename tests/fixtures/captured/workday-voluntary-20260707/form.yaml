@@ -1,0 +1,31 @@
+capture:
+  ats: workday
+  form_selectors:
+    - "[data-automation-id='applyFlowVoluntaryDisclosuresPage']"
+  schema_id: workday_voluntary_fixture
+  source: recipe
+  recipe: workday_voluntary_disclosures
+  step_id: voluntary_disclosures
+  allowed_unhandled: []
+app_id: fixture-workday-voluntary
+job_url: https://acme.wd1.myworkdayjobs.com/careers/job/1/apply
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: Ethnicity
+    kind: select
+    variant: workday_listbox
+    widget_id: personalInfoUS--ethnicity
+    selector: "#personalInfoUS--ethnicity"
+    resolved_strategy: select
+  - label: Gender
+    kind: select
+    variant: workday_listbox
+    widget_id: personalInfoUS--gender
+    selector: "#personalInfoUS--gender"
+    resolved_strategy: select
+  - label: Veteran status
+    kind: select
+    variant: workday_listbox
+    widget_id: personalInfoUS--veteranStatus
+    selector: "#personalInfoUS--veteranStatus"
+    resolved_strategy: select

@@ -7,11 +7,13 @@ from magicapply.infrastructure.sources.custom_url import (
     extract_jsonld_jobs,
 )
 from magicapply.infrastructure.sources.factory import build_source
+from magicapply.infrastructure.sources.greenhouse import GreenhouseAdapter
 from magicapply.infrastructure.sources.linkedin import LinkedInAdapter
 from magicapply.infrastructure.sources.rate_limit import RateLimiter
 
 __all__ = [
     "CareerPageAdapter",
+    "GreenhouseAdapter",
     "JobSource",
     "JobUrlAdapter",
     "LinkedInAdapter",

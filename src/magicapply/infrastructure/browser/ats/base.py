@@ -19,7 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from magicapply.config.models import StaticAnswers
 from magicapply.domain.models.resume import TailoredResume
-from magicapply.infrastructure.browser.captcha import detect_captcha
+from magicapply.infrastructure.browser.captcha import (
+    detect_blocking_captcha,
+    detect_captcha,
+)
 
 
 class PageDriver(Protocol):
@@ -85,6 +88,10 @@ class ApplicationData(BaseModel):
     # None → observation logging is skipped (unit tests without a real
     # data dir).
     data_dir: Path | None = None
+    # W.4b: per-tenant Workday apply credentials (data/workday_accounts.yaml).
+    workday_account_store: object | None = None
+    # CF.1: composable form orchestrator (FormComposer); optional opaque slot.
+    form_composer: object | None = None
 
 
 class ApplicationResult(BaseModel):
@@ -112,8 +119,11 @@ class BaseATSHandler:
     Subclasses override the abstract hooks:
         navigate → fill_static → fill_dynamic → submit → verify
 
-    CAPTCHA detection runs after navigate and after fill_dynamic. Any exception
-    surfaced by the subclass is captured as `state="failed"`.
+    Blocking CAPTCHA detection runs after navigate (interstitial pages only).
+    Widget detection runs after fill_dynamic, only before a real submit — dry-
+    run skips it so dormant invisible reCAPTCHA on Greenhouse forms does not
+    block the fill-to-Submit-button path. Any exception surfaced by the
+    subclass is captured as `state="failed"`.
     """
 
     @classmethod
@@ -123,11 +133,11 @@ class BaseATSHandler:
     def apply(self, page: PageDriver, data: ApplicationData) -> ApplicationResult:
         try:
             self._navigate(page, data)
-            captcha = detect_captcha(page.content())
-            if captcha:
+            blocking = detect_blocking_captcha(page.content())
+            if blocking:
                 return ApplicationResult(
                     state="needs_intervention",
-                    error=f"CAPTCHA detected on load: {captcha}",
+                    error=f"CAPTCHA detected on load: {blocking}",
                 )
 
             self._fill_static(page, data)
@@ -152,14 +162,16 @@ class BaseATSHandler:
                     job_url=job_url,
                     resolutions=data.resolutions_log,
                     data_dir=data.data_dir,
+                    page=page,
                 )
 
-            captcha = detect_captcha(page.content())
-            if captcha:
-                return ApplicationResult(
-                    state="needs_intervention",
-                    error=f"CAPTCHA detected before submit: {captcha}",
-                )
+            if not data.dry_run:
+                captcha = detect_captcha(page.content())
+                if captcha:
+                    return ApplicationResult(
+                        state="needs_intervention",
+                        error=f"CAPTCHA detected before submit: {captcha}",
+                    )
 
             if data.dry_run:
                 # Full application short of the click. Same terminal shape as

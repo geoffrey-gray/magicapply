@@ -60,11 +60,30 @@ _IDENTITY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\blast[\s-]*name\b|\bfamily[\s-]*name\b|\bsurname\b"), "_last_name"),
     (re.compile(r"\bfull[\s-]*name\b|^name$"), "full_name"),
     (re.compile(r"\bemail\b"), "email"),
-    (re.compile(r"\bphone\b|\btelephone\b|\bmobile\b"), "phone"),
+    (
+        re.compile(r"\bverify\b.*\bpassword\b|\bconfirm\b.*\bpassword\b"),
+        "workday_apply_password",
+    ),
+    (re.compile(r"\bpassword\b"), "workday_apply_password"),
+    (
+        re.compile(r"phone\s*number|phone\s*extension|\btelephone\b|\bmobile\b|^phone$"),
+        "phone",
+    ),
     (re.compile(r"\blinkedin\b"), "linkedin_url"),
     (re.compile(r"\bgithub\b"), "github_url"),
     (re.compile(r"\bportfolio\b|\bwebsite\b|\bpersonal\s+site\b"), "portfolio_url"),
-    (re.compile(r"\blocation\b|\bcity\b"), "location"),
+    (re.compile(r"\blocation\b"), "location"),
+    (re.compile(r"^city\b|\bcity\*"), "city"),
+    (re.compile(r"address\s*line\s*1|street\s*address"), "address_line_1"),
+    (re.compile(r"postal\s*code|zip\s*code"), "postal_code"),
+    (re.compile(r"country\s+phone\s+code|phone\s+country\s+code"), "country_phone_code"),
+    (re.compile(r"phone\s+device\s+type|device\s+type"), "phone_device_type"),
+    (re.compile(r"^state\b|\bstate\*"), "state"),
+    (re.compile(r"\bcountry\b"), "country"),
+    (
+        re.compile(r"current.*company|most recent.*company|most recent.*employer"),
+        "current_employer",
+    ),
     (re.compile(r"\byears?\s+of\s+experience\b"), "years_of_experience"),
     (re.compile(r"\bdesired\s+salary\b|\bsalary\s+expectation\b|\bcompensation\b"), "desired_salary"),
     (re.compile(r"\bwork\s+authorization\b"), "work_authorization"),
@@ -73,9 +92,22 @@ _IDENTITY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 # For yes/no <select> or radio groups, keyed on StaticAnswers bool attributes.
 _YES_NO_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"authori[sz]ed\s+to\s+work"), "authorized_to_work_us"),
+    (re.compile(r"legally\s+authori[sz]ed\s+to\s+work"), "authorized_to_work_us"),
+    (re.compile(r"eligible to work.*sponsorship", re.IGNORECASE), "authorized_to_work_us"),
     (re.compile(r"require\s+sponsorship|need\s+sponsorship|require\s+visa"), "needs_sponsorship_us"),
+    (re.compile(r"previously\s+(?:worked|been\s+employed|employed)"), "previously_employed"),
     (re.compile(r"hispanic|latino|latin[a-z]"), "hispanic_latino"),
+    (re.compile(r"located in the united states", re.IGNORECASE), "_us_located"),
 ]
+
+_EXPERIENCE_YEARS_PATTERN = re.compile(
+    r"(\d+)\+?\s*years.*(?:data science|professional)",
+    re.IGNORECASE,
+)
+_SKILL_SCREENING_PATTERN = re.compile(
+    r"(?:do you have|are you expert).*(?:experience|expert|deep|production-level|python)",
+    re.IGNORECASE,
+)
 
 # DEI / EEO free-text (usually a select with specific options).
 _DEI_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -83,6 +115,35 @@ _DEI_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\brace\b|\bethnicity\b"), "ethnicity"),
     (re.compile(r"\bveteran\b"), "veteran_status"),
     (re.compile(r"\bdisability\b|\bdisabled\b"), "disability_status"),
+]
+
+_CONSENT_CHECKBOX_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\bconsent\b", re.IGNORECASE),
+    re.compile(r"terms and conditions", re.IGNORECASE),
+    re.compile(r"terms of use", re.IGNORECASE),
+    re.compile(r"acknowledge the terms", re.IGNORECASE),
+    re.compile(r"demographic data", re.IGNORECASE),
+    re.compile(r"i agree", re.IGNORECASE),
+]
+
+# Optional checkboxes the operator has pre-declined — leave unchecked.
+_OPTIONAL_CHECKBOX_PATTERNS: list[tuple[re.Pattern[str], bool]] = [
+    (re.compile(r"preferred\s+name", re.IGNORECASE), False),
+]
+
+_SMS_OPT_IN_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"phone-sms-opt-in", re.IGNORECASE),
+    re.compile(r"sms\s+opt", re.IGNORECASE),
+]
+
+# Workday React multiselects — WorkdayHandler fills via workday_widgets;
+# page.fill() from the router corrupts the widget state.
+_HANDLER_OWNED_WIDGET_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"how\s+did\s+you\s+hear", re.IGNORECASE),
+    re.compile(r"country\s+phone\s+code", re.IGNORECASE),
+    re.compile(r"selfidentif|disability", re.IGNORECASE),
+    re.compile(r"authori[sz]ed\s+to\s+work", re.IGNORECASE),
+    re.compile(r"require\s+visa\s+sponsorship", re.IGNORECASE),
 ]
 
 
@@ -122,8 +183,25 @@ class AnswerRouter:
 
         # 2. Yes/no radio or select — try the boolean patterns first.
         if field.kind in {"select", "radio"}:
+            years_match = _EXPERIENCE_YEARS_PATTERN.search(label)
+            if years_match:
+                need = int(years_match.group(1))
+                has = self._answers.years_of_experience or 0
+                option = _match_yes_no_option(field.options, has >= need)
+                if option is not None:
+                    return ResolvedAnswer("select", option)
+            if _SKILL_SCREENING_PATTERN.search(label):
+                option = _match_yes_no_option(field.options, True)
+                if option is not None:
+                    return ResolvedAnswer("select", option)
+
             for pattern, attr in _YES_NO_PATTERNS:
                 if pattern.search(label):
+                    if attr == "_us_located":
+                        option = _match_yes_no_option(field.options, True)
+                        if option is None:
+                            return ResolvedAnswer("unhandled")
+                        return ResolvedAnswer("select", option)
                     value = getattr(self._answers, attr, None)
                     if value is None:
                         return ResolvedAnswer("unhandled")
@@ -138,15 +216,46 @@ class AnswerRouter:
                 if pattern.search(label):
                     value = getattr(self._answers, attr, None)
                     if not value:
+                        decline = _match_decline_option(field.options)
+                        if decline is not None:
+                            return ResolvedAnswer("select", decline)
                         return ResolvedAnswer("unhandled")
                     option = _match_option_by_substring(field.options, value)
                     if option is None:
                         return ResolvedAnswer("unhandled")
                     return ResolvedAnswer("select", option)
 
-        # 3. Checkbox — no default StaticAnswers routing (opt-in checkboxes
-        #    such as "I agree to terms" are best left to per-handler code).
+        # 3. Checkbox — consent / agreement boxes the operator has pre-approved.
         if field.kind == "checkbox":
+            for pattern, attr in _YES_NO_PATTERNS:
+                if pattern.search(label):
+                    if attr == "_us_located":
+                        return ResolvedAnswer("check", check=True)
+                    value = getattr(self._answers, attr, None)
+                    if value is None:
+                        return ResolvedAnswer("unhandled")
+                    return ResolvedAnswer("check", check=bool(value))
+            for pattern, check in _OPTIONAL_CHECKBOX_PATTERNS:
+                if pattern.search(label):
+                    return ResolvedAnswer("check", check=check)
+            if any(p.search(label) for p in _CONSENT_CHECKBOX_PATTERNS):
+                return ResolvedAnswer("check", check=True)
+            if field.selector and any(
+                p.search(field.selector) for p in _SMS_OPT_IN_PATTERNS
+            ):
+                opt_in = self._answers.workday_sms_opt_in
+                if opt_in is None:
+                    return ResolvedAnswer("unhandled")
+                return ResolvedAnswer("check", check=opt_in)
+            if _is_disability_checkbox(field):
+                value = self._answers.disability_status
+                if value:
+                    return ResolvedAnswer(
+                        "check", check=_disability_label_matches(label, value)
+                    )
+                return ResolvedAnswer(
+                    "check", check=_is_decline_disability_label(label)
+                )
             return ResolvedAnswer("unhandled")
 
         # 4. Text / textarea — identity patterns win first, then anything
@@ -155,6 +264,8 @@ class AnswerRouter:
         #    textareas fall through to unhandled so the handler's explicit
         #    fill is not overwritten.
         if field.kind in {"text", "textarea"}:
+            if any(p.search(label) for p in _HANDLER_OWNED_WIDGET_PATTERNS):
+                return ResolvedAnswer("unhandled")
             for pattern, attr in _IDENTITY_PATTERNS:
                 if pattern.search(label):
                     return _identity_answer(attr, self._answers)
@@ -194,9 +305,55 @@ def _match_yes_no_option(options: list[str], truthy: bool) -> str | None:
     """Given [Yes, No] / [yes, no] / [true, false] pick the matching one."""
     positives = {"yes", "true", "1", "y"}
     negatives = {"no", "false", "0", "n"}
-    want = positives if truthy else negatives
     for opt in options:
-        if opt.strip().lower() in want:
+        lo = opt.strip().lower()
+        if truthy:
+            if lo in positives or lo.startswith("yes"):
+                return opt
+        elif lo in negatives or lo.startswith("no"):
+            return opt
+    return None
+
+
+_DECLINE_DISABILITY_MARKERS = (
+    "do not want to answer",
+    "don't wish to answer",
+    "do not wish to answer",
+    "decline to answer",
+    "prefer not to answer",
+)
+
+
+def _is_disability_checkbox(field: FormField) -> bool:
+    haystack = f"{field.label} {field.selector}".lower()
+    return "disability" in haystack or "disabilitystatus" in haystack.replace("-", "")
+
+
+def _is_decline_disability_label(label: str) -> bool:
+    lo = label.strip().lower()
+    return any(marker in lo for marker in _DECLINE_DISABILITY_MARKERS)
+
+
+def _disability_label_matches(label: str, value: str) -> bool:
+    lo_label = label.strip().lower()
+    lo_value = value.strip().lower()
+    if lo_value in lo_label:
+        return True
+    if lo_value in {"yes", "true"} and "yes" in lo_label and "disability" in lo_label:
+        return True
+    if lo_value in {"no", "false"} and lo_label.startswith("no,"):
+        return True
+    return _is_decline_disability_label(label) and _is_decline_disability_label(value)
+
+
+def _match_decline_option(options: list[str]) -> str | None:
+    """Pick a 'decline / prefer not' option when the operator left DEI blank."""
+    if not options:
+        return None
+    markers = ("decline", "prefer not", "choose not", "do not wish", "not wish")
+    for opt in options:
+        lo = opt.strip().lower()
+        if any(m in lo for m in markers):
             return opt
     return None
 
