@@ -1,0 +1,36 @@
+capture:
+  ats: eightfold
+  e2e_smoke: true
+  form_selectors:
+    - form#application-form
+    - form
+  schema_id: eightfold_wizard_e2e
+  allowed_unhandled: []
+app_id: fixture-eightfold-symetra
+job_url: https://symetra.eightfold.ai/careers/apply?pid=446718943971
+timestamp: "2026-07-07T12:00:00+00:00"
+fields:
+  - label: First name
+    kind: text
+    selector: "#first_name"
+    resolved_strategy: static
+    required: true
+  - label: Last name
+    kind: text
+    selector: "#last_name"
+    resolved_strategy: static
+    required: true
+  - label: Email
+    kind: text
+    selector: "#email"
+    resolved_strategy: static
+    required: true
+  - label: Phone
+    kind: text
+    selector: "#phone"
+    resolved_strategy: static
+  - label: Resume
+    kind: file
+    selector: "input[name='resume']"
+    resolved_strategy: file
+    required: true

@@ -1,0 +1,8 @@
+# Built-in generic defaults — loaded as platform "generic" when no host match.
+platform: generic
+match_hosts: []
+form_selectors:
+  - form#application-form
+  - form[action*='apply']
+  - form
+  - main form

@@ -1,8 +1,9 @@
-"""Catch-all ATS handler for custom career sites and unknown apply URLs (PR3).
+"""Catch-all ATS handler for custom career sites and unknown apply URLs (PR3/PR4).
 
 Registered last in ``ATSHandlerFactory`` — matches any URL the big-four handlers
 miss. Relies on ``FormComposer`` + ``AnswerRouter`` for label-driven fills
-rather than hardcoded platform selectors.
+rather than hardcoded platform selectors. Multi-step flows use YAML recipes
+(``configs/ats_recipes/``) and the wizard loop in ``generic_wizard``.
 """
 
 from __future__ import annotations
@@ -10,56 +11,44 @@ from __future__ import annotations
 import contextlib
 import logging
 
+from magicapply.config.ats_recipes import ATSRecipe, cached_recipes, resolve_navigation_url, resolve_recipe
 from magicapply.infrastructure.browser.ats.base import (
     ApplicationData,
     BaseATSHandler,
     PageDriver,
 )
+from magicapply.infrastructure.browser.ats.generic_wizard import run_pre_steps, run_wizard_or_single_page
 from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
 
 logger = logging.getLogger(__name__)
 
-_GENERIC_FORM_SELECTORS = (
-    "form#application-form",
-    "form[action*='apply']",
-    "form",
-    "main form",
-)
-
-_RESUME_FILE_SELECTORS = (
-    "input[type='file'][name='resume']",
-    "input[type='file'][id*='resume']",
-    "input[type='file'][name*='cv']",
-    "input[type='file']",
-)
-
-_SUBMIT_SELECTORS = (
-    "input[type='submit']",
-    "button[type='submit']",
-    "button[name='submit']",
-    "input[name='submit']",
-    "button[id*='submit']",
-    "[data-testid*='submit']",
-    "[data-automation-id*='submit']",
-)
-
 
 class GenericHandler(BaseATSHandler):
     """Scan-fill-submit for arbitrary HTML application forms."""
+
+    def __init__(self, *, recipes: dict[str, ATSRecipe] | None = None) -> None:
+        self._recipes = recipes if recipes is not None else cached_recipes()
 
     @classmethod
     def matches(cls, url: str) -> bool:
         # Catch-all — only consulted after Greenhouse, Workday, Lever, Ashby.
         return True
 
+    def _recipe_for(self, url: str) -> ATSRecipe:
+        return resolve_recipe(url, self._recipes)
+
     def _navigate(self, page: PageDriver, data: ApplicationData) -> None:
-        page.goto(data.job_url)
+        recipe = self._recipe_for(data.job_url)
+        target = resolve_navigation_url(data.job_url, recipe)
+        page.goto(target)
+        run_pre_steps(page, recipe)
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         # Identity and screening answers resolve via composable scan + router.
         pass
 
     def _fill_dynamic(self, page: PageDriver, data: ApplicationData) -> None:
+        recipe = self._recipe_for(data.job_url)
         if data.cover_letter:
             for selector in (
                 "textarea[name='cover_letter_text']",
@@ -70,19 +59,17 @@ class GenericHandler(BaseATSHandler):
                     page.fill(selector, data.cover_letter)
                     break
 
-        _upload_resume(page, data)
-
-        fill_dynamic_fields(
+        run_wizard_or_single_page(
             page,
             data,
-            ats="generic",
-            form_selectors=_GENERIC_FORM_SELECTORS,
-            schema_id="generic_application",
-            handler_label="Generic",
+            recipe,
+            fill_step=_fill_scanned_step,
+            upload_resume=_upload_resume,
         )
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
-        for selector in _SUBMIT_SELECTORS:
+        recipe = self._recipe_for(data.job_url)
+        for selector in recipe.submit_selectors:
             if _try_click(page, selector):
                 return
         msg = "GenericHandler: no submit control matched"
@@ -90,8 +77,19 @@ class GenericHandler(BaseATSHandler):
         raise RuntimeError(msg)
 
 
-def _upload_resume(page: PageDriver, data: ApplicationData) -> None:
-    for selector in _RESUME_FILE_SELECTORS:
+def _fill_scanned_step(page: PageDriver, data: ApplicationData, recipe: ATSRecipe) -> None:
+    fill_dynamic_fields(
+        page,
+        data,
+        ats="generic",
+        form_selectors=recipe.form_selectors,
+        schema_id=f"{recipe.platform}_application",
+        handler_label="Generic",
+    )
+
+
+def _upload_resume(page: PageDriver, data: ApplicationData, recipe: ATSRecipe) -> None:
+    for selector in recipe.resume_selectors:
         try:
             page.set_input_files(selector, str(data.resume_docx_path))
             return

@@ -220,6 +220,8 @@ def _ats_from_host(host_slug: str) -> str:
         return "workday"
     if host_slug.startswith("custom-") or "example-custom" in host_slug:
         return "generic"
+    if "eightfold" in host_slug:
+        return "eightfold"
     return "unknown"
 
 
@@ -230,5 +232,6 @@ def _default_selectors(ats: str) -> tuple[str, ...]:
         "ashby": ("form",),
         "workday": ("[data-automation-id='applyFlowPage']", "form"),
         "generic": ("form#application-form", "form", "main form"),
+        "eightfold": ("form#application-form", "form"),
     }
     return defaults.get(ats, ("form",))

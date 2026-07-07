@@ -1,0 +1,27 @@
+platform: eightfold
+match_hosts:
+  - eightfold.ai
+apply_path_template: "/careers/apply?pid={pid}"
+pid_regex: "/careers/job/(\\d+)"
+form_selectors:
+  - form#application-form
+  - form
+  - "[data-testid='application-form']"
+submit_selectors:
+  - button[type='submit']
+  - "button:has-text('Submit')"
+  - "button:has-text('Submit application')"
+resume_selectors:
+  - input[type='file'][name='resume']
+  - input[type='file'][id*='resume']
+  - input[type='file']
+wizard:
+  next_selectors:
+    - "#wizard-next"
+    - "button:has-text('Next')"
+    - "button:has-text('Continue')"
+    - "[data-testid='next-button']"
+  max_steps: 10
+  review_selectors:
+    - button[type='submit']
+    - "button:has-text('Submit')"

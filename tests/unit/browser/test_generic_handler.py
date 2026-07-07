@@ -1,10 +1,11 @@
-"""Unit tests for GenericHandler catch-all apply (PR3)."""
+"""Unit tests for GenericHandler catch-all apply (PR3/PR4)."""
 
 from __future__ import annotations
 
 import re
 from pathlib import Path
 
+from magicapply.config.ats_recipes import bundled_recipes_dir, load_ats_recipes
 from magicapply.config.models import StaticAnswers
 from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import TailoredResume
@@ -80,6 +81,9 @@ def _selector_matches_html(html: str, selector: str) -> bool:
         return "data-testid" in html and "submit" in html.lower()
     if "data-automation-id*='submit'" in selector:
         return "data-automation-id" in html and "submit" in html.lower()
+    if selector.startswith("#"):
+        ident = selector[1:]
+        return f'id="{ident}"' in html or f"id='{ident}'" in html
     return True
 
 
@@ -158,5 +162,113 @@ def test_yes_submit_clicks_button_submit() -> None:
         job_url="https://careers.example-custom.com/jobs/staff-ds/apply"
     )
     result = GenericHandler().apply(page, data)
+    assert result.state == "applied"
+    assert ("click", "button[type='submit']") in page.actions
+
+
+class _WizardFakePage:
+    """Advances through captured wizard steps when Next/Submit is clicked."""
+
+    def __init__(self, steps: list[str]) -> None:
+        self._steps = steps
+        self._index = 0
+        self.actions: list[tuple[str, ...]] = []
+
+    def content(self) -> str:
+        return self._steps[self._index]
+
+    def goto(self, url: str) -> None:
+        self.actions.append(("goto", url))
+
+    def fill(self, selector: str, value: str) -> None:
+        self.actions.append(("fill", selector, value))
+
+    def click(self, selector: str) -> None:
+        html = self._steps[self._index]
+        if not _selector_matches_html(html, selector):
+            raise RuntimeError(f"no element for {selector}")
+        self.actions.append(("click", selector))
+        if selector == "#wizard-next" and self._index + 1 < len(self._steps):
+            self._index += 1
+
+    def set_input_files(self, selector: str, files: str) -> None:
+        self.actions.append(("set_input_files", selector, files))
+
+    def select_option(self, selector: str, value: str) -> None:
+        self.actions.append(("select_option", selector, value))
+
+    def check(self, selector: str) -> None:
+        self.actions.append(("check", selector))
+
+
+def _eightfold_recipes():
+    return load_ats_recipes(bundled_recipes_dir().parent)
+
+
+def _eightfold_wizard_data() -> tuple[_WizardFakePage, ApplicationData]:
+    root = captured_fixtures_root() / "custom-eightfold-wizard-20260707"
+    step1 = (root / "dom_step1.html").read_text(encoding="utf-8")
+    step2 = (root / "dom_step2.html").read_text(encoding="utf-8")
+    static = StaticAnswers(
+        full_name="Jane Doe",
+        email="jane@example.com",
+        phone="555-0100",
+        linkedin_url="https://linkedin.com/in/jane",
+        authorized_to_work_us=True,
+    )
+    narrative = _RecordingNarrative()
+    router = AnswerRouter(
+        static_answers=static,
+        narrative=narrative,
+        resume_docx_path=Path("/tmp/resume.docx"),
+    )
+    job_url = "https://symetra.eightfold.ai/careers/job/446718943971"
+    job = Job.new(
+        source_name="linkedin-search",
+        url=job_url,
+        apply_url=job_url,
+        title="Lead Data Scientist",
+        company="Symetra",
+    )
+    data = ApplicationData(
+        job_url=job_url,
+        static_answers=static,
+        tailored_resume=TailoredResume(base_name="R", job_id="abc", name="Jane Doe"),
+        resume_docx_path=Path("/tmp/resume.docx"),
+        answer_router=router,
+        job=job,
+    )
+    registry = build_driver_registry(router, narrative)
+    data = data.model_copy(
+        update={"form_composer": FormComposer(drivers=registry, data=data)}
+    )
+    page = _WizardFakePage([step1, step2])
+    return page, data
+
+
+def test_navigate_rewrites_eightfold_job_url_to_apply_shell() -> None:
+    page, data = _eightfold_wizard_data()
+    handler = GenericHandler(recipes=_eightfold_recipes())
+    handler._navigate(page, data)
+    assert (
+        "goto",
+        "https://symetra.eightfold.ai/careers/apply?pid=446718943971",
+    ) in page.actions
+
+
+def test_wizard_loop_advances_and_fills_both_steps() -> None:
+    page, data = _eightfold_wizard_data()
+    handler = GenericHandler(recipes=_eightfold_recipes())
+    handler._fill_dynamic(page, data)
+    assert ("click", "#wizard-next") in page.actions
+    assert any(a[0] == "fill" and a[1] == "#first_name" for a in page.actions)
+    assert any(a[0] == "select_option" for a in page.actions)
+    assert any(a[0] == "fill" and "interest" in str(a) for a in page.actions)
+
+
+def test_eightfold_yes_submit_clicks_submit_on_review_step() -> None:
+    page, data = _eightfold_wizard_data()
+    handler = GenericHandler(recipes=_eightfold_recipes())
+    result = handler.apply(page, data)
     assert result.state == "applied"
     assert ("click", "button[type='submit']") in page.actions
