@@ -342,6 +342,37 @@ class TestUnhandled:
         )
         assert _router().resolve(field, _job()) == ResolvedAnswer("check", check=True)
 
+    def test_consent_radio_single_option_agree_is_selected(self) -> None:
+        """Ashby / iCIMS surface acknowledgement widgets as radios with the
+        only option being 'I agree'. The consent patterns fire for radios
+        too — the router picks the affirmative option instead of falling
+        through to unhandled."""
+        field = FormField(
+            selector="#ack",
+            label="I agree",
+            kind="radio",
+            options=["I agree"],
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("select", "I agree")
+
+    def test_consent_radio_picks_agree_from_multi_option(self) -> None:
+        field = FormField(
+            selector="#expectations",
+            label="I have read and understand the expectations of working at TRM.",
+            kind="radio",
+            options=["Agree", "Disagree"],
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("select", "Agree")
+
+    def test_consent_radio_falls_through_when_no_affirmative_option(self) -> None:
+        field = FormField(
+            selector="#weird",
+            label="I acknowledge",
+            kind="radio",
+            options=["Option A", "Option B"],
+        )
+        assert _router().resolve(field, _job()).strategy == "unhandled"
+
     def test_workday_password_fields_use_static_config(self) -> None:
         answers = _default_static().model_copy(
             update={"workday_apply_password": "test-pass-123"}

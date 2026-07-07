@@ -117,14 +117,28 @@ _DEI_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bdisability\b|\bdisabled\b"), "disability_status"),
 ]
 
-_CONSENT_CHECKBOX_PATTERNS: list[re.Pattern[str]] = [
+# Consent / compliance labels — used by BOTH the checkbox and the radio/select
+# branches. Ashby, iCIMS, and some custom_careers surface acknowledgement
+# widgets as single-option radio groups ("I agree" is the only choice); the
+# router picks that option instead of leaving it unhandled.
+_CONSENT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\bconsent\b", re.IGNORECASE),
     re.compile(r"terms and conditions", re.IGNORECASE),
     re.compile(r"terms of use", re.IGNORECASE),
     re.compile(r"acknowledge the terms", re.IGNORECASE),
     re.compile(r"demographic data", re.IGNORECASE),
     re.compile(r"i agree", re.IGNORECASE),
+    re.compile(r"i accept", re.IGNORECASE),
+    re.compile(r"i acknowledge", re.IGNORECASE),
+    re.compile(r"i have read and understand", re.IGNORECASE),
 ]
+
+_CONSENT_OPTION_PHRASES: tuple[str, ...] = (
+    "agree",
+    "accept",
+    "acknowledge",
+    "yes",
+)
 
 # Optional checkboxes the operator has pre-declined — leave unchecked.
 _OPTIONAL_CHECKBOX_PATTERNS: list[tuple[re.Pattern[str], bool]] = [
@@ -209,6 +223,20 @@ class AnswerRouter:
                     if option is None:
                         return ResolvedAnswer("unhandled")
                     return ResolvedAnswer("select", option)
+            # Consent / acknowledgement radios — surface as single-option
+            # widgets on Ashby, iCIMS, and some custom_careers pages. Same
+            # semantic as the checkbox consent tier: the operator has
+            # pre-approved acknowledgement, so pick the affirmative option.
+            if any(pattern.search(label) for pattern in _CONSENT_PATTERNS):
+                for phrase in _CONSENT_OPTION_PHRASES:
+                    option = _match_option_by_substring(field.options, phrase)
+                    if option is not None:
+                        return ResolvedAnswer("select", option)
+                # Single-option radios (e.g. Ashby ["I agree"]) — take it.
+                if len(field.options) == 1:
+                    return ResolvedAnswer("select", field.options[0])
+                return ResolvedAnswer("unhandled")
+
             # DEI select / radio — pull a free-text value and match it into
             # an option, falling back to unhandled when the operator hasn't
             # set the field (many people leave DEI blank on purpose).
@@ -238,7 +266,7 @@ class AnswerRouter:
             for pattern, check in _OPTIONAL_CHECKBOX_PATTERNS:
                 if pattern.search(label):
                     return ResolvedAnswer("check", check=check)
-            if any(p.search(label) for p in _CONSENT_CHECKBOX_PATTERNS):
+            if any(p.search(label) for p in _CONSENT_PATTERNS):
                 return ResolvedAnswer("check", check=True)
             if field.selector and any(
                 p.search(field.selector) for p in _SMS_OPT_IN_PATTERNS

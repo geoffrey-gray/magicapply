@@ -2,17 +2,28 @@ platform: netflix
 match_hosts:
   - explore.jobs.netflix.net
   - jobs.netflix.com
-form_selectors:
-  - form#application-form
-  - form
-submit_selectors:
-  - button[type='submit']
-  - "button:has-text('Submit application')"
-resume_selectors:
-  - input[type='file'][name='resume']
-  - input[type='file']
+# The listing page (/careers/job/<pid>) has no <form>; a click on the
+# "Apply" button navigates to /careers/apply?pid=<pid> which hosts the
+# real multi-step application form. Previous selectors (#netflix-apply-btn,
+# a:has-text('Apply')) never matched — the real control is a <button>.
 pre_steps:
   - action: click
-    selector: "#netflix-apply-btn"
-  - action: click
-    selector: "a:has-text('Apply')"
+    selector: "button:has-text('Apply')"
+form_selectors:
+  - form
+submit_selectors:
+  - "[data-test-id='submitApplicationButton']"
+  - "button[type='submit']"
+  - "button:has-text('Submit application')"
+resume_selectors:
+  - "input[type='file'][accept*='pdf']"
+  - "input[type='file']"
+# Netflix wraps the form in a 4-step visual stepper. Next/Continue may
+# appear only after required fields on the current step are filled.
+wizard:
+  next_selectors:
+    - "button:has-text('Next')"
+    - "button:has-text('Continue')"
+    - "[data-test-id='nextButton']"
+    - "button[aria-label*='Next']"
+  max_steps: 6
