@@ -170,7 +170,13 @@ def _enrich_apply_url(
     try:
         try:
             page.goto(job.url, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(1500)
+            # LinkedIn's Apply anchor is React-rendered and can take 4-5 s to
+            # hydrate on cold pages under Chromium — 1500 ms and 3500 ms both
+            # consistently missed it (empirical: 5000 ms was the floor at
+            # which Symetra / Netflix / Hyatt / Included Health all reliably
+            # resolved). Six-second rate-limit interval already dominates the
+            # per-job cost, so the extra hydration budget is essentially free.
+            page.wait_for_timeout(5000)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "LinkedIn apply-url enrich failed for %s: %s", job.url, exc

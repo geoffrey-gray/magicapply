@@ -23,6 +23,19 @@ class SqlJobsRepository:
         with Session(self._engine) as session:
             existing = session.get(JobRow, job.id)
             if existing is not None:
+                # Backfill enrichment fields that were nullable when the row
+                # was first written but have since been populated (e.g. an
+                # older discover run stored a LinkedIn listing with no
+                # apply_url; today's run resolved the external Apply link).
+                # Never clobber existing non-null values — the row is
+                # identity-stable by design, only enrichment can fill in.
+                if existing.apply_url is None and job.apply_url:
+                    existing.apply_url = job.apply_url
+                    if job.raw:
+                        existing.raw_json = json.dumps(job.raw)
+                    session.add(existing)
+                    session.commit()
+                    session.refresh(existing)
                 return _row_to_domain(existing), False
             row = _domain_to_row(job)
             session.add(row)

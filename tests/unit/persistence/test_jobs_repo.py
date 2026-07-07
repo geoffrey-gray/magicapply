@@ -57,6 +57,47 @@ class TestUpsert:
         assert got.url == j.url
         assert got.id == j.id
 
+    def test_upsert_backfills_apply_url_on_existing_row(self, engine: Engine) -> None:
+        """A row first stored without apply_url (pre-PR1) must accept the
+        enriched URL on a later discover run — otherwise routing silently
+        falls back to the listing URL forever."""
+        repo = SqlJobsRepository(engine)
+        # First run: LinkedIn adapter yielded the job before enrichment landed.
+        stub = _job(url="https://www.linkedin.com/jobs/view/999", apply_url=None)
+        repo.upsert(stub)
+
+        # Second run: same identity, but this time enrichment resolved the
+        # external Apply link.
+        enriched = _job(
+            url="https://www.linkedin.com/jobs/view/999",
+            apply_url="https://symetra.eightfold.ai/careers/job/1",
+            raw={"platform": "eightfold", "listing_url": stub.url},
+        )
+        assert enriched.id == stub.id  # identity is URL-hash stable
+        stored, was_new = repo.upsert(enriched)
+        assert was_new is False
+        assert stored.apply_url == "https://symetra.eightfold.ai/careers/job/1"
+        assert stored.raw.get("platform") == "eightfold"
+
+    def test_upsert_does_not_clobber_existing_apply_url(self, engine: Engine) -> None:
+        """Once apply_url is set, later runs must not overwrite it (URL rot
+        should be caught by the operator, not silently corrected)."""
+        repo = SqlJobsRepository(engine)
+        original = _job(
+            url="https://www.linkedin.com/jobs/view/888",
+            apply_url="https://careers.paramount.com/job/1394334600",
+        )
+        repo.upsert(original)
+
+        # A later run resolves to a different URL (e.g. LinkedIn changed the
+        # redirect target).
+        drifted = _job(
+            url="https://www.linkedin.com/jobs/view/888",
+            apply_url="https://different.example.com/job/1",
+        )
+        stored, _ = repo.upsert(drifted)
+        assert stored.apply_url == "https://careers.paramount.com/job/1394334600"
+
 
 class TestLookup:
     def test_get_missing_returns_none(self, engine: Engine) -> None:
