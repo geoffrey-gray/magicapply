@@ -1,3 +1,127 @@
-# Custom ATS corpus manifest — operator + CI gate (PR5 seed, PR7 expands).
+# Custom ATS corpus manifest — operator + CI gate (PR7).
+#
+# Each entry represents one custom (non–big-4) apply URL we care about.
+# - `capture_dir`: promoted DOM/form.yaml bundle under tests/fixtures/captured/.
+#   Entries with a capture_dir count in the OFFLINE 80% gate.
+# - `live_gate: true`: entry participates in the live custom-ATS test when
+#   MAGICAPPLY_CUSTOM_ATS_LIVE=1. Independent of the offline gate.
+#
 # status: pending | pass | fail | skipped
-[]
+#   pass    — verified (offline via capture_dir OR live dry-run reached Submit
+#             with zero required unhandled)
+#   fail    — regressed; capture_dir present but the composable pipeline no
+#             longer clears required fields
+#   pending — known apply URL, not yet dry-run in this corpus
+#   skipped — explicitly out of scope (SSO, iframe-only, LinkedIn Easy Apply)
+#
+# Grow this file with `scripts/build_custom_ats_corpus.py` after `discover`,
+# then promote observed_forms bundles with `scripts/promote_w4_captures.py`.
+
+- id: fixture-custom-careers-20260707
+  source: e2e-fixture
+  listing_url: https://careers.example-custom.com/jobs/staff-ds
+  apply_url: https://careers.example-custom.com/jobs/staff-ds/apply
+  platform: generic
+  title: Staff Data Scientist
+  company: Example Custom Careers
+  capture_dir: tests/fixtures/captured/custom-e2e-smoke-20260707
+  live_gate: false
+  status: pass
+
+- id: fixture-symetra-eightfold-20260707
+  source: e2e-fixture
+  listing_url: https://symetra.eightfold.ai/careers?query=lead+data+scientist
+  apply_url: https://symetra.eightfold.ai/careers/apply?pid=446718943971
+  platform: eightfold
+  title: Lead Data Scientist
+  company: Symetra
+  capture_dir: tests/fixtures/captured/custom-eightfold-wizard-20260707
+  live_gate: false
+  status: pass
+
+- id: fixture-paramount-icims-20260707
+  source: e2e-fixture
+  listing_url: https://careers.paramount.com/talentcommunity/apply/1394334600
+  apply_url: https://careers.paramount.com/talentcommunity/apply/1394334600/?locale=en_US
+  platform: icims
+  title: Data Scientist
+  company: Paramount
+  capture_dir: tests/fixtures/captured/custom-icims-e2e-smoke-20260707
+  live_gate: false
+  status: pass
+
+- id: fixture-phenom-careers-20260707
+  source: e2e-fixture
+  listing_url: https://careers.example-phenom.com/us/en/job/12345
+  apply_url: https://careers.example-phenom.com/us/en/job/12345
+  platform: phenom
+  title: Senior Data Scientist
+  company: Example Phenom Careers
+  capture_dir: tests/fixtures/captured/custom-phenom-e2e-smoke-20260707
+  live_gate: false
+  status: pass
+
+- id: fixture-netflix-microsite-20260707
+  source: e2e-fixture
+  listing_url: https://explore.jobs.netflix.net/careers/job/790394752304
+  apply_url: https://explore.jobs.netflix.net/careers/job/790394752304
+  platform: netflix
+  title: Data Scientist
+  company: Netflix
+  capture_dir: tests/fixtures/captured/custom-netflix-e2e-smoke-20260707
+  live_gate: false
+  status: pass
+
+# Live seeds — populated from W.5c LinkedIn captures + plan.md §12 initial
+# corpus table. Not eligible for the offline gate until a capture is promoted;
+# gated by MAGICAPPLY_CUSTOM_ATS_LIVE=1 for the live test.
+- id: symetra-lead-ds-live-20260707
+  source: linkedin-search
+  listing_url: https://www.linkedin.com/jobs/view/4437834725
+  apply_url: https://symetra.eightfold.ai/careers/job/446718943971
+  platform: eightfold
+  title: Lead Data Scientist
+  company: Symetra
+  live_gate: true
+  status: pending
+
+- id: paramount-ds-live-20260707
+  source: linkedin-search
+  apply_url: https://careers.paramount.com/talentcommunity/apply/1394334600/?locale=en_US
+  platform: icims
+  title: Data Scientist
+  company: Paramount
+  live_gate: true
+  status: pending
+
+- id: hyatt-ds-live-20260707
+  source: linkedin-search
+  apply_url: https://careers.hyatt.com/en/jobs
+  platform: custom_careers
+  title: Data Scientist
+  company: Hyatt
+  live_gate: true
+  status: pending
+
+- id: netflix-ds-live-20260707
+  source: linkedin-search
+  apply_url: https://explore.jobs.netflix.net/careers/job/790394752304
+  platform: netflix
+  title: Data Scientist
+  company: Netflix
+  live_gate: true
+  status: pending
+
+# Documented out-of-scope example — LinkedIn Easy Apply has no external URL
+# (in-LinkedIn modal only). Excluded from every denominator; kept here so the
+# operator sees why we don't chase it.
+- id: linkedin-easy-apply-oos-20260707
+  source: linkedin-search
+  listing_url: https://www.linkedin.com/jobs/view/0000000000
+  apply_url: null
+  platform: linkedin_easy_apply
+  title: '(various)'
+  company: '(various)'
+  live_gate: false
+  status: skipped
+  skip_reason: LinkedIn Easy Apply — in-modal only, no external apply URL to route

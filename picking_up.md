@@ -27,7 +27,7 @@ This is the practical “how to run everything” guide. Architecture and the fu
 | PR4 | `514e759` | YAML `ats_recipes` + wizard loop + Eightfold |
 | PR5 | `fd07252` | Indeed/Glassdoor/job_url enrichment + corpus builder |
 | PR6 | `791c004` | Phenom, iCIMS, custom_careers, Netflix recipes + fixtures |
-| PR7 | — | **Not started** — see §6 |
+| PR7 | HEAD | 80% gate manifest + acceptance test + `custom-ats report` CLI |
 
 **Uncommitted / untracked right now:** `plan.md`, `picking_up.md`, `scratch/` (do not commit `scratch/`).
 
@@ -198,15 +198,13 @@ Phase 1 norm is `--no-submit`. Do not batch real submissions.
 - **Offline fixtures** under `tests/fixtures/captured/custom-*-e2e-smoke-20260707/`.
 - **Corpus builder** script (seeds manifest from SQLite after discover).
 
-### PR7 — still to build
+### PR7 — shipped
 
-1. Populate [`tests/corpus/custom_ats_manifest.yaml`](tests/corpus/custom_ats_manifest.yaml) with ~10 entries (currently empty `[]`).
-2. Add [`tests/acceptance/test_custom_ats_coverage.py`](tests/acceptance/test_custom_ats_coverage.py) — 80% gate: `pass_count / eligible_count >= 0.80`.
-3. Add CLI: `magicapply custom-ats report --root configs` (exit 1 if below 80%).
-4. Add runbook section in [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md).
-5. Optional: `tests/integration/e2e/test_e2e_custom_ats_live.py` gated on `MAGICAPPLY_CUSTOM_ATS_LIVE=1`.
-
-**Note:** `magicapply custom-ats` does not exist yet. Do not assume it is wired.
+1. [`tests/corpus/custom_ats_manifest.yaml`](tests/corpus/custom_ats_manifest.yaml) seeded with 10 entries.
+2. [`tests/acceptance/test_custom_ats_coverage.py`](tests/acceptance/test_custom_ats_coverage.py) — 80% offline-eligible gate + corpus-hygiene assertions.
+3. `magicapply custom-ats report --root configs` — platform/source tables, offline pass rate, top unhandled labels; exits 1 below gate.
+4. [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) §11 covers corpus growth + fix order.
+5. Live pytest driver deferred; operator drives live_gate rows via `magicapply apply <job-id> --no-submit`.
 
 ### Custom ATS commands that work today
 

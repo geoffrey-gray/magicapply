@@ -18,6 +18,7 @@ import typer
 
 from magicapply import __version__
 from magicapply.cli.commands import config as config_cmds
+from magicapply.cli.commands import custom_ats as custom_ats_cmds
 from magicapply.cli.commands import pipeline as pipeline_cmds
 from magicapply.cli.commands import profiles as profiles_cmds
 from magicapply.cli.commands import status as status_cmds
@@ -31,6 +32,7 @@ app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(config_cmds.app, name="config")
+app.add_typer(custom_ats_cmds.app, name="custom-ats")
 app.add_typer(profiles_cmds.app, name="profiles")
 app.add_typer(status_cmds.app, name="status")
 

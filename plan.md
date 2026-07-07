@@ -2,7 +2,7 @@
 
 # Custom ATS — 80% automation plan
 
-**Status (2026-07-07):** PR1–PR6 shipped on `feature/composable-forms-refactor`. PR7 (80% gate + operator tooling) in progress.
+**Status (2026-07-07):** PR1–PR7 shipped on `main`. Corpus manifest, 80% acceptance gate, and `magicapply custom-ats report` all wired.
 
 | PR | Commit | Summary |
 |----|--------|---------|
@@ -12,7 +12,7 @@
 | PR4 | `514e759` | YAML `ats_recipes` loader + wizard loop + Eightfold |
 | PR5 | `fd07252` | Indeed/Glassdoor/job_url enrichment + corpus builder |
 | PR6 | `791c004` | Phenom, iCIMS, custom_careers, Netflix recipes + fixtures |
-| PR7 | — | 80% gate + `custom-ats report` CLI + runbook |
+| PR7 | HEAD | 80% gate + `custom-ats report` CLI + runbook |
 
 ## Goal and success metric
 
@@ -265,12 +265,13 @@ Each platform: promote capture → offline regression → live dry-run → updat
 
 **Shipped fixtures:** `custom-phenom-e2e-smoke-20260707`, `custom-icims-e2e-smoke-20260707`, `custom-netflix-e2e-smoke-20260707`, `custom-eightfold-wizard-20260707`.
 
-### PR 7 — 80% gate + operator tooling (in progress)
+### PR 7 — 80% gate + operator tooling ✅
 
-- [`custom_ats_manifest.yaml`](tests/corpus/custom_ats_manifest.yaml) with initial ~10 entries (7 LinkedIn + 3 synthetic/simple)
-- [`test_custom_ats_coverage.py`](tests/acceptance/test_custom_ats_coverage.py) + `magicapply custom-ats report`
-- [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) section: custom ATS triage, corpus promotion, 80% gate
-- Update [`final_dod_plan.md`](final_dod_plan.md) Phase 2 section or new `custom_ats_plan.md` pointer
+- [`custom_ats_manifest.yaml`](tests/corpus/custom_ats_manifest.yaml) seeded with 10 entries (5 offline-fixture passes + 4 live-gated LinkedIn pending + 1 documented skipped).
+- [`test_custom_ats_coverage.py`](tests/acceptance/test_custom_ats_coverage.py) enforces `pass / (pass + fail) >= 0.80` on offline-eligible rows plus corpus-hygiene assertions.
+- `magicapply custom-ats report --root configs` prints platform/source tables, the current offline pass rate, and top unhandled labels from `data/answer_proposals.yaml`; exits 1 below gate.
+- [`docs/OPERATOR_RUNBOOK.md`](docs/OPERATOR_RUNBOOK.md) §11 documents corpus growth, report interpretation, and the fix-order tree.
+- Live pytest driver deferred to Phase 2 — operator exercises live_gate rows via the standard `magicapply apply` loop.
 
 ---
 
@@ -346,4 +347,4 @@ Target: **8 custom entries**, **6 pass** = 75% → iterate to **≥80%** with Ei
 - [x] **pr4-wizard-recipes** — PR4: YAML ats_recipes loader + generic wizard loop + Eightfold/Symetra capture regression
 - [x] **pr5-source-enrich** — PR5: Indeed/Glassdoor/job_url apply-url enrichment + corpus builder script
 - [x] **pr6-platform-expand** — PR6: Data-driven platform recipes (Phenom, iCIMS, employer overrides) until manifest grows
-- [ ] **pr7-80-gate** — PR7: custom_ats_manifest.yaml + acceptance test (80% gate) + magicapply custom-ats report + runbook
+- [x] **pr7-80-gate** — PR7: custom_ats_manifest.yaml + acceptance test (80% gate) + magicapply custom-ats report + runbook

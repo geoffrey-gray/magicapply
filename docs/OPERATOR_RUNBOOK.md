@@ -223,3 +223,109 @@ uv run pytest tests/integration/e2e/test_e2e_local.py -q   # slow
 - LinkedIn as primary discovery once `li_at` is wired.
 
 See `final_dod_plan.md` §2 and §4 for scope boundaries.
+
+---
+
+## 11. Custom ATS corpus and 80% gate
+
+The custom (non–big-4) apply stack is measured by a versioned manifest at
+[`tests/corpus/custom_ats_manifest.yaml`](../tests/corpus/custom_ats_manifest.yaml).
+Each row represents one custom apply URL and its verification status.
+
+### Manifest fields
+
+| Field | Meaning |
+|-------|---------|
+| `id` | Stable slug (e.g. `symetra-lead-ds-20260707`) |
+| `source` | Discovery source (`linkedin-search`, `indeed-search`, `e2e-fixture`, …) |
+| `listing_url` | Original listing URL (LinkedIn view page, career page, …) |
+| `apply_url` | External apply destination after enrichment |
+| `platform` | Sniffed family: `eightfold`, `phenom`, `icims`, `netflix`, `custom_careers`, `generic`, … |
+| `capture_dir` | Optional path to promoted fixture (`tests/fixtures/captured/custom-*`) |
+| `live_gate` | `true` if the entry participates in the live dry-run test |
+| `status` | `pass` / `fail` / `pending` / `skipped` |
+| `skip_reason` | Required when `status: skipped` |
+
+### Grow the corpus
+
+```bash
+# 1. Discover jobs from all sources — apply URL enrichment runs at discover time.
+uv run magicapply discover staff-ds --root configs
+
+# 2. Seed / merge manifest rows for non–big-4 apply URLs. Operator `status`
+#    and `capture_dir` on existing rows are preserved.
+uv run python scripts/build_custom_ats_corpus.py
+
+#    Preview counts without writing:
+uv run python scripts/build_custom_ats_corpus.py --dry-run
+
+# 3. Dry-run apply for a pending entry.
+uv run magicapply apply <job-id> --root configs --no-submit
+
+# 4. Promote the observed_forms bundle into a regression fixture.
+uv run python scripts/promote_w4_captures.py --data-dir data
+
+# 5. Flip the manifest row to `status: pass` and point `capture_dir` at the
+#    new `tests/fixtures/captured/custom-<slug>-<date>/` directory.
+```
+
+### Report card
+
+```bash
+uv run magicapply custom-ats report --root configs
+```
+
+Prints entries grouped by platform and by source, the current offline pass
+rate over rows with a real `capture_dir` on disk, and the top unhandled
+screening-question labels aggregated from `data/answer_proposals.yaml`.
+Exit code `1` when the offline pass rate is below **80%** (see
+[`plan.md`](../plan.md) §6).
+
+### The 80% gate
+
+Two enforcement points:
+
+| Where | Kind | Command |
+|-------|------|---------|
+| CI / `tests/acceptance/` | Offline manifest gate (deterministic) | `uv run pytest tests/acceptance/test_custom_ats_coverage.py -q` |
+| Operator ad-hoc | Same rate + top unhandled labels | `uv run magicapply custom-ats report --root configs` |
+
+Both compute `pass / (pass + fail)` over rows whose `capture_dir` resolves to
+an existing directory. Pending rows without a capture do **not** count in
+the denominator — they represent known custom apply URLs waiting for a live
+dry-run.
+
+### Fix order when a row is `fail`
+
+Same triage tree as §6, applied to the specific `capture_dir`:
+
+1. **Router pattern** — extend regex tables in `answer_router.py` (identity /
+   yes-no / DEI). Cheapest fix; benefits every ATS.
+2. **Answer library** — verified entry in `configs/answer_library.yaml`.
+3. **Scan** — extend `form_scan.py` variant detection when a widget slips
+   through as `unhandled`.
+4. **Recipe** — add or refine a YAML file under `configs/ats_recipes/`
+   (platform recipe) or `configs/ats_recipes/employers/<slug>.yaml`
+   (employer override). Config over code.
+5. **Family handler** — only if ≥3 rows for the same platform share a
+   quirk that recipes can't express. Subclass `GenericHandler`; do not
+   duplicate the Template Method.
+
+After the fix: re-run apply against the affected `apply_url`, refresh the
+capture, run `test_capture_regression.py` + `test_custom_ats_coverage.py`,
+flip the manifest row to `pass`.
+
+### Live-gated rows
+
+`live_gate: true` marks rows the operator wants exercised against the real
+apply URL. Walk them one at a time with the standard apply command:
+
+```bash
+uv run magicapply apply <job-id> --root configs --no-submit
+```
+
+Always dry-run in Phase 1. After the run, promote the observed_forms
+bundle, flip the manifest row to `pass`, and re-run the acceptance test.
+A dedicated live pytest driver is Phase 2. Skipped entries (e.g. LinkedIn
+Easy Apply) are excluded from every denominator; document the reason in
+`skip_reason`.
