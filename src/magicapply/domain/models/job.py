@@ -78,7 +78,8 @@ class Job(BaseModel):
 
     id: str
     source_name: str
-    url: str  # canonical
+    url: str  # canonical listing / discovery URL (identity + dedup)
+    apply_url: str | None = None  # canonical external apply destination when known
     title: str
     company: str
     location: str | None = None
@@ -86,6 +87,11 @@ class Job(BaseModel):
     posted_at: datetime | None = None
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     raw: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def effective_apply_url(self) -> str:
+        """URL passed to ATS handlers — external apply link when enriched."""
+        return self.apply_url or self.url
 
     @classmethod
     def new(
@@ -95,6 +101,7 @@ class Job(BaseModel):
         url: str,
         title: str,
         company: str,
+        apply_url: str | None = None,
         description: str = "",
         location: str | None = None,
         posted_at: datetime | None = None,
@@ -102,10 +109,12 @@ class Job(BaseModel):
     ) -> Job:
         """Build a Job from raw discovery inputs, canonicalizing url and deriving id."""
         canonical = canonicalize_url(url)
+        canonical_apply = canonicalize_url(apply_url) if apply_url else None
         return cls(
             id=hash_url(canonical),
             source_name=source_name,
             url=canonical,
+            apply_url=canonical_apply,
             title=title,
             company=company,
             description=description,

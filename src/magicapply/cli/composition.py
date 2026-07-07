@@ -197,13 +197,17 @@ def build_application_data(
     data_dir = loaded.data_dir()
     workday_store = None
     static_answers = loaded.base.static_answers
-    if "myworkdayjobs.com" in job.url.lower() or ".myworkday.com" in job.url.lower():
+    apply_target = job.effective_apply_url
+    if (
+        "myworkdayjobs.com" in apply_target.lower()
+        or ".myworkday.com" in apply_target.lower()
+    ):
         from magicapply.infrastructure.browser.ats.workday_accounts import (
             WorkdayAccountStore,
         )
 
         workday_store = WorkdayAccountStore(WorkdayAccountStore.default_path(data_dir))
-        tenant = WorkdayAccountStore.tenant_from_url(job.url)
+        tenant = WorkdayAccountStore.tenant_from_url(apply_target)
         stored = workday_store.get(tenant)
         effective_password = (
             stored.password
@@ -221,7 +225,7 @@ def build_application_data(
         answer_library=loaded.answer_library,
     )
     data = ApplicationData(
-        job_url=job.url,
+        job_url=apply_target,
         static_answers=static_answers,
         tailored_resume=tailored,
         resume_docx_path=resume_docx,

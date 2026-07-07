@@ -86,3 +86,27 @@ class TestJob:
     def test_discovered_at_is_utc(self) -> None:
         j = Job.new(source_name="s", url="https://a.com/1", title="t", company="c")
         assert j.discovered_at.tzinfo is not None
+
+    def test_apply_url_canonicalized_separately_from_listing(self) -> None:
+        listing = "https://www.linkedin.com/jobs/view/4432714211"
+        apply = (
+            "https://homedepot.wd5.myworkdayjobs.com/CareerDepot/job/Req185496"
+            "?utm_source=LinkedIn"
+        )
+        j = Job.new(
+            source_name="linkedin-search",
+            url=listing,
+            apply_url=apply,
+            title="Data Science Manager",
+            company="The Home Depot",
+        )
+        assert j.url == listing
+        assert j.apply_url == (
+            "https://homedepot.wd5.myworkdayjobs.com/CareerDepot/job/Req185496"
+        )
+        assert j.id == hash_url(listing)
+        assert j.effective_apply_url == j.apply_url
+
+    def test_effective_apply_url_falls_back_to_listing(self) -> None:
+        j = Job.new(source_name="s", url="https://a.com/1", title="t", company="c")
+        assert j.effective_apply_url == j.url

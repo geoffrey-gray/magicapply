@@ -44,6 +44,19 @@ class TestUpsert:
         assert got is not None
         assert got.raw == {"posted_by": "bot", "tags": ["remote", "python"]}
 
+    def test_apply_url_roundtrip(self, engine: Engine) -> None:
+        repo = SqlJobsRepository(engine)
+        j = _job(
+            url="https://www.linkedin.com/jobs/view/123",
+            apply_url="https://homedepot.wd5.myworkdayjobs.com/CareerDepot/job/1",
+        )
+        repo.upsert(j)
+        got = repo.get(j.id)
+        assert got is not None
+        assert got.apply_url == j.apply_url
+        assert got.url == j.url
+        assert got.id == j.id
+
 
 class TestLookup:
     def test_get_missing_returns_none(self, engine: Engine) -> None:

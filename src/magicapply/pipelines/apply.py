@@ -96,11 +96,12 @@ class ApplyPipeline:
                 "cannot re-apply a real submission; only dry-run rows support --retry"
             )
 
-        handler = ATSHandlerFactory.for_url(job.url)
+        apply_target = job.effective_apply_url
+        handler = ATSHandlerFactory.for_url(apply_target)
         if handler is None:
             application.transition_to(
                 ApplicationState.FAILED,
-                reason=f"no ATS handler for URL: {job.url}",
+                reason=f"no ATS handler for URL: {apply_target}",
             )
             application.error = "unsupported ATS"
             application.attempts += 1

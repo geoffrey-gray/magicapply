@@ -19,6 +19,7 @@ class JobRow(SQLModel, table=True):
     id: str = Field(primary_key=True)
     source_name: str = Field(index=True)
     url: str = Field(index=True)
+    apply_url: str | None = Field(default=None)
     dedup_key: str = Field(index=True)
     title: str
     company: str
