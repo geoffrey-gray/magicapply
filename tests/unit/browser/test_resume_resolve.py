@@ -21,7 +21,12 @@ def _data() -> ApplicationData:
         job_id="abc",
         name="Jane Doe",
         education=[
-            EducationEntry(school="University of South Florida", degree="PhD", graduated="2018")
+            EducationEntry(
+                school="University of South Florida",
+                degree="PhD",
+                field="Computational Chemistry",
+                graduated="2018",
+            )
         ],
         experience=[
             ExperienceEntry(
