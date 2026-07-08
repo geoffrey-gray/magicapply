@@ -12,10 +12,13 @@ structurally.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
+
+_logger = logging.getLogger(__name__)
 
 from magicapply.config.models import StaticAnswers
 from magicapply.domain.models.resume import TailoredResume
@@ -131,17 +134,31 @@ class BaseATSHandler:
         raise NotImplementedError("subclass must override matches")
 
     def apply(self, page: PageDriver, data: ApplicationData) -> ApplicationResult:
+        import os
+        import time as _time
+        _trace = os.environ.get("MAGICAPPLY_TRACE_COMPOSER") == "1"
+        _t0 = _time.monotonic()
+
+        def _step(label: str) -> None:
+            if _trace:
+                _logger.warning("[trace] step=%s at %.2fs", label, _time.monotonic() - _t0)
+
         try:
+            _step("navigate.start")
             self._navigate(page, data)
+            _step("navigate.done")
             blocking = detect_blocking_captcha(page.content())
             if blocking:
                 return ApplicationResult(
                     state="needs_intervention",
                     error=f"CAPTCHA detected on load: {blocking}",
                 )
-
+            _step("fill_static.start")
             self._fill_static(page, data)
+            _step("fill_static.done")
+            _step("fill_dynamic.start")
             self._fill_dynamic(page, data)
+            _step("fill_dynamic.done")
 
             # W.3: persist a per-form observation record. Template Method
             # invariant — every ATS handler inherits this without
@@ -150,6 +167,7 @@ class BaseATSHandler:
             # the yaml once + append narrative/unhandled entries to
             # data/answer_proposals.yaml.
             if data.data_dir is not None and data.resolutions_log:
+                _step("log_observed_form.start")
                 from magicapply.infrastructure.browser.ats.observed_form_log import (
                     log_observed_form,
                 )
@@ -164,6 +182,7 @@ class BaseATSHandler:
                     data_dir=data.data_dir,
                     page=page,
                 )
+                _step("log_observed_form.done")
 
             if not data.dry_run:
                 captcha = detect_captcha(page.content())

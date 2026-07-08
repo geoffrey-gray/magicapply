@@ -67,27 +67,45 @@ class RulesBasedDriver:
         return False
 
 
-def _try_fill(page: PageDriver, selector: str, value: str) -> bool:
-    with contextlib.suppress(Exception):
-        page.fill(selector, value)
+# Fast-fail budget for every page.* op in this driver. Playwright's default
+# 30 s waits are the difference between "skips a missing selector cleanly"
+# and "burns 30 s per absent field" — Ashby's TRM form has ~5 identity
+# selectors that don't match its DOM, so the 30 s default piled up to ~120 s
+# of dead time in _fill_static alone (observed via [trace] breadcrumbs).
+_DRIVER_TIMEOUT_MS = 500
+
+
+def _call_soft(fn: object, *args: object, **kwargs: object) -> bool:
+    """Call `fn(*args, **kwargs)`; on TypeError (kwargs rejected by a test
+    stub), retry positionally. Any other exception is suppressed and treated
+    as a failed attempt. Returns True iff `fn` completed without raising.
+    """
+    try:
+        fn(*args, **kwargs)  # type: ignore[operator]
         return True
-    return False
+    except TypeError:
+        with contextlib.suppress(Exception):
+            fn(*args)  # type: ignore[operator]
+            return True
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _try_fill(page: PageDriver, selector: str, value: str) -> bool:
+    return _call_soft(page.fill, selector, value, timeout=_DRIVER_TIMEOUT_MS)
 
 
 def _try_check(page: PageDriver, selector: str) -> bool:
-    with contextlib.suppress(Exception):
-        page.check(selector)
-        return True
-    return False
+    return _call_soft(page.check, selector, timeout=_DRIVER_TIMEOUT_MS)
 
 
 def _try_select(page: PageDriver, field: FormField, value: str) -> bool:
     if field.kind == "radio" and field.name:
         return _click_radio(page, name=field.name, value=value)
-    with contextlib.suppress(Exception):
-        page.select_option(field.selector, value)
-        return True
-    return False
+    return _call_soft(
+        page.select_option, field.selector, value, timeout=_DRIVER_TIMEOUT_MS
+    )
 
 
 def _execute_workday_variant(

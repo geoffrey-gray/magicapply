@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import time
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
+
+_TRACE = os.environ.get("MAGICAPPLY_TRACE_COMPOSER") == "1"
 
 from magicapply.infrastructure.browser.ats.base import ApplicationData, PageDriver
 
@@ -31,9 +38,21 @@ class FormComposer:
         if job is None:
             return FillReport()
 
+        if _TRACE:
+            logger.warning(
+                "[trace] composer.fill start: schema=%s ats=%s field_count=%d",
+                schema.schema_id, schema.ats, len(schema.fields),
+            )
         report = FillReport()
-        for field in schema.fields:
+        for idx, field in enumerate(schema.fields):
+            step_t0 = time.monotonic() if _TRACE else 0.0
             if _already_filled(page, field):
+                if _TRACE:
+                    logger.warning(
+                        "[trace] field %d/%d SKIP (already filled) label=%r kind=%s in %.2fs",
+                        idx + 1, len(schema.fields), field.label, field.kind,
+                        time.monotonic() - step_t0,
+                    )
                 report.skipped.append(field.label)
                 continue
 
@@ -49,13 +68,36 @@ class FormComposer:
 
             strategy = resolved.strategy
             if strategy == "unhandled" and not _recipe_driven(field):
+                if _TRACE:
+                    logger.warning(
+                        "[trace] field %d/%d UNHANDLED label=%r in %.2fs",
+                        idx + 1, len(schema.fields), field.label,
+                        time.monotonic() - step_t0,
+                    )
                 report.unhandled.append(field.label)
                 continue
 
             if not driver.execute(page, field, resolved):
                 if strategy != "file":
                     report.errors.append(field.label)
+                if _TRACE:
+                    logger.warning(
+                        "[trace] field %d/%d EXECUTE FAILED strategy=%s label=%r in %.2fs",
+                        idx + 1, len(schema.fields), strategy, field.label,
+                        time.monotonic() - step_t0,
+                    )
+            elif _TRACE:
+                logger.warning(
+                    "[trace] field %d/%d ok strategy=%s label=%r in %.2fs",
+                    idx + 1, len(schema.fields), strategy, field.label,
+                    time.monotonic() - step_t0,
+                )
 
+        if _TRACE:
+            logger.warning(
+                "[trace] composer.fill done: unhandled=%d errors=%d skipped=%d",
+                len(report.unhandled), len(report.errors), len(report.skipped),
+            )
         return report
 
     def fill_scanned(
@@ -67,7 +109,15 @@ class FormComposer:
         step_id: str | None = None,
         schema_id: str | None = None,
     ) -> FillReport:
+        if _TRACE:
+            t0 = time.monotonic()
+            logger.warning("[trace] scan_form start selector=%r", form_selector)
         fields = scan_form(page, form_selector=form_selector)
+        if _TRACE:
+            logger.warning(
+                "[trace] scan_form done: %d fields in %.2fs",
+                len(fields), time.monotonic() - t0,
+            )
         if step_id:
             for f in fields:
                 f.step_id = step_id

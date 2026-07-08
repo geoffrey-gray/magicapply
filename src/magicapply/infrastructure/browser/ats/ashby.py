@@ -51,23 +51,22 @@ class AshbyHandler(BaseATSHandler):
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers
-        # Ashby also uses a single full-name field.
-        with contextlib.suppress(Exception):
-            page.fill("input[name='_systemfield_name']", answers.full_name)
-        with contextlib.suppress(Exception):
-            page.fill("input[name='_systemfield_email']", answers.email)
+        # Fast-fail — Ashby's system-field selectors don't match every
+        # tenant's DOM (e.g. TRM Labs uses UUID-scoped input names). The
+        # default Playwright 30 s wait per miss piled up to ~120 s of dead
+        # time in this method; the composer's scan-fill loop covers the
+        # same identity fields on the second pass anyway.
+        _fill = _fast_fill
+        _fill(page, "input[name='_systemfield_name']", answers.full_name)
+        _fill(page, "input[name='_systemfield_email']", answers.email)
         if answers.phone:
-            with contextlib.suppress(Exception):
-                page.fill("input[name='_systemfield_phone']", answers.phone)
+            _fill(page, "input[name='_systemfield_phone']", answers.phone)
         if answers.linkedin_url:
-            with contextlib.suppress(Exception):
-                page.fill("input[name='_systemfield_linkedin']", answers.linkedin_url)
+            _fill(page, "input[name='_systemfield_linkedin']", answers.linkedin_url)
         if answers.portfolio_url:
-            with contextlib.suppress(Exception):
-                page.fill("input[name='_systemfield_website']", answers.portfolio_url)
+            _fill(page, "input[name='_systemfield_website']", answers.portfolio_url)
         if answers.location:
-            with contextlib.suppress(Exception):
-                page.fill("input[name='_systemfield_location']", answers.location)
+            _fill(page, "input[name='_systemfield_location']", answers.location)
 
     def _fill_dynamic(self, page: PageDriver, data: ApplicationData) -> None:
         # Resume upload. Ashby's real file input is hidden behind a
@@ -92,3 +91,22 @@ class AshbyHandler(BaseATSHandler):
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
         page.click("button[type='submit']")
+
+
+_FAST_FILL_TIMEOUT_MS = 500
+
+
+def _fast_fill(page: PageDriver, selector: str, value: str) -> None:
+    """`page.fill(...)` with a 500 ms cap so a missing selector doesn't
+    burn Playwright's 30 s default. Silences the miss like the old
+    `contextlib.suppress(Exception)` did — the composer's scan-fill loop
+    will still handle any identity field with a different DOM name. Falls
+    back to a positional call when the page stub rejects the timeout
+    kwarg (test-only path)."""
+    try:
+        page.fill(selector, value, timeout=_FAST_FILL_TIMEOUT_MS)  # type: ignore[call-arg]
+    except TypeError:
+        with contextlib.suppress(Exception):
+            page.fill(selector, value)
+    except Exception:  # noqa: BLE001
+        pass
