@@ -1,0 +1,118 @@
+# MagicApply — AnswerRouter regex rules
+#
+# This file is the package-resource default consumed by
+# `RouterRules.load_default()` at `src/magicapply/config/router_rules.py`.
+# Operators can override any subset by dropping a `router_rules.yaml`
+# into their config root (loader picks that up in `LoadedConfig`).
+#
+# CASE-SENSITIVITY: the router lowercases `field.label` at match time
+# (`answer_router.py::AnswerRouter.resolve`). Label-matched regexes therefore
+# do not need `flags: [IGNORECASE]`. The `sms_opt_in` section matches against
+# `field.selector` (not lowercased), which is why those entries carry
+# IGNORECASE. `flags: [IGNORECASE]` is preserved verbatim for the historical
+# entries that had it, so parity with the pre-migration constants holds even
+# though it is technically redundant for label matches.
+#
+# Order matters within each list — the router uses first-match-wins. Do not
+# reorder without updating the corresponding tests.
+
+version: 1
+
+# (regex, StaticAnswers attr). Populates text/textarea identity fills.
+identity:
+  - {pattern: '\bfirst[\s-]*name\b', attr: _first_name}
+  - {pattern: '\blast[\s-]*name\b|\bfamily[\s-]*name\b|\bsurname\b', attr: _last_name}
+  - {pattern: '\bfull[\s-]*name\b|^name$', attr: full_name}
+  - {pattern: '\bemail\b', attr: email}
+  - {pattern: '\bverify\b.*\bpassword\b|\bconfirm\b.*\bpassword\b', attr: workday_apply_password}
+  - {pattern: '\bpassword\b', attr: workday_apply_password}
+  - {pattern: 'phone\s*number|phone\s*extension|\btelephone\b|\bmobile\b|^phone$', attr: phone}
+  - {pattern: '\blinkedin\b', attr: linkedin_url}
+  - {pattern: '\bgithub\b', attr: github_url}
+  - {pattern: '\bportfolio\b|\bwebsite\b|\bpersonal\s+site\b', attr: portfolio_url}
+  - {pattern: '\blocation\b', attr: location}
+  - {pattern: '^city\b|\bcity\*', attr: city}
+  - {pattern: 'address\s*line\s*1|street\s*address', attr: address_line_1}
+  - {pattern: 'postal\s*code|zip\s*code', attr: postal_code}
+  - {pattern: 'country\s+phone\s+code|phone\s+country\s+code', attr: country_phone_code}
+  - {pattern: 'phone\s+device\s+type|device\s+type', attr: phone_device_type}
+  - {pattern: '^state\b|\bstate\*', attr: state}
+  - {pattern: '\bcountry\b', attr: country}
+  - {pattern: 'current.*company|most recent.*company|most recent.*employer', attr: current_employer}
+  - {pattern: '\byears?\s+of\s+experience\b', attr: years_of_experience}
+  - {pattern: '\bdesired\s+salary\b|\bsalary\s+expectation\b|\bcompensation\b', attr: desired_salary}
+  - {pattern: '\bwork\s+authorization\b', attr: work_authorization}
+
+# (regex, StaticAnswers bool attr). Feeds select / radio / checkbox yes-no.
+yes_no:
+  - {pattern: 'authori[sz]ed\s+to\s+work', attr: authorized_to_work_us}
+  - {pattern: 'legally\s+authori[sz]ed\s+to\s+work', attr: authorized_to_work_us}
+  - {pattern: 'eligible to work.*sponsorship', attr: authorized_to_work_us, flags: [IGNORECASE]}
+  - {pattern: 'require\s+sponsorship|need\s+sponsorship|require\s+visa', attr: needs_sponsorship_us}
+  - {pattern: 'previously\s+(?:worked|been\s+employed|employed)', attr: previously_employed}
+  - {pattern: 'hispanic|latino|latin[a-z]', attr: hispanic_latino}
+  - {pattern: 'located in the united states', attr: _us_located, flags: [IGNORECASE]}
+
+# (regex, StaticAnswers free-text attr). DEI select/radio options.
+dei:
+  - {pattern: '\bgender\b', attr: gender}
+  - {pattern: '\brace\b|\bethnicity\b', attr: ethnicity}
+  - {pattern: '\bveteran\b', attr: veteran_status}
+  - {pattern: '\bdisability\b|\bdisabled\b', attr: disability_status}
+
+# Consent / acknowledgement — fires for BOTH checkbox and radio/select.
+consent:
+  patterns:
+    - {pattern: '\bconsent\b', flags: [IGNORECASE]}
+    - {pattern: 'terms and conditions', flags: [IGNORECASE]}
+    - {pattern: 'terms of use', flags: [IGNORECASE]}
+    - {pattern: 'acknowledge the terms', flags: [IGNORECASE]}
+    - {pattern: 'demographic data', flags: [IGNORECASE]}
+    - {pattern: 'i agree', flags: [IGNORECASE]}
+    - {pattern: 'i accept', flags: [IGNORECASE]}
+    - {pattern: 'i acknowledge', flags: [IGNORECASE]}
+    - {pattern: 'i have read and understand', flags: [IGNORECASE]}
+  # For radio/select consent widgets, prefer an option whose text contains
+  # one of these phrases (in order). Falls through to the sole option when
+  # the widget is a single-choice acknowledgement (Ashby / iCIMS shape).
+  option_phrases: ["agree", "accept", "acknowledge", "yes"]
+
+# Optional checkboxes the operator has pre-declined — leave unchecked.
+optional_checkbox:
+  - {pattern: 'preferred\s+name', flags: [IGNORECASE], check: false}
+
+# Selector-matched (not label-matched). SMS opt-in checkbox on Workday.
+sms_opt_in:
+  - {pattern: 'phone-sms-opt-in', flags: [IGNORECASE]}
+  - {pattern: 'sms\s+opt', flags: [IGNORECASE]}
+
+# Labels the router must NOT try to fill because the handler owns them
+# (Workday multiselects filled by workday_widgets; page.fill() from the
+# router would corrupt the React state). Phase B (this branch) moves the
+# widget-type entries onto variant-based skip; this list keeps the
+# genuinely label-based context patterns that aren't tied to a variant.
+handler_owned_widget:
+  - {pattern: 'how\s+did\s+you\s+hear', flags: [IGNORECASE]}
+  - {pattern: 'country\s+phone\s+code', flags: [IGNORECASE]}
+  - {pattern: 'selfidentif|disability', flags: [IGNORECASE]}
+  - {pattern: 'authori[sz]ed\s+to\s+work', flags: [IGNORECASE]}
+  - {pattern: 'require\s+visa\s+sponsorship', flags: [IGNORECASE]}
+
+# Variants the router refuses to touch because a handler recipe owns them.
+# Belt-and-braces with `handler_owned_widget` above: the label regex catches
+# scan-path fields (variant may not be set), the variant list catches
+# recipe-derived fields with explicit typing. Either alone is sufficient
+# to skip — both are safe.
+handler_owned_variants:
+  - workday_listbox
+  - workday_multiselect
+  - workday_date_spin
+
+# Special-case single regexes referenced directly in `resolve()`.
+experience_years:
+  pattern: '(\d+)\+?\s*years.*(?:data science|professional)'
+  flags: [IGNORECASE]
+
+skill_screening:
+  pattern: '(?:do you have|are you expert).*(?:experience|expert|deep|production-level|python)'
+  flags: [IGNORECASE]

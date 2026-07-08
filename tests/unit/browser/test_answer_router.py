@@ -373,6 +373,42 @@ class TestUnhandled:
         )
         assert _router().resolve(field, _job()).strategy == "unhandled"
 
+    def test_workday_variant_skipped_even_with_matchable_label(self) -> None:
+        """Variant-based skip fires before any pattern lookup. A scan-derived
+        Workday listbox with a label the identity/yes-no tier would happily
+        match must still be left alone — the handler recipe owns it and
+        `page.fill()` would corrupt the widget state."""
+        field = FormField(
+            selector="#authorizedToWork",
+            label="Email",  # would normally hit _IDENTITY_PATTERNS
+            kind="select",
+            variant="workday_listbox",
+        )
+        assert _router().resolve(field, _job()).strategy == "unhandled"
+
+    def test_workday_multiselect_variant_skipped(self) -> None:
+        field = FormField(
+            selector="#ethnicity",
+            label="Ethnicity",  # would normally hit _DEI_PATTERNS
+            kind="select",
+            variant="workday_multiselect",
+            options=["Asian", "White"],
+        )
+        assert _router().resolve(field, _job()).strategy == "unhandled"
+
+    def test_non_workday_variant_still_resolves_normally(self) -> None:
+        """Sanity — the variant-skip must not bleed into ordinary text/select
+        fields."""
+        field = FormField(
+            selector="#email",
+            label="Email",
+            kind="text",
+            variant="text",
+        )
+        result = _router().resolve(field, _job())
+        assert result.strategy == "static"
+        assert "@" in result.value
+
     def test_workday_password_fields_use_static_config(self) -> None:
         answers = _default_static().model_copy(
             update={"workday_apply_password": "test-pass-123"}

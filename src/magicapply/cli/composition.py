@@ -223,6 +223,7 @@ def build_application_data(
         narrative=build_narrative(loaded, profile),
         resume_docx_path=resume_docx,
         answer_library=loaded.answer_library,
+        router_rules=loaded.router_rules,
     )
     data = ApplicationData(
         job_url=apply_target,

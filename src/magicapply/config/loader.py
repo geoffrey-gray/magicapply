@@ -16,11 +16,13 @@ from magicapply.config.models import (
     Profile,
     PromptsConfig,
 )
+from magicapply.config.router_rules import RouterRules
 
 BASE_CONFIG_FILENAME = "base_config.yaml"
 PROMPTS_FILENAME = "prompts.yaml"
 KEYWORD_BANK_FILENAME = "keyword_bank.yaml"
 ANSWER_LIBRARY_FILENAME = "answer_library.yaml"
+ROUTER_RULES_FILENAME = "router_rules.yaml"
 PROFILES_DIRNAME = "profiles"
 
 
@@ -39,6 +41,7 @@ class LoadedConfig:
     prompts: PromptsConfig
     keyword_bank: KeywordBank
     answer_library: AnswerLibrary
+    router_rules: RouterRules
     root: Path
 
     def resumes_dir(self) -> Path:
@@ -85,6 +88,7 @@ def load_config(root: Path) -> LoadedConfig:
     prompts = _load_prompts(root)
     keyword_bank = _load_keyword_bank(root)
     answer_library = _load_answer_library(root)
+    router_rules = _load_router_rules(root)
     _validate_cross_refs(base, profiles, root)
     return LoadedConfig(
         base=base,
@@ -92,6 +96,7 @@ def load_config(root: Path) -> LoadedConfig:
         prompts=prompts,
         keyword_bank=keyword_bank,
         answer_library=answer_library,
+        router_rules=router_rules,
         root=root,
     )
 
@@ -145,6 +150,20 @@ def _load_answer_library(root: Path) -> AnswerLibrary:
         return AnswerLibrary.model_validate(raw)
     except ValidationError as exc:
         raise ConfigError(f"invalid answer library {path}:\n{exc}") from exc
+
+
+def _load_router_rules(root: Path) -> RouterRules:
+    """Operator override at ``<root>/router_rules.yaml`` if present, else the
+    package-resource default. The package default is authoritative — the
+    operator file replaces it wholesale (not merged), so operators should
+    start from a copy rather than a blank file."""
+    path = root / ROUTER_RULES_FILENAME
+    if not path.exists():
+        return RouterRules.load_default()
+    try:
+        return RouterRules.load_from_yaml(path.read_text(encoding="utf-8"))
+    except (ValidationError, ValueError) as exc:
+        raise ConfigError(f"invalid router rules {path}:\n{exc}") from exc
 
 
 def _load_profiles(root: Path) -> dict[str, Profile]:

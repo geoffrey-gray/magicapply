@@ -212,6 +212,7 @@ MagicApply is designed to be **highly configurable**. The following should live 
 - Scoring thresholds and filters
 - Keyword banks
 - ATS-specific behavior preferences
+- **Router regex tables** — identity / yes-no / DEI / consent / handler-owned patterns live in `src/magicapply/infrastructure/browser/ats/resources/router_rules.yaml` (package default). Operators override by dropping a `router_rules.yaml` into their config root.
 
 ---
 

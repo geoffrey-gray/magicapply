@@ -31,13 +31,13 @@ Greenhouse uses this path almost exclusively. Workday layers **additional impera
 
 Real ATS verification (W.4) exposed recurring failure modes:
 
-1. **Handler-owned branching grows without bound.** Each new employer quirk adds another `_fill_workday_*` function or widens regex tables in `AnswerRouter`. Logic is scattered across handler files, router tiers, and widget helpers with no single composition model.
+1. **Handler-owned branching grows without bound.** Each new employer quirk adds another `_fill_workday_*` function or widens regex tables in `AnswerRouter`. Logic is scattered across handler files, router tiers, and widget helpers with no single composition model. *(Router regex tables now live in `router_rules.yaml` — see §2.6; adding a new employer quirk is a YAML edit, no code change.)*
 
 2. **Scan output and fill logic are decoupled.** `FormField` describes *what* was found; handlers decide *how* to fill via parallel code paths. The observation log records resolutions, but there is no schema that says "this step has these fields in this order with these drivers."
 
 3. **Rules and LLM are fused in one imperative method.** `AnswerRouter.resolve()` is a six-tier imperative chain (static → library → yes/no → DEI → narrative → unhandled). The CoR-threshold note in `answer_router.py` acknowledges this will not scale — but a full Chain of Responsibility with seven sibling classes would violate extend-don't-multiply.
 
-4. **Widget fields are special-cased by regex.** `_HANDLER_OWNED_WIDGET_PATTERNS` marks fields the router must skip. This prevents corruption (e.g., `page.fill()` on a Workday multiselect) but encodes ATS knowledge as negative regex guards rather than explicit field typing.
+4. **Widget fields are special-cased by regex.** `_HANDLER_OWNED_WIDGET_PATTERNS` marks fields the router must skip. This prevents corruption (e.g., `page.fill()` on a Workday multiselect) but encodes ATS knowledge as negative regex guards rather than explicit field typing. *(Partly addressed: `router_rules.yaml::handler_owned_variants` skips by variant first; the `handler_owned_widget` regex list remains as belt-and-braces for scan-derived fields whose variant hasn't been enriched. Fully removing the regex list waits on `form_scan.py` variant coverage for every widget shape.)*
 
 5. **Regression risk on multi-step wizards.** Workday's wizard loop re-scans and re-fills each step. Without idempotent "already filled" checks per field, the same step can be retried six times (observed on Self Identify date spinbuttons) while logging identical unhandled fields.
 
@@ -318,6 +318,8 @@ form_drivers:
 
 **Composition root** ([`cli/composition.py`](src/magicapply/cli/composition.py)) builds `DriverRegistry` + `FormComposer` alongside `AnswerRouter` and injects into `ApplicationData` (new optional field `form_composer`).
 
+**Sister config layer — router rules.** `RouterRules` at [`src/magicapply/config/router_rules.py`](src/magicapply/config/router_rules.py) is the second config-driven regex layer alongside the driver registry: identity, yes-no, DEI, consent, optional-checkbox, SMS opt-in, and handler-owned label/variant lists all load from [`src/magicapply/infrastructure/browser/ats/resources/router_rules.yaml`](src/magicapply/infrastructure/browser/ats/resources/router_rules.yaml). Injected into `AnswerRouter.__init__` the same way `AnswerLibrary` is. Operators override by dropping a file at `<config_root>/router_rules.yaml` — the loader replaces the package default wholesale (no merge; start from a copy).
+
 ---
 
 ## 3. Integration with the existing system
@@ -481,7 +483,7 @@ flowchart TB
 | Component | Change |
 |-----------|--------|
 | `form_scan.py` | Extend `FormField`; optionally move to `forms/scan.py` with re-export |
-| `answer_router.py` | Becomes resolution backend for `RulesBasedDriver`; regex tables stay here |
+| `answer_router.py` | Becomes resolution backend for `RulesBasedDriver`; regex tables **moved to `router_rules.yaml`** (package resource loaded via `RouterRules.load_default()`; operator override at `<config_root>/router_rules.yaml`). Router accepts `router_rules: RouterRules \| None = None` via DI. |
 | `router_dispatch.py` | `fill_dynamic_fields` / `fill_composable_scanned` — requires `form_composer` (no rules-only fallback) |
 | `workday_widgets.py` | Becomes execution backend for Workday variants (no API change initially) |
 | `observed_form_log.py` | Add optional `variant`, `step_id` columns to `form.yaml` |
