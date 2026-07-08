@@ -101,6 +101,74 @@ class StaticListProvider:
         return list(self._entries)
 
 
+class VpsPoolProvider:
+    """Self-hosted VPS proxy pool with shared authentication.
+
+    Semantically distinct from `StaticListProvider`: the operator owns the
+    endpoints, uptime is predictable, and it's normal to route many hosts
+    through the same credentials (a single `myuser:mypass` across every
+    Squid/gost/mitmproxy VPS). Config surface is `hosts: [...]` +
+    `username` + `password` + `scheme`, which is friendlier to hand-edit
+    than repeating `user:pass@` on every entry the way `static_list`
+    requires.
+
+    Config example:
+
+        - type: vps_pool
+          scheme: http               # or 'https', 'socks5'
+          username: myuser
+          password: mysecret
+          hosts:
+            - "1.2.3.4:8080"
+            - "5.6.7.8:8080"
+            - "9.10.11.12:8080"
+
+    Reliability posture: VPS you own is trusted — health-check runs the
+    same way, but a burned VPS proxy uses the same cooldown window as any
+    other. Bump `cooldown_seconds` at the pool level if you're confident
+    in your own infra."""
+
+    def __init__(
+        self,
+        hosts: Sequence[str],
+        *,
+        scheme: str = "http",
+        username: str | None = None,
+        password: str | None = None,
+    ) -> None:
+        self._scheme = scheme.rstrip(":/") or "http"
+        self._username = username or None
+        self._password = password or None
+        self._entries: list[ProxyEntry] = []
+        for host in hosts:
+            text = str(host).strip()
+            if not text:
+                continue
+            # Accept either `host:port` or a full URL — parse and
+            # normalise onto the configured scheme + auth.
+            try:
+                base = _parse_proxy_string(text)
+            except ValueError:
+                logger.warning("vps_pool: skipping unparseable host %r", host)
+                continue
+            # Rewrite scheme + auth from the provider-level config.
+            _, _, host_port = base.server.partition("://")
+            server = f"{self._scheme}://{host_port}"
+            self._entries.append(
+                ProxyEntry(
+                    server=server,
+                    username=self._username,
+                    password=self._password,
+                )
+            )
+
+    def name(self) -> str:
+        return f"vps_pool({len(self._entries)})"
+
+    def load(self) -> list[ProxyEntry]:
+        return list(self._entries)
+
+
 class FreeListScraperProvider:
     """Downloads one or more publicly-hosted proxy lists (raw text, one
     proxy per line) and parses them. Defaults ship three well-known
@@ -397,6 +465,7 @@ __all__ = [
     "ProxyEntry",
     "ProxyProvider",
     "StaticListProvider",
+    "VpsPoolProvider",
     "FreeListScraperProvider",
     "FallbackProvider",
     "ProxyPool",

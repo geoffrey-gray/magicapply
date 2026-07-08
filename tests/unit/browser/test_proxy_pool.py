@@ -14,6 +14,7 @@ from magicapply.infrastructure.browser.proxy_pool import (
     ProxyEntry,
     ProxyPool,
     StaticListProvider,
+    VpsPoolProvider,
     _parse_proxy_line,
     _parse_proxy_string,
 )
@@ -111,6 +112,56 @@ class TestStaticListProvider:
 
     def test_name_reports_count(self) -> None:
         assert StaticListProvider(["1.1.1.1:80"]).name() == "static(1)"
+
+
+# ---- VpsPoolProvider -----------------------------------------------------
+
+
+class TestVpsPoolProvider:
+    def test_hosts_get_shared_auth(self) -> None:
+        p = VpsPoolProvider(
+            ["1.1.1.1:8080", "2.2.2.2:8080"],
+            username="u",
+            password="pw",
+        )
+        entries = p.load()
+        assert len(entries) == 2
+        assert all(e.username == "u" and e.password == "pw" for e in entries)
+        assert entries[0].server == "http://1.1.1.1:8080"
+
+    def test_scheme_override_applied_to_all_hosts(self) -> None:
+        p = VpsPoolProvider(
+            ["1.1.1.1:1080", "2.2.2.2:1080"],
+            scheme="socks5",
+        )
+        entries = p.load()
+        assert all(e.server.startswith("socks5://") for e in entries)
+
+    def test_full_url_hosts_get_normalised_onto_provider_scheme(self) -> None:
+        # Even if the operator pastes a full URL, the provider's scheme
+        # + auth win — that's the whole point of the shared-config shape.
+        p = VpsPoolProvider(
+            ["http://1.1.1.1:8080"],
+            scheme="https",
+            username="u",
+            password="pw",
+        )
+        e = p.load()[0]
+        assert e.server == "https://1.1.1.1:8080"
+        assert e.username == "u"
+        assert e.password == "pw"
+
+    def test_unparseable_host_is_skipped(self) -> None:
+        p = VpsPoolProvider(["ok.example:8080", "garbage-no-port"])
+        entries = p.load()
+        assert len(entries) == 1
+        assert entries[0].server == "http://ok.example:8080"
+
+    def test_empty(self) -> None:
+        assert VpsPoolProvider([]).load() == []
+
+    def test_name_reports_count(self) -> None:
+        assert VpsPoolProvider(["1.1.1.1:80"]).name() == "vps_pool(1)"
 
 
 # ---- FreeListScraperProvider ---------------------------------------------

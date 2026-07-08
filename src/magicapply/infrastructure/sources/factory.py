@@ -10,6 +10,7 @@ from magicapply.config.models import (
     JobUrlSource,
     LinkedInSource,
     ProxyPoolConfig,
+    ProxyProviderConfig,
 )
 from magicapply.infrastructure.browser.proxy_pool import (
     FallbackProvider,
@@ -17,6 +18,7 @@ from magicapply.infrastructure.browser.proxy_pool import (
     ProxyPool,
     ProxyProvider,
     StaticListProvider,
+    VpsPoolProvider,
 )
 from magicapply.infrastructure.sources.base import JobSource
 from magicapply.infrastructure.sources.custom_url import (
@@ -71,9 +73,7 @@ def build_proxy_provider(config: ProxyPoolConfig) -> ProxyProvider | None:
         return None
     children: list[ProxyProvider] = []
     for entry in config.providers:
-        provider = _build_one_provider(
-            entry.type, entry.sources, entry.entries, entry.max_entries
-        )
+        provider = _build_one_provider(entry)
         if provider is not None:
             children.append(provider)
     if not children:
@@ -101,24 +101,28 @@ def build_proxy_pool(config: ProxyPoolConfig) -> ProxyPool | None:
     return pool
 
 
-def _build_one_provider(
-    provider_type: str,
-    sources: list[str],
-    entries: list[str],
-    max_entries: int,
-) -> ProxyProvider | None:
+def _build_one_provider(entry: ProxyProviderConfig) -> ProxyProvider | None:
     """Small dispatch table. Adding a new provider is one branch here
     plus one new class in `proxy_pool.py`."""
-    if provider_type == "static_list":
-        return StaticListProvider(entries)
-    if provider_type == "free_list_scraper":
+    if entry.type == "static_list":
+        return StaticListProvider(entry.entries)
+    if entry.type == "free_list_scraper":
         # No `sources` → use the FreeListScraperProvider defaults.
-        return FreeListScraperProvider(sources or None, max_entries=max_entries)
+        return FreeListScraperProvider(
+            entry.sources or None, max_entries=entry.max_entries
+        )
+    if entry.type == "vps_pool":
+        return VpsPoolProvider(
+            entry.hosts,
+            scheme=entry.scheme,
+            username=entry.username,
+            password=entry.password,
+        )
     # Unknown provider type is a config error, but we log-and-skip so a
     # forward-compat future type name doesn't hard-crash old operators.
     import logging
 
     logging.getLogger(__name__).warning(
-        "unknown proxy provider type %r; skipping", provider_type
+        "unknown proxy provider type %r; skipping", entry.type
     )
     return None

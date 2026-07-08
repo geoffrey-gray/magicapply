@@ -276,6 +276,12 @@ class ProxyProviderConfig(BaseModel):
     # entries; health-checking all of them stalls the CLI at startup.
     # Default 200 gives ~20 alive proxies at typical hit rates.
     max_entries: int = Field(default=200, ge=0)
+    # `vps_pool`-specific config surface (ignored by other provider types).
+    # Kept on the same model so the YAML shape is uniform.
+    hosts: list[str] = Field(default_factory=list)
+    scheme: str = "http"
+    username: str | None = None
+    password: str | None = None
 
 
 class ProxyPoolConfig(BaseModel):
