@@ -19,6 +19,7 @@ from magicapply.cli.composition import (
     build_apply_pipeline,
     build_repos,
     build_scorer,
+    build_source_scorer,
     build_sources_for_profile,
     build_tailoring_pipeline,
 )
@@ -63,6 +64,7 @@ def discover(
         scorer=scorer,
         profile_name=profile_cfg.name,
         score_threshold=scoring.threshold,
+        source_scorer=build_source_scorer(apps_repo),
     )
     report = pipeline.run()
 
@@ -159,6 +161,7 @@ def run(
         scorer=scorer,
         profile_name=profile_cfg.name,
         score_threshold=scoring.threshold,
+        source_scorer=build_source_scorer(apps_repo),
     ).run()
     _render_discover(discover_report)
 

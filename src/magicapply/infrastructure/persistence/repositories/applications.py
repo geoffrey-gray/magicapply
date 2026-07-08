@@ -99,6 +99,25 @@ class SqlApplicationsRepository:
             ).all()
             return len(rows)
 
+    def count_applied_by_source_in_window(
+        self,
+        source_name: str,
+        since: datetime,
+    ) -> int:
+        """Count APPLIED rows updated after `since` whose linked Job's
+        `source_name` matches. Used by the load-balanced dedup scorer in
+        `DiscoveryPipeline` so future apply attempts distribute across
+        LinkedIn / Indeed / Glassdoor / etc."""
+        with Session(self._engine) as session:
+            rows = session.exec(
+                select(ApplicationRow.id)
+                .join(JobRow, JobRow.id == ApplicationRow.job_id)
+                .where(ApplicationRow.state == ApplicationState.APPLIED.value)
+                .where(ApplicationRow.updated_at > since)
+                .where(JobRow.source_name == source_name)
+            ).all()
+            return len(rows)
+
     def count_applied_in_window(
         self,
         ats_key_fn: Callable[[str], str | None],

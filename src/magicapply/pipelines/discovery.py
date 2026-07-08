@@ -8,7 +8,7 @@ State machine transitions performed by this pipeline:
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 from magicapply.domain.jobs.dedup import dedupe_by_key
@@ -45,6 +45,7 @@ class DiscoveryPipeline:
         scorer: JobScorer,
         profile_name: str,
         score_threshold: int,
+        source_scorer: Callable[[str], int] | None = None,
     ) -> None:
         self._sources = sources
         self._jobs = jobs_repo
@@ -52,6 +53,11 @@ class DiscoveryPipeline:
         self._scorer = scorer
         self._profile = profile_name
         self._threshold = score_threshold
+        # Optional load-balancing scorer: on cross-source dedup
+        # collisions, pick the source with the LOWEST score (usually
+        # "recent apply count") so future apply traffic distributes.
+        # None → default first-wins semantics.
+        self._source_scorer = source_scorer
 
     def run(self) -> DiscoveryReport:
         report = DiscoveryReport()
@@ -66,7 +72,17 @@ class DiscoveryPipeline:
                 report.source_errors.append(f"{source.name}: {exc}")
 
         seen_ids: set[str] = set()
-        for job in dedupe_by_key(all_jobs):
+        # Cache scorer results per source across the run — a 5-way
+        # collision on one dedup_key shouldn't hit the SQL query 5 times,
+        # and scores don't change during a single discover pass.
+        scorer_cache: dict[str, int] = {}
+        cached_scorer = None
+        if self._source_scorer is not None:
+            def cached_scorer(source_name: str) -> int:  # noqa: E306
+                if source_name not in scorer_cache:
+                    scorer_cache[source_name] = self._source_scorer(source_name)  # type: ignore[misc]
+                return scorer_cache[source_name]
+        for job in dedupe_by_key(all_jobs, source_scorer=cached_scorer):
             if job.id in seen_ids:
                 report.duplicates_in_run += 1
                 continue

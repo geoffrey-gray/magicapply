@@ -9,6 +9,7 @@ construct infrastructure classes themselves.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
@@ -67,6 +68,22 @@ def build_sources_for_profile(loaded: LoadedConfig, profile: Profile) -> list[Jo
             continue
         out.append(build_source(cfg, proxy_pool=proxy_pool))
     return out
+
+
+def build_source_scorer(
+    apps_repo: SqlApplicationsRepository,
+) -> Callable[[str], int]:
+    """Return a callable `source_name -> recent apply count` used by
+    `dedupe_by_key` in `DiscoveryPipeline` to load-balance cross-source
+    duplicates. Window fixed at 24h; that's short enough that stale
+    activity doesn't dominate and long enough to smooth per-run bursts."""
+    from datetime import UTC, datetime, timedelta
+
+    def scorer(source_name: str) -> int:
+        since = datetime.now(UTC) - timedelta(hours=24)
+        return apps_repo.count_applied_by_source_in_window(source_name, since)
+
+    return scorer
 
 
 def build_scorer(loaded: LoadedConfig, profile: Profile, scoring: ScoringConfig) -> JobScorer:
