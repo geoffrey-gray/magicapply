@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from magicapply.domain.apply.throttle import ApplyThrottle
 from magicapply.domain.models.application import Application, ApplicationState
 from magicapply.domain.models.job import Job
 from magicapply.domain.repositories import (
@@ -29,6 +30,21 @@ from magicapply.infrastructure.browser.ats.base import (
     PageDriver,
 )
 from magicapply.infrastructure.browser.ats.factory import ATSHandlerFactory
+
+
+def ats_key_for_url(url: str) -> str | None:
+    """Derive the ATS name used as the throttle bucket + as the
+    `SqlApplicationsRepository.count_applied_in_window` key. Returns the
+    handler class name lowercased with the `handler` suffix stripped
+    (`GreenhouseHandler` → `greenhouse`). Returns None when no handler
+    matches — those apps are already routed to FAILED elsewhere."""
+    handler = ATSHandlerFactory.for_url(url)
+    if handler is None:
+        return None
+    name = handler.__class__.__name__
+    if name.endswith("Handler"):
+        name = name[: -len("Handler")]
+    return name.lower()
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +74,12 @@ class ApplyPipeline:
         applications_repo: ApplicationsRepository,
         jobs_repo: JobsRepository | None = None,
         data_builder: DataBuilder | None = None,
+        throttle: ApplyThrottle | None = None,
     ) -> None:
         self._apps = applications_repo
         self._jobs = jobs_repo
         self._data_builder = data_builder
+        self._throttle = throttle
 
     def apply_one(
         self,
@@ -107,6 +125,25 @@ class ApplyPipeline:
             application.attempts += 1
             self._apps.save(application)
             return ApplyReport(application.id, application.state, "unsupported ATS")
+
+        # Throttle pre-flight — check right before we transition to
+        # APPLYING and touch the browser. On deny, leave the application
+        # in TAILORED so the next batch (once the window rolls) picks it
+        # up naturally. Real submissions and dry-runs both count against
+        # the cap because both generate ATS traffic.
+        if self._throttle is not None:
+            ats_key = ats_key_for_url(apply_target) or "unknown"
+            decision = self._throttle.check(ats=ats_key)
+            if not decision.allowed:
+                logger.info(
+                    "throttle: deferring application %s (job=%s): %s",
+                    application.id, job.id, decision.reason,
+                )
+                return ApplyReport(
+                    application.id,
+                    application.state,
+                    f"throttle: {decision.reason}",
+                )
 
         if application.state is not ApplicationState.APPLYING:
             application.transition_to(ApplicationState.APPLYING)

@@ -150,12 +150,35 @@ def build_apply_pipeline(
 
     Injects a data_builder closure over ``loaded`` so ``apply_batch`` can
     construct ApplicationData per application without threading the config
-    through the pipeline signature.
+    through the pipeline signature. Also wires the `ApplyThrottle` from
+    the operator's config.
     """
+    throttle = _build_apply_throttle(loaded, apps_repo)
     return ApplyPipeline(
         applications_repo=apps_repo,
         jobs_repo=jobs_repo,
         data_builder=partial(build_application_data, loaded),
+        throttle=throttle,
+    )
+
+
+def _build_apply_throttle(
+    loaded: LoadedConfig,
+    apps_repo: SqlApplicationsRepository,
+) -> "ApplyThrottle":
+    from magicapply.domain.apply.throttle import ApplyThrottle
+    from magicapply.pipelines.apply import ats_key_for_url
+
+    return ApplyThrottle(
+        config=loaded.base.apply_throttle,
+        ats_hourly_count=lambda ats, since: apps_repo.count_applied_in_window(
+            ats_key_for_url, ats, since
+        ),
+        ats_daily_count=lambda ats, since: apps_repo.count_applied_in_window(
+            ats_key_for_url, ats, since
+        ),
+        global_hourly_count=apps_repo.count_applied_all_in_window,
+        global_daily_count=apps_repo.count_applied_all_in_window,
     )
 
 

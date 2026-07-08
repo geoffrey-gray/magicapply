@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from datetime import datetime
 
 from sqlalchemy import Engine
 from sqlalchemy.exc import IntegrityError
@@ -13,7 +15,7 @@ from magicapply.domain.models.application import (
     ApplicationState,
     StateTransition,
 )
-from magicapply.infrastructure.persistence.tables import ApplicationRow
+from magicapply.infrastructure.persistence.tables import ApplicationRow, JobRow
 
 
 class DuplicateApplication(Exception):
@@ -85,6 +87,48 @@ class SqlApplicationsRepository:
                 .where(ApplicationRow.profile_name == profile_name)
             ).all()
             return [_row_to_domain(r) for r in rows]
+
+    def count_applied_all_in_window(self, since: datetime) -> int:
+        """Count APPLIED rows updated after `since`. Used by the global
+        throttle. Cheap — indexed state + timestamp scan, no join."""
+        with Session(self._engine) as session:
+            rows = session.exec(
+                select(ApplicationRow.id)
+                .where(ApplicationRow.state == ApplicationState.APPLIED.value)
+                .where(ApplicationRow.updated_at > since)
+            ).all()
+            return len(rows)
+
+    def count_applied_in_window(
+        self,
+        ats_key_fn: Callable[[str], str | None],
+        ats: str,
+        since: datetime,
+    ) -> int:
+        """Count APPLIED rows updated after `since` whose linked Job's
+        `ats_key_fn(url)` equals `ats`.
+
+        The ATS is not stored on `ApplicationRow` — it's derived at query
+        time from the linked Job's `apply_url or url` via the caller-
+        supplied `ats_key_fn` (composition wires `ATSHandlerFactory`
+        here). This keeps the ATS mapping in one place instead of
+        shadowed as a denormalised column.
+
+        Scans in Python because SQLite doesn't carry the ATS regex
+        knowledge. Small scale (< N/hour typical) makes this fine."""
+        with Session(self._engine) as session:
+            rows = session.exec(
+                select(ApplicationRow, JobRow)
+                .join(JobRow, JobRow.id == ApplicationRow.job_id)
+                .where(ApplicationRow.state == ApplicationState.APPLIED.value)
+                .where(ApplicationRow.updated_at > since)
+            ).all()
+        count = 0
+        for _app_row, job_row in rows:
+            key = ats_key_fn(job_row.apply_url or job_row.url)
+            if key == ats:
+                count += 1
+        return count
 
 
 def _domain_to_row(app: Application) -> ApplicationRow:

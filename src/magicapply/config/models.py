@@ -289,6 +289,29 @@ class ProxyPoolConfig(BaseModel):
     cooldown_seconds: int = Field(default=900, gt=0)
 
 
+class ThrottleCaps(BaseModel):
+    """Two-window caps used by both apply and discovery throttles."""
+
+    model_config = _Strict
+
+    hourly: int = Field(default=6, ge=0)
+    daily: int = Field(default=25, ge=0)
+
+
+class ApplyThrottleConfig(BaseModel):
+    """Per-ATS caps on apply attempts. `ats_default` covers any ATS not
+    listed in `ats_overrides`. `global_cap` bounds the total across
+    every ATS in the same window — safeguard against a runaway batch."""
+
+    model_config = _Strict
+
+    ats_default: ThrottleCaps = Field(default_factory=ThrottleCaps)
+    ats_overrides: dict[str, ThrottleCaps] = Field(default_factory=dict)
+    global_cap: ThrottleCaps = Field(
+        default_factory=lambda: ThrottleCaps(hourly=15, daily=60)
+    )
+
+
 class BaseConfig(BaseModel):
     """Top-level config shared across every profile."""
 
@@ -302,6 +325,7 @@ class BaseConfig(BaseModel):
     sources: list[Source] = Field(default_factory=list)
     form_drivers: FormDriversConfig = Field(default_factory=FormDriversConfig)
     proxies: ProxyPoolConfig = Field(default_factory=ProxyPoolConfig)
+    apply_throttle: ApplyThrottleConfig = Field(default_factory=ApplyThrottleConfig)
 
     def source_names(self) -> set[str]:
         return {s.name for s in self.sources}
