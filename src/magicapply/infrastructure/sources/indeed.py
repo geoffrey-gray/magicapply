@@ -5,10 +5,16 @@ Per configured query, opens the Indeed search page, walks the
 detail page, and extracts its ``schema.org`` ``JobPosting`` JSON-LD block
 (reuses ``sources/jsonld.py``).
 
-Indeed hides behind Cloudflare. When we hit the "Just a moment..." challenge
-page the parser detects that and logs+skips rather than misinterpreting the
-challenge HTML as a jobless search result. The Job source falls back to
-zero jobs for that query; other queries and other sources are unaffected.
+Indeed hides behind Cloudflare. Two escape hatches, in order:
+
+1. **Proxy rotation** (when a ``ProxyPool`` is injected) — the adapter
+   requests a fresh proxy per search attempt. On ``looks_like_bot_block``,
+   the current proxy is burned and dropped, then the query is requeued
+   with a bounded retry budget. Distributes load across the pool so a
+   single Cloudflare-flagged IP doesn't sink a whole discover run.
+2. **Log + skip** — with no pool available (or after exhausting the
+   retry budget), the query is logged and dropped. Other queries and
+   other sources are unaffected.
 
 ToS-sensitive: like LinkedIn, requires an explicit acknowledgement
 (``MAGICAPPLY_INDEED_ACK=1``) before making requests.
@@ -19,15 +25,17 @@ from __future__ import annotations
 import logging
 import os
 import urllib.parse
+from collections import deque
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from lxml import html as lhtml
 
 from magicapply.config.models import IndeedSource
+from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
-from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
+from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.jsonld import (
     extract_jobposting_dicts,
     jsonld_to_job,
@@ -49,6 +57,9 @@ _BOT_BLOCK_MARKERS = (
     "blocked - indeed.com",
 )
 
+_DEFAULT_MAX_QUERY_RETRIES = 3
+_DEFAULT_JITTER_RATIO = 0.3
+
 
 class IndeedAdapter:
     def __init__(
@@ -60,6 +71,8 @@ class IndeedAdapter:
         rate_limit_per_minute: int,
         acknowledged: bool,
         enrich_apply_urls: bool = True,
+        proxy_pool: ProxyPool | None = None,
+        max_query_retries: int = _DEFAULT_MAX_QUERY_RETRIES,
     ) -> None:
         self.name = name
         self._queries = list(queries)
@@ -67,9 +80,16 @@ class IndeedAdapter:
         self._rate = rate_limit_per_minute
         self._ack = acknowledged
         self._enrich_apply_urls = enrich_apply_urls
+        self._proxy_pool = proxy_pool
+        self._max_query_retries = max(1, int(max_query_retries))
 
     @classmethod
-    def from_config(cls, config: IndeedSource) -> IndeedAdapter:
+    def from_config(
+        cls,
+        config: IndeedSource,
+        *,
+        proxy_pool: ProxyPool | None = None,
+    ) -> IndeedAdapter:
         return cls(
             name=config.name,
             queries=list(config.queries),
@@ -77,6 +97,7 @@ class IndeedAdapter:
             rate_limit_per_minute=config.rate_limit_per_minute,
             acknowledged=os.environ.get("MAGICAPPLY_INDEED_ACK") == "1",
             enrich_apply_urls=config.enrich_apply_urls,
+            proxy_pool=proxy_pool,
         )
 
     def discover(self) -> Iterator[Job]:
@@ -89,17 +110,37 @@ class IndeedAdapter:
         if not self._queries:
             return
 
-        rate = RateLimiter(self._rate)
-        with PlaywrightSession(headless=True) as session:
-            for query in self._queries:
-                yield from self._search_one_query(session, query, rate)
+        rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
+        with PlaywrightSession(headless=True, proxy_pool=self._proxy_pool) as session:
+            queue: deque[tuple[str, int]] = deque((q, 0) for q in self._queries)
+            while queue:
+                query, attempts = queue.popleft()
+                did_yield, blocked = False, False
+                # We yield inside the loop; capture the intent via flags.
+                for job in self._search_one_query(session, query, rate):
+                    if isinstance(job, _Blocked):
+                        blocked = True
+                        break
+                    did_yield = True
+                    yield job
+                if blocked and attempts + 1 < self._max_query_retries:
+                    logger.info(
+                        "Indeed requeueing query %r (attempt %d/%d)",
+                        query, attempts + 2, self._max_query_retries,
+                    )
+                    queue.append((query, attempts + 1))
+                elif blocked:
+                    logger.warning(
+                        "Indeed exhausted retry budget for query %r; skipping",
+                        query,
+                    )
 
     def _search_one_query(
         self,
         session: PlaywrightSession,
         query: str,
         rate: RateLimiter,
-    ) -> Iterator[Job]:
+    ) -> Iterator["Job | _Blocked"]:
         location_part = (
             f"&l={urllib.parse.quote_plus(self._location)}" if self._location else ""
         )
@@ -109,19 +150,21 @@ class IndeedAdapter:
         )
         rate.wait()
 
-        content = _fetch(session, url)
+        proxy = self._proxy_pool.next() if self._proxy_pool else None
+        content = _fetch(session, url, proxy=proxy)
         if content is None:
             return
         if looks_like_bot_block(content):
-            logger.warning(
-                "Indeed blocked by bot protection for %r; skipping query", query
-            )
+            _mark_blocked(session, self._proxy_pool, proxy, kind="search", query=query)
+            yield _Blocked()
             return
 
         job_urls = extract_job_urls(content)
         for job_url in job_urls:
             rate.wait()
-            job_html = _fetch(session, job_url)
+            # Reuse the same proxy that worked for the search page — the
+            # per-context state is already warm and Cloudflare-cleared.
+            job_html = _fetch(session, job_url, proxy=proxy)
             if job_html is None:
                 continue
             if looks_like_bot_block(job_html):
@@ -146,8 +189,21 @@ class IndeedAdapter:
                     )
 
 
-def _fetch(session: PlaywrightSession, url: str) -> str | None:
-    page = session.new_page()
+class _Blocked:
+    """Sentinel yielded by `_search_one_query` when Cloudflare blocked the
+    search page. The outer `discover()` loop uses it to decide whether to
+    requeue the query with a fresh proxy."""
+
+    __slots__ = ()
+
+
+def _fetch(
+    session: PlaywrightSession,
+    url: str,
+    *,
+    proxy: ProxyEntry | None = None,
+) -> str | None:
+    page = session.new_page(proxy=proxy)
     try:
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=30_000)
@@ -157,6 +213,30 @@ def _fetch(session: PlaywrightSession, url: str) -> str | None:
         return page.content()
     finally:
         page.close()
+
+
+def _mark_blocked(
+    session: PlaywrightSession,
+    pool: ProxyPool | None,
+    proxy: ProxyEntry | None,
+    *,
+    kind: str,
+    query: str,
+) -> None:
+    """Burn the current proxy and drop its context so the retry gets a
+    fresh identity. When no pool is configured, log and continue — the
+    outer loop will decide whether to requeue anyway."""
+    if pool is not None and proxy is not None:
+        pool.burn(proxy, reason=f"cloudflare-{kind}")
+        session.drop_proxy_context(proxy)
+        logger.warning(
+            "Indeed blocked by bot protection for %r on proxy %s; requeuing",
+            query, proxy.server,
+        )
+    else:
+        logger.warning(
+            "Indeed blocked by bot protection for %r; skipping query", query
+        )
 
 
 def extract_job_urls(html: str) -> list[str]:

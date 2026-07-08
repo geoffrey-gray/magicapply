@@ -36,6 +36,7 @@ from magicapply.infrastructure.persistence import (
 from magicapply.infrastructure.persistence.db import sqlite_url_for
 from magicapply.infrastructure.sources import build_source
 from magicapply.infrastructure.sources.base import JobSource
+from magicapply.infrastructure.sources.factory import build_proxy_pool
 from magicapply.pipelines.apply import ApplyPipeline
 from magicapply.pipelines.tailoring import TailoringPipeline
 
@@ -51,6 +52,10 @@ def build_repos(data_dir: Path) -> tuple[SqlJobsRepository, SqlApplicationsRepos
 
 def build_sources_for_profile(loaded: LoadedConfig, profile: Profile) -> list[JobSource]:
     by_name = {s.name: s for s in loaded.base.sources}
+    # Build the pool once and share it across all Cloudflare-adjacent
+    # adapters. `build_proxy_pool` returns None when the pool is disabled
+    # in config — adapters then fall back to direct fetches.
+    proxy_pool = build_proxy_pool(loaded.base.proxies)
     out: list[JobSource] = []
     for name in profile.sources:
         cfg = by_name.get(name)
@@ -60,7 +65,7 @@ def build_sources_for_profile(loaded: LoadedConfig, profile: Profile) -> list[Jo
         if getattr(cfg, "enabled", True) is False:
             logger.info("source %r disabled; skipping", name)
             continue
-        out.append(build_source(cfg))
+        out.append(build_source(cfg, proxy_pool=proxy_pool))
     return out
 
 

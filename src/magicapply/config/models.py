@@ -258,6 +258,37 @@ class FormDriversConfig(BaseModel):
     fields: list[FormDriverFieldOverride] = Field(default_factory=list)
 
 
+class ProxyProviderConfig(BaseModel):
+    """One entry in the `proxies.providers` list.
+
+    `type` selects the concrete provider (see
+    `infrastructure/browser/proxy_pool.py`). Extra fields are provider-
+    specific — currently `sources` for `free_list_scraper` and `entries`
+    for `static_list`. Unknown provider types raise at composition time
+    rather than at YAML validation, so future provider slots (`vps_pool`,
+    `commercial`) can be added without a config-model bump."""
+
+    model_config = ConfigDict(extra="allow")
+    type: str
+    sources: list[str] = Field(default_factory=list)
+    entries: list[str] = Field(default_factory=list)
+
+
+class ProxyPoolConfig(BaseModel):
+    """Rotating-proxy pool config. Missing / `enabled: false` → no pool
+    is built; discovery adapters fall back to direct fetches (which is
+    what pre-Phase-A behaviour did)."""
+
+    model_config = _Strict
+
+    enabled: bool = False
+    providers: list[ProxyProviderConfig] = Field(default_factory=list)
+    health_check_url: str = "https://httpbin.org/ip"
+    health_check_timeout_seconds: float = Field(default=5.0, gt=0)
+    health_check_workers: int = Field(default=20, gt=0)
+    cooldown_seconds: int = Field(default=900, gt=0)
+
+
 class BaseConfig(BaseModel):
     """Top-level config shared across every profile."""
 
@@ -270,6 +301,7 @@ class BaseConfig(BaseModel):
     paths: Paths = Field(default_factory=Paths)
     sources: list[Source] = Field(default_factory=list)
     form_drivers: FormDriversConfig = Field(default_factory=FormDriversConfig)
+    proxies: ProxyPoolConfig = Field(default_factory=ProxyPoolConfig)
 
     def source_names(self) -> set[str]:
         return {s.name for s in self.sources}

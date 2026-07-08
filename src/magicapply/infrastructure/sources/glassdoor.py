@@ -3,11 +3,16 @@
 Shape mirrors Indeed: per-query the adapter opens the Glassdoor search page,
 walks ``/job-listing/`` anchors out of the DOM, then fetches each detail
 page and extracts its ``schema.org`` ``JobPosting`` JSON-LD. Cloudflare
-challenges are detected via the shared helper and logged+skipped.
+challenges are detected via the shared helper and drive a proxy-rotation
+retry loop (see `sources/indeed.py` for the full pattern — Glassdoor is a
+sister adapter with the same escape hatches).
 
 If ``GLASSDOOR_SESSION`` is set in env the adapter attaches it as a session
 cookie so the authenticated views (which show more jobs and richer detail
 pages) are reachable. Unauthenticated calls still work for public listings.
+When a `ProxyPool` is also configured, the session cookie is only applied
+to the SHARED context — per-proxy contexts stay anonymous, which is the
+right behavior for scraping through random IPs.
 
 ToS-sensitive: requires ``MAGICAPPLY_GLASSDOOR_ACK=1``.
 """
@@ -17,16 +22,18 @@ from __future__ import annotations
 import logging
 import os
 import urllib.parse
+from collections import deque
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
 from lxml import html as lhtml
 
 from magicapply.config.models import GlassdoorSource
+from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
-from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
-from magicapply.infrastructure.sources.indeed import looks_like_cloudflare
+from magicapply.infrastructure.sources.base import SourceError
+from magicapply.infrastructure.sources.indeed import _Blocked, looks_like_cloudflare
 from magicapply.infrastructure.sources.jsonld import (
     extract_jobposting_dicts,
     jsonld_to_job,
@@ -40,6 +47,9 @@ logger = logging.getLogger(__name__)
 
 _SEARCH_URL = "https://www.glassdoor.com/Job/jobs.htm?sc.keyword={query}"
 
+_DEFAULT_MAX_QUERY_RETRIES = 3
+_DEFAULT_JITTER_RATIO = 0.3
+
 
 class GlassdoorAdapter:
     def __init__(
@@ -51,6 +61,8 @@ class GlassdoorAdapter:
         session_cookie: str | None,
         acknowledged: bool,
         enrich_apply_urls: bool = True,
+        proxy_pool: ProxyPool | None = None,
+        max_query_retries: int = _DEFAULT_MAX_QUERY_RETRIES,
     ) -> None:
         self.name = name
         self._queries = list(queries)
@@ -58,9 +70,16 @@ class GlassdoorAdapter:
         self._session = session_cookie
         self._ack = acknowledged
         self._enrich_apply_urls = enrich_apply_urls
+        self._proxy_pool = proxy_pool
+        self._max_query_retries = max(1, int(max_query_retries))
 
     @classmethod
-    def from_config(cls, config: GlassdoorSource) -> GlassdoorAdapter:
+    def from_config(
+        cls,
+        config: GlassdoorSource,
+        *,
+        proxy_pool: ProxyPool | None = None,
+    ) -> GlassdoorAdapter:
         return cls(
             name=config.name,
             queries=list(config.queries),
@@ -68,6 +87,7 @@ class GlassdoorAdapter:
             session_cookie=os.environ.get("GLASSDOOR_SESSION") or None,
             acknowledged=os.environ.get("MAGICAPPLY_GLASSDOOR_ACK") == "1",
             enrich_apply_urls=config.enrich_apply_urls,
+            proxy_pool=proxy_pool,
         )
 
     def discover(self) -> Iterator[Job]:
@@ -80,33 +100,53 @@ class GlassdoorAdapter:
         if not self._queries:
             return
 
-        rate = RateLimiter(self._rate)
-        with PlaywrightSession(headless=True) as session:
+        rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
+        with PlaywrightSession(headless=True, proxy_pool=self._proxy_pool) as session:
             if self._session:
+                # Only wire the auth cookie to the SHARED context — per-proxy
+                # contexts stay anonymous by design.
                 session.add_cookies([_session_cookie(self._session)])
-            for query in self._queries:
-                yield from self._search_one_query(session, query, rate)
+            queue: deque[tuple[str, int]] = deque((q, 0) for q in self._queries)
+            while queue:
+                query, attempts = queue.popleft()
+                blocked = False
+                for job in self._search_one_query(session, query, rate):
+                    if isinstance(job, _Blocked):
+                        blocked = True
+                        break
+                    yield job
+                if blocked and attempts + 1 < self._max_query_retries:
+                    logger.info(
+                        "Glassdoor requeueing query %r (attempt %d/%d)",
+                        query, attempts + 2, self._max_query_retries,
+                    )
+                    queue.append((query, attempts + 1))
+                elif blocked:
+                    logger.warning(
+                        "Glassdoor exhausted retry budget for query %r; skipping",
+                        query,
+                    )
 
     def _search_one_query(
         self,
         session: PlaywrightSession,
         query: str,
         rate: RateLimiter,
-    ) -> Iterator[Job]:
+    ) -> Iterator["Job | _Blocked"]:
         url = _SEARCH_URL.format(query=urllib.parse.quote_plus(query))
         rate.wait()
-        content = _fetch(session, url)
+        proxy = self._proxy_pool.next() if self._proxy_pool else None
+        content = _fetch(session, url, proxy=proxy)
         if content is None:
             return
         if looks_like_cloudflare(content):
-            logger.warning(
-                "Glassdoor blocked by bot protection for %r; skipping query", query
-            )
+            _mark_blocked(session, self._proxy_pool, proxy, kind="search", query=query)
+            yield _Blocked()
             return
 
         for job_url in extract_job_urls(content):
             rate.wait()
-            job_html = _fetch(session, job_url)
+            job_html = _fetch(session, job_url, proxy=proxy)
             if job_html is None:
                 continue
             if looks_like_cloudflare(job_html):
@@ -131,8 +171,13 @@ class GlassdoorAdapter:
                     )
 
 
-def _fetch(session: PlaywrightSession, url: str) -> str | None:
-    page = session.new_page()
+def _fetch(
+    session: PlaywrightSession,
+    url: str,
+    *,
+    proxy: ProxyEntry | None = None,
+) -> str | None:
+    page = session.new_page(proxy=proxy)
     try:
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=30_000)
@@ -142,6 +187,27 @@ def _fetch(session: PlaywrightSession, url: str) -> str | None:
         return page.content()
     finally:
         page.close()
+
+
+def _mark_blocked(
+    session: PlaywrightSession,
+    pool: ProxyPool | None,
+    proxy: ProxyEntry | None,
+    *,
+    kind: str,
+    query: str,
+) -> None:
+    if pool is not None and proxy is not None:
+        pool.burn(proxy, reason=f"cloudflare-{kind}")
+        session.drop_proxy_context(proxy)
+        logger.warning(
+            "Glassdoor blocked by bot protection for %r on proxy %s; requeuing",
+            query, proxy.server,
+        )
+    else:
+        logger.warning(
+            "Glassdoor blocked by bot protection for %r; skipping query", query
+        )
 
 
 def extract_job_urls(html: str) -> list[str]:
