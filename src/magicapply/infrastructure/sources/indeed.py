@@ -153,6 +153,14 @@ class IndeedAdapter:
         proxy = self._proxy_pool.next() if self._proxy_pool else None
         content = _fetch(session, url, proxy=proxy)
         if content is None:
+            # Nav timeout / network error. Treat the same as a bot block
+            # when we have a proxy pool: burn the proxy and requeue so
+            # the pool learns which endpoints are dead-for-Indeed.
+            if self._proxy_pool is not None and proxy is not None:
+                _mark_blocked(
+                    session, self._proxy_pool, proxy, kind="timeout", query=query
+                )
+                yield _Blocked()
             return
         if looks_like_bot_block(content):
             _mark_blocked(session, self._proxy_pool, proxy, kind="search", query=query)
@@ -204,9 +212,14 @@ def _fetch(
     proxy: ProxyEntry | None = None,
 ) -> str | None:
     page = session.new_page(proxy=proxy)
+    # Shorter timeout when routing through a proxy — dead proxies should
+    # fail fast so the pool cycles rather than blocking a whole discover
+    # run on a single stuck endpoint. Direct fetches keep the historical
+    # 30 s budget.
+    timeout_ms = 12_000 if proxy is not None else 30_000
     try:
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Indeed fetch failed for %s: %s", url, exc)
             return None

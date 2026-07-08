@@ -71,7 +71,9 @@ def build_proxy_provider(config: ProxyPoolConfig) -> ProxyProvider | None:
         return None
     children: list[ProxyProvider] = []
     for entry in config.providers:
-        provider = _build_one_provider(entry.type, entry.sources, entry.entries)
+        provider = _build_one_provider(
+            entry.type, entry.sources, entry.entries, entry.max_entries
+        )
         if provider is not None:
             children.append(provider)
     if not children:
@@ -103,6 +105,7 @@ def _build_one_provider(
     provider_type: str,
     sources: list[str],
     entries: list[str],
+    max_entries: int,
 ) -> ProxyProvider | None:
     """Small dispatch table. Adding a new provider is one branch here
     plus one new class in `proxy_pool.py`."""
@@ -110,7 +113,7 @@ def _build_one_provider(
         return StaticListProvider(entries)
     if provider_type == "free_list_scraper":
         # No `sources` → use the FreeListScraperProvider defaults.
-        return FreeListScraperProvider(sources or None)
+        return FreeListScraperProvider(sources or None, max_entries=max_entries)
     # Unknown provider type is a config error, but we log-and-skip so a
     # forward-compat future type name doesn't hard-crash old operators.
     import logging

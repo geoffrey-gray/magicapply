@@ -272,6 +272,10 @@ class ProxyProviderConfig(BaseModel):
     type: str
     sources: list[str] = Field(default_factory=list)
     entries: list[str] = Field(default_factory=list)
+    # Cap on the raw pool size before health-check. Free lists ship 3000+
+    # entries; health-checking all of them stalls the CLI at startup.
+    # Default 200 gives ~20 alive proxies at typical hit rates.
+    max_entries: int = Field(default=200, ge=0)
 
 
 class ProxyPoolConfig(BaseModel):

@@ -138,6 +138,11 @@ class GlassdoorAdapter:
         proxy = self._proxy_pool.next() if self._proxy_pool else None
         content = _fetch(session, url, proxy=proxy)
         if content is None:
+            if self._proxy_pool is not None and proxy is not None:
+                _mark_blocked(
+                    session, self._proxy_pool, proxy, kind="timeout", query=query
+                )
+                yield _Blocked()
             return
         if looks_like_cloudflare(content):
             _mark_blocked(session, self._proxy_pool, proxy, kind="search", query=query)
@@ -178,9 +183,10 @@ def _fetch(
     proxy: ProxyEntry | None = None,
 ) -> str | None:
     page = session.new_page(proxy=proxy)
+    timeout_ms = 12_000 if proxy is not None else 30_000
     try:
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Glassdoor fetch failed for %s: %s", url, exc)
             return None

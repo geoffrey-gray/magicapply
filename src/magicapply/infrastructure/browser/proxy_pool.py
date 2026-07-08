@@ -110,7 +110,13 @@ class FreeListScraperProvider:
     Non-`http(s)` schemes are prefixed with `http://` so free-list feeds
     that just publish `ip:port` still work. Malformed lines are skipped
     with a debug log; the health-check phase in `ProxyPool.refresh` is
-    what actually drops dead endpoints."""
+    what actually drops dead endpoints.
+
+    `max_entries` caps the returned pool size — free lists ship
+    thousands of entries and health-checking them all can take minutes.
+    Default 200 hits a sweet spot: at ~10% alive rate that yields ~20
+    working proxies (enough for a full discover run without stalling
+    the CLI at startup). Set to 0 for uncapped."""
 
     _DEFAULT_SOURCES: tuple[str, ...] = (
         "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
@@ -125,9 +131,11 @@ class FreeListScraperProvider:
         *,
         http: httpx.Client | None = None,
         fetch_timeout_seconds: float = 10.0,
+        max_entries: int = 200,
     ) -> None:
         self._sources: tuple[str, ...] = tuple(sources) if sources else self._DEFAULT_SOURCES
         self._http = http or httpx.Client(timeout=fetch_timeout_seconds, follow_redirects=True)
+        self._max_entries = max(0, int(max_entries))
 
     def name(self) -> str:
         return f"free_list({len(self._sources)})"
@@ -156,6 +164,8 @@ class FreeListScraperProvider:
                     continue
                 seen.add(entry.server)
                 out.append(entry)
+                if self._max_entries and len(out) >= self._max_entries:
+                    return out
         return out
 
 
