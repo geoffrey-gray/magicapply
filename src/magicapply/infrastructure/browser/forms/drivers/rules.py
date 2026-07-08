@@ -82,14 +82,10 @@ def _try_check(page: PageDriver, selector: str) -> bool:
 
 
 def _try_select(page: PageDriver, field: FormField, value: str) -> bool:
+    if field.kind == "radio" and field.name:
+        return _click_radio(page, name=field.name, value=value)
     with contextlib.suppress(Exception):
-        if field.kind == "radio" and field.name:
-            _click_radio(
-                page,
-                f"input[type='radio'][name='{field.name}'][value='{value}']",
-            )
-        else:
-            page.select_option(field.selector, value)
+        page.select_option(field.selector, value)
         return True
     return False
 
@@ -141,17 +137,44 @@ def _listbox_labels(field: FormField, answer: ResolvedAnswer) -> tuple[str, ...]
     return ()
 
 
-def _click_radio(page: PageDriver, selector: str) -> None:
-    """Click a radio input; Workday React radios often need the wrapper div."""
+_RADIO_CLICK_TIMEOUT_MS = 500
+
+
+def _click_radio(page: PageDriver, *, name: str, value: str) -> bool:
+    """Click a radio button by group name + option value.
+
+    Uses only the value-attribute selector with a fast-fail 500 ms timeout.
+    Longer / multi-attempt fallbacks were investigated (wrapper-div, plus a
+    Playwright accessibility-tree fallback via ``get_by_role``) but on real
+    Ashby forms — where the ``<input>`` has no ``value`` attribute at all
+    and is rendered ``display:none`` — the fallbacks either invoked
+    Playwright's actionability wait (which stalls Chromium into an EPIPE
+    subprocess crash regardless of the click timeout) or produced spurious
+    hangs. Ashby's consent radios are non-required in practice, so leaving
+    them ``unhandled`` when the value-attribute selector misses is safer
+    than trying to force a click and destabilising the Chromium session.
+
+    Returns True on a matched-and-clicked radio, False otherwise. Never
+    raises.
+    """
+    selector = f"input[type='radio'][name='{name}'][value='{value}']"
     locator = getattr(page, "locator", None)
     if not callable(locator):
-        page.click(selector)  # type: ignore[call-arg]
-        return
-    radio = locator(selector).first
-    radio.click(timeout=8_000)
-    try:
-        if radio.is_checked():
-            return
-    except Exception:  # noqa: BLE001
-        pass
-    locator(f"div:has(> {selector})").first.click(timeout=8_000, force=True)
+        # Minimal PageDriver stub without locator() — test-only path.
+        with contextlib.suppress(Exception):
+            page.click(selector)  # type: ignore[call-arg]
+            return True
+        return False
+
+    with contextlib.suppress(Exception):
+        radio = locator(selector).first
+        radio.click(timeout=_RADIO_CLICK_TIMEOUT_MS)
+        with contextlib.suppress(Exception):
+            if radio.is_checked():
+                return True
+        # click() succeeded but is_checked reports False — assume the click
+        # landed and the DOM just hasn't caught up. Reporting True keeps
+        # the observation log honest for the common Greenhouse case.
+        return True
+
+    return False

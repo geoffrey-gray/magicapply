@@ -116,6 +116,105 @@ def test_registry_variant_override() -> None:
     assert isinstance(driver, RulesBasedDriver)
 
 
+class _FailingLocator:
+    """A locator whose click always raises — used to force `_click_radio`
+    to walk to the label-based fallback."""
+
+    def __init__(self) -> None:
+        self.first = self
+
+    def click(self, **kwargs: object) -> None:
+        raise RuntimeError("selector never matched")
+
+    def is_checked(self) -> bool:
+        return False
+
+
+class _SucceedingLocator:
+    """Locator whose click records the call and returns cleanly."""
+
+    def __init__(self, *, visible: bool = True) -> None:
+        self.clicks: list[dict[str, object]] = []
+        self.first = self
+        self._visible = visible
+
+    def click(self, **kwargs: object) -> None:
+        self.clicks.append(kwargs)
+
+    def is_visible(self, **_kwargs: object) -> bool:
+        return self._visible
+
+
+class _RadioClickPage:
+    """PageDriver stub that fails both value-attribute paths and succeeds
+    on the accessibility fallback."""
+
+    def __init__(self) -> None:
+        self.locator_calls: list[str] = []
+        self.role_calls: list[tuple[str, str]] = []
+        self.role_target = _SucceedingLocator()
+
+    def locator(self, selector: str) -> _FailingLocator:
+        self.locator_calls.append(selector)
+        return _FailingLocator()
+
+    def get_by_role(self, role: str, *, name: str) -> _SucceedingLocator:
+        self.role_calls.append((role, name))
+        return self.role_target
+
+
+def test_click_radio_returns_false_when_selector_never_matches() -> None:
+    """Ashby renders radios without a `value` attribute — the value-attribute
+    selector never matches. `_click_radio` must report False so the caller
+    can log the field as unhandled. Earlier iterations tried a wrapper-div
+    and accessibility-tree fallback, but those either invoked Playwright's
+    actionability wait (stalling Chromium into an EPIPE crash on multi-
+    radio Ashby forms) or produced spurious hangs. Ashby's consent radios
+    are optional in practice, so unhandled is the safe outcome."""
+    from magicapply.infrastructure.browser.forms.drivers.rules import _click_radio
+
+    page = _RadioClickPage()  # every locator().first.click() raises
+    ok = _click_radio(page, name="ashby-group-uuid", value="I agree")
+
+    assert ok is False
+    # Only the value-attribute selector was tried — no expensive
+    # fallbacks that could hang Chromium.
+    assert len(page.locator_calls) == 1
+    assert "value='I agree'" in page.locator_calls[0]
+
+
+def test_click_radio_uses_fast_fail_timeout() -> None:
+    """The one click attempt must use the 500ms budget; longer timeouts
+    stalled Chromium into an EPIPE subprocess crash on the pre-fix
+    TRM Ashby run."""
+    from magicapply.infrastructure.browser.forms.drivers.rules import (
+        _RADIO_CLICK_TIMEOUT_MS,
+        _click_radio,
+    )
+
+    assert _RADIO_CLICK_TIMEOUT_MS == 500
+
+    click_timeouts: list[int] = []
+
+    class _TimeoutCapturingLocator:
+        def __init__(self) -> None:
+            self.first = self
+
+        def click(self, *, timeout: int, **_: object) -> None:
+            click_timeouts.append(timeout)
+            raise RuntimeError("stub-fail-after-recording-timeout")
+
+        def is_checked(self) -> bool:
+            return False
+
+    class _Page:
+        def locator(self, _selector: str) -> _TimeoutCapturingLocator:
+            return _TimeoutCapturingLocator()
+
+    _click_radio(_Page(), name="X", value="Y")
+    assert click_timeouts == [500]
+
+
 def test_composer_uses_llm_via_hybrid_default() -> None:
     narrative = _RecordingNarrative()
     static = StaticAnswers(full_name="Jane Doe", email="jane@example.com")
