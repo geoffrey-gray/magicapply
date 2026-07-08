@@ -108,3 +108,53 @@ sources:
   #     - "Staff Data Scientist"
   #   rate_limit_per_minute: 10
   #   enrich_apply_urls: true
+
+
+# ---- Proxy rotation (Phase A-C: defeats Cloudflare on Indeed / Glassdoor) ----
+#
+# Missing / `enabled: false` → adapters fall back to direct fetches (which is
+# what they did before the pool landed). When enabled, `refresh()` is called
+# once at composition and the pool health-checks proxies in parallel against
+# `health_check_url`. `providers` is a fallback list (first non-empty wins) —
+# operators can prepend a `vps_pool` or `commercial` provider in the future
+# without changing any code.
+proxies:
+  enabled: false
+  health_check_url: "https://httpbin.org/ip"
+  health_check_timeout_seconds: 5
+  health_check_workers: 20
+  cooldown_seconds: 900             # burned proxies stay out 15 min
+  providers:
+    - type: free_list_scraper
+      # `sources: []` → use the shipped defaults (TheSpeedX / roosterkid /
+      # monosans / proxyscrape). Add or replace with your own raw-text feeds.
+      sources: []
+    - type: static_list
+      # Operator-curated proxies. Format: `host:port`, `scheme://host:port`,
+      # or `user:pass@host:port`. Defaults to http:// when no scheme given.
+      entries: []
+    # Future slots (add without code changes):
+    # - type: vps_pool
+    # - type: commercial
+
+
+# ---- Apply throttle (Phase D: caps hourly + daily apply attempts) ----
+#
+# Fires just before `handler.apply(...)` in `ApplyPipeline.apply_one`. On a
+# cap breach, the Application stays TAILORED so the next batch (once the
+# window rolls) picks it up naturally — no manual intervention. Real
+# submissions and dry-runs both count against the cap because both generate
+# ATS traffic. `global_cap` is a safeguard across every ATS in the same
+# window.
+apply_throttle:
+  ats_default:
+    hourly: 6
+    daily: 25
+  ats_overrides:
+    # Example override — Workday tenants are more sensitive to burst apply.
+    # workday:
+    #   hourly: 4
+    #   daily: 20
+  global_cap:
+    hourly: 15
+    daily: 60

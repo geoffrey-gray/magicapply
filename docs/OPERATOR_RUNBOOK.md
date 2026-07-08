@@ -329,3 +329,92 @@ bundle, flip the manifest row to `pass`, and re-run the acceptance test.
 A dedicated live pytest driver is Phase 2. Skipped entries (e.g. LinkedIn
 Easy Apply) are excluded from every denominator; document the reason in
 `skip_reason`.
+
+---
+
+## 12. Proxy rotation and application throttle
+
+Two guardrails introduced together on the `proxy_rotation` branch:
+
+### 12.1 Rotating proxy pool (Cloudflare defeat on Indeed / Glassdoor)
+
+Enable in `configs/base_config.yaml`:
+
+```yaml
+proxies:
+  enabled: true
+  providers:
+    - type: free_list_scraper
+      sources: []          # empty = use the shipped GitHub feeds
+    - type: static_list
+      entries: []          # your hand-verified proxies, if any
+```
+
+Defaults:
+
+- Free-list feeds shipped: `TheSpeedX/PROXY-List`, `roosterkid/openproxylist`,
+  `monosans/proxy-list`, `proxyscrape` free tier (US).
+- Health check: HEAD `https://httpbin.org/ip` (5 s timeout, 20 parallel).
+- Cooldown: burned proxies stay out 15 min.
+
+Providers are walked in first-non-empty fallback order. Add a `vps_pool`
+or `commercial` provider later without any code change — just prepend
+the entry.
+
+**Retry-on-block:** Indeed and Glassdoor requeue blocked queries with a
+fresh proxy (up to `max_query_retries = 3`). The pool goes from
+~20–40 % per-proxy success rate to ~90 %+ per-query success across the
+rotation. Both adapters bump `RateLimiter.jitter_ratio` to 0.3 so
+request timing isn't rhythmically identical.
+
+**Live probe:**
+
+```bash
+ssh magicapply-dev '… uv run magicapply discover staff-ds --root configs'
+```
+
+Expected shape when proxies work:
+
+```
+discovered: N (mix across LinkedIn / Indeed / Glassdoor / greenhouse-boards)
+duplicates: M
+already seen: K
+scored: N
+rejected: R
+```
+
+No `bot protection` warnings for Indeed/Glassdoor. If they show up
+anyway, the free lists were dry that day — either bump
+`refresh_interval_minutes` or add hand-curated entries to `static_list`.
+
+### 12.2 Apply throttle
+
+Prevents flooding any single ATS. Config:
+
+```yaml
+apply_throttle:
+  ats_default:      {hourly: 6, daily: 25}
+  ats_overrides:
+    workday:        {hourly: 4, daily: 20}
+  global_cap:       {hourly: 15, daily: 60}
+```
+
+On a cap breach, the application stays in TAILORED — the next batch
+handles it when the window rolls. No manual intervention. Real
+submissions and dry-runs both count against the cap because both
+generate ATS traffic. Verify with:
+
+```bash
+ssh magicapply-dev '… uv run magicapply run staff-ds --root configs --no-submit'
+```
+
+Deferred rows show up as `TAILORED` in `magicapply status`; the deferral
+reason is recorded in the Application error field.
+
+### 12.3 Fair cross-source dedup
+
+Cross-source collisions on `dedup_key = f"{company}::{title}"` now pick
+the source with the fewest APPLIED rows in the last 24 h. That
+distributes future apply attempts across LinkedIn / Indeed / Glassdoor
+/ greenhouse-boards. No config knob — always on when a `SqlApplications
+Repository` is present (i.e. every production discover run).

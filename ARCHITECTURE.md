@@ -213,6 +213,8 @@ MagicApply is designed to be **highly configurable**. The following should live 
 - Keyword banks
 - ATS-specific behavior preferences
 - **Router regex tables** — identity / yes-no / DEI / consent / handler-owned patterns live in `src/magicapply/infrastructure/browser/ats/resources/router_rules.yaml` (package default). Operators override by dropping a `router_rules.yaml` into their config root.
+- **Rotating proxy pool** — `configs/base_config.yaml::proxies` declares `enabled`, `providers` (fallback list), health-check target + workers, and cooldown. Providers ship as `static_list` (operator-curated YAML) and `free_list_scraper` (community proxy feeds); a `FallbackProvider` wraps the list in first-non-empty priority order. Cloudflare-adjacent adapters (Indeed / Glassdoor) burn dead proxies and requeue blocked queries.
+- **Apply throttle caps** — `configs/base_config.yaml::apply_throttle` sets per-ATS hourly + daily caps (`ats_default` + `ats_overrides`) and a `global_cap`. On breach, `ApplyPipeline` defers the application (stays TAILORED) so the next batch handles it when the window rolls.
 
 ---
 
