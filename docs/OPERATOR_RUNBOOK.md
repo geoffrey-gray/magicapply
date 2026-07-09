@@ -418,3 +418,86 @@ the source with the fewest APPLIED rows in the last 24 h. That
 distributes future apply attempts across LinkedIn / Indeed / Glassdoor
 / greenhouse-boards. No config knob — always on when a `SqlApplications
 Repository` is present (i.e. every production discover run).
+
+---
+
+## 13. Session cookies for Indeed and Glassdoor
+
+Free proxies are 0% effective against Cloudflare on Indeed and Glassdoor
+(empirically verified: 40-sample probe across 6 free lists, 0 hits per
+target — see commit `9d28bb5`). Authenticated session cookies are the
+free path that actually works: Cloudflare mostly skips logged-in traffic
+because their bot detection is calibrated for anonymous visitors. This
+mirrors what `LINKEDIN_LI_AT` already does for LinkedIn.
+
+### 13.1 Extract cookies from your browser
+
+1. Log into `indeed.com` (and/or `glassdoor.com`) in your regular
+   browser. Not incognito — you want a stable, long-lived session.
+2. Open DevTools (F12) → **Network** tab → reload the page → click any
+   request that hits the target domain (e.g. `indeed.com/jobs`).
+3. In the request's **Headers** panel, scroll to **Request Headers**,
+   find the `Cookie:` line, and copy the whole value after `Cookie: `.
+   That's the semicolon-separated `name=value` string you want.
+
+Alternative: DevTools → **Application** tab → **Cookies** → pick the
+domain → copy each `Name=Value` pair by hand. Slower but works when the
+Network tab is empty.
+
+### 13.2 Paste into `.env`
+
+```bash
+# .env  (host-side, loaded automatically at CLI startup)
+MAGICAPPLY_INDEED_ACK=1
+INDEED_SESSION_COOKIES=CTK=abc123; PPID=def456; INDEED_CSRF_TOKEN=xyz; SURF=...
+
+MAGICAPPLY_GLASSDOOR_ACK=1
+GLASSDOOR_SESSION_COOKIES=gdSession=xyz; ipc=abc; ...
+```
+
+**What cookies matter:** for Indeed the primary tokens are `CTK`, `PPID`,
+`INDEED_CSRF_TOKEN`, and `SURF` — but you can safely paste the entire
+`Cookie:` header value; the server ignores what it doesn't recognise.
+For Glassdoor `gdSession` alone often works; use the multi-cookie env
+var when the single-cookie fallback isn't enough.
+
+Legacy `GLASSDOOR_SESSION=<gdSession_value>` still works for backwards
+compat — the two Glassdoor env vars combine when both are set.
+
+### 13.3 Verify
+
+```bash
+ssh magicapply-dev '… uv run magicapply discover staff-ds --root configs'
+```
+
+Expected: jobs from `indeed-search` and `glassdoor-search` in addition
+to LinkedIn. No `bot protection` warnings. Confirm with:
+
+```bash
+sqlite3 data/magicapply.sqlite3 \
+  "SELECT source_name, count(*) FROM jobs
+   WHERE datetime(discovered_at) > datetime('now', '-10 minutes')
+   GROUP BY source_name;"
+```
+
+Each of the three sources should contribute ≥ 1 fresh row.
+
+### 13.4 When cookies expire
+
+Auth cookies typically live 1–30 days depending on the site's "keep me
+signed in" behavior. When `discover` starts logging `bot protection`
+warnings again, log in via browser, extract fresh cookies, replace the
+`.env` values. That's the whole refresh cycle — no cronjob, no
+automation, just occasional re-paste.
+
+### 13.5 Cookies × proxies
+
+Cookies win. When either `INDEED_SESSION_COOKIES` /
+`GLASSDOOR_SESSION_COOKIES` / `GLASSDOOR_SESSION` is set, the adapter
+routes every fetch through the shared browser context and ignores the
+proxy pool for that source. Per-proxy contexts are anonymous by design
+and would break the authenticated session; also, "same account from
+multiple IPs" is itself a bot-detection signal. The proxy pool stays
+active for any source without cookies (e.g. it's still available for
+LinkedIn if you ever wanted it, though `LINKEDIN_LI_AT` follows the
+same skip-pool rule).

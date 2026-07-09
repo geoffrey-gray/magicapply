@@ -35,7 +35,7 @@ from magicapply.config.models import IndeedSource
 from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
 from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
-from magicapply.infrastructure.sources.base import SourceError
+from magicapply.infrastructure.sources.base import SourceError, parse_cookie_string
 from magicapply.infrastructure.sources.jsonld import (
     extract_jobposting_dicts,
     jsonld_to_job,
@@ -73,6 +73,7 @@ class IndeedAdapter:
         enrich_apply_urls: bool = True,
         proxy_pool: ProxyPool | None = None,
         max_query_retries: int = _DEFAULT_MAX_QUERY_RETRIES,
+        session_cookies: list[dict] | None = None,
     ) -> None:
         self.name = name
         self._queries = list(queries)
@@ -82,6 +83,14 @@ class IndeedAdapter:
         self._enrich_apply_urls = enrich_apply_urls
         self._proxy_pool = proxy_pool
         self._max_query_retries = max(1, int(max_query_retries))
+        self._session_cookies = session_cookies or None
+
+    def _effective_proxy_pool(self) -> ProxyPool | None:
+        """Cookies-win-over-proxies: when session cookies are configured,
+        the adapter routes every fetch through the shared context (no
+        proxy rotation). Called from both `discover()` and
+        `_search_one_query` so the rule stays consistent."""
+        return None if self._session_cookies else self._proxy_pool
 
     @classmethod
     def from_config(
@@ -90,6 +99,12 @@ class IndeedAdapter:
         *,
         proxy_pool: ProxyPool | None = None,
     ) -> IndeedAdapter:
+        cookie_env = os.environ.get("INDEED_SESSION_COOKIES")
+        session_cookies = (
+            parse_cookie_string(cookie_env, domain=".indeed.com")
+            if cookie_env
+            else None
+        )
         return cls(
             name=config.name,
             queries=list(config.queries),
@@ -98,6 +113,7 @@ class IndeedAdapter:
             acknowledged=os.environ.get("MAGICAPPLY_INDEED_ACK") == "1",
             enrich_apply_urls=config.enrich_apply_urls,
             proxy_pool=proxy_pool,
+            session_cookies=session_cookies,
         )
 
     def discover(self) -> Iterator[Job]:
@@ -111,7 +127,19 @@ class IndeedAdapter:
             return
 
         rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
-        with PlaywrightSession(headless=True, proxy_pool=self._proxy_pool) as session:
+        # Cookies win over proxies. Per-proxy contexts (spun by
+        # `session.new_page(proxy=...)`) are anonymous and would break
+        # any auth session — same-account-from-multiple-IPs is also a
+        # bot-detection signal. When cookies are present we route every
+        # fetch through the shared context.
+        effective_pool = self._effective_proxy_pool()
+        if self._session_cookies and self._proxy_pool is not None:
+            logger.info(
+                "Indeed: session cookies present, skipping proxy pool for this source"
+            )
+        with PlaywrightSession(headless=True, proxy_pool=effective_pool) as session:
+            if self._session_cookies:
+                session.add_cookies(self._session_cookies)
             queue: deque[tuple[str, int]] = deque((q, 0) for q in self._queries)
             while queue:
                 query, attempts = queue.popleft()
@@ -150,20 +178,21 @@ class IndeedAdapter:
         )
         rate.wait()
 
-        proxy = self._proxy_pool.next() if self._proxy_pool else None
+        pool = self._effective_proxy_pool()
+        proxy = pool.next() if pool else None
         content = _fetch(session, url, proxy=proxy)
         if content is None:
             # Nav timeout / network error. Treat the same as a bot block
             # when we have a proxy pool: burn the proxy and requeue so
             # the pool learns which endpoints are dead-for-Indeed.
-            if self._proxy_pool is not None and proxy is not None:
+            if pool is not None and proxy is not None:
                 _mark_blocked(
-                    session, self._proxy_pool, proxy, kind="timeout", query=query
+                    session, pool, proxy, kind="timeout", query=query
                 )
                 yield _Blocked()
             return
         if looks_like_bot_block(content):
-            _mark_blocked(session, self._proxy_pool, proxy, kind="search", query=query)
+            _mark_blocked(session, pool, proxy, kind="search", query=query)
             yield _Blocked()
             return
 

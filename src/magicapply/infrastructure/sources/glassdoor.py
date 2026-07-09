@@ -32,7 +32,7 @@ from magicapply.config.models import GlassdoorSource
 from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
 from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
-from magicapply.infrastructure.sources.base import SourceError
+from magicapply.infrastructure.sources.base import SourceError, parse_cookie_string
 from magicapply.infrastructure.sources.indeed import _Blocked, looks_like_cloudflare
 from magicapply.infrastructure.sources.jsonld import (
     extract_jobposting_dicts,
@@ -63,6 +63,7 @@ class GlassdoorAdapter:
         enrich_apply_urls: bool = True,
         proxy_pool: ProxyPool | None = None,
         max_query_retries: int = _DEFAULT_MAX_QUERY_RETRIES,
+        session_cookies: list[dict] | None = None,
     ) -> None:
         self.name = name
         self._queries = list(queries)
@@ -72,6 +73,18 @@ class GlassdoorAdapter:
         self._enrich_apply_urls = enrich_apply_urls
         self._proxy_pool = proxy_pool
         self._max_query_retries = max(1, int(max_query_retries))
+        # Multi-cookie env var (`GLASSDOOR_SESSION_COOKIES`) alongside the
+        # legacy single-cookie env var (`GLASSDOOR_SESSION` → `gdSession`
+        # only). Both may be set; both fire.
+        self._session_cookies = session_cookies or None
+
+    def _effective_proxy_pool(self) -> ProxyPool | None:
+        """Cookies-win-over-proxies: either the legacy single-cookie or
+        the multi-cookie env var routes every fetch through the shared
+        context. Called from both `discover()` and `_search_one_query`."""
+        if self._session or self._session_cookies:
+            return None
+        return self._proxy_pool
 
     @classmethod
     def from_config(
@@ -80,6 +93,12 @@ class GlassdoorAdapter:
         *,
         proxy_pool: ProxyPool | None = None,
     ) -> GlassdoorAdapter:
+        cookie_env = os.environ.get("GLASSDOOR_SESSION_COOKIES")
+        session_cookies = (
+            parse_cookie_string(cookie_env, domain=".glassdoor.com")
+            if cookie_env
+            else None
+        )
         return cls(
             name=config.name,
             queries=list(config.queries),
@@ -88,6 +107,7 @@ class GlassdoorAdapter:
             acknowledged=os.environ.get("MAGICAPPLY_GLASSDOOR_ACK") == "1",
             enrich_apply_urls=config.enrich_apply_urls,
             proxy_pool=proxy_pool,
+            session_cookies=session_cookies,
         )
 
     def discover(self) -> Iterator[Job]:
@@ -101,11 +121,22 @@ class GlassdoorAdapter:
             return
 
         rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
-        with PlaywrightSession(headless=True, proxy_pool=self._proxy_pool) as session:
+        # Cookies win over proxies (see `_effective_proxy_pool` docstring).
+        effective_pool = self._effective_proxy_pool()
+        if (self._session or self._session_cookies) and self._proxy_pool is not None:
+            logger.info(
+                "Glassdoor: session cookies present, skipping proxy pool for this source"
+            )
+        with PlaywrightSession(headless=True, proxy_pool=effective_pool) as session:
+            cookies_to_inject: list[dict] = []
             if self._session:
-                # Only wire the auth cookie to the SHARED context — per-proxy
-                # contexts stay anonymous by design.
-                session.add_cookies([_session_cookie(self._session)])
+                # Legacy single-cookie env var — always wires `gdSession`.
+                cookies_to_inject.append(_session_cookie(self._session))
+            if self._session_cookies:
+                # New multi-cookie env var. Both may be set; both fire.
+                cookies_to_inject.extend(self._session_cookies)
+            if cookies_to_inject:
+                session.add_cookies(cookies_to_inject)
             queue: deque[tuple[str, int]] = deque((q, 0) for q in self._queries)
             while queue:
                 query, attempts = queue.popleft()
@@ -135,17 +166,18 @@ class GlassdoorAdapter:
     ) -> Iterator["Job | _Blocked"]:
         url = _SEARCH_URL.format(query=urllib.parse.quote_plus(query))
         rate.wait()
-        proxy = self._proxy_pool.next() if self._proxy_pool else None
+        pool = self._effective_proxy_pool()
+        proxy = pool.next() if pool else None
         content = _fetch(session, url, proxy=proxy)
         if content is None:
-            if self._proxy_pool is not None and proxy is not None:
+            if pool is not None and proxy is not None:
                 _mark_blocked(
-                    session, self._proxy_pool, proxy, kind="timeout", query=query
+                    session, pool, proxy, kind="timeout", query=query
                 )
                 yield _Blocked()
             return
         if looks_like_cloudflare(content):
-            _mark_blocked(session, self._proxy_pool, proxy, kind="search", query=query)
+            _mark_blocked(session, pool, proxy, kind="search", query=query)
             yield _Blocked()
             return
 

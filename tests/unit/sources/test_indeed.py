@@ -44,6 +44,167 @@ def test_from_config_honors_enrich_apply_urls_flag(
     assert adapter._enrich_apply_urls is False
 
 
+class TestSessionCookies:
+    """Indeed cookie support mirrors the LinkedIn pattern: a browser-
+    style `Cookie:` header string in `INDEED_SESSION_COOKIES` gets parsed
+    into Playwright cookie dicts and injected once at session open."""
+
+    def test_missing_env_var_yields_no_cookies(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MAGICAPPLY_INDEED_ACK", "1")
+        monkeypatch.delenv("INDEED_SESSION_COOKIES", raising=False)
+        adapter = IndeedAdapter.from_config(
+            IndeedSource(name="indeed-search", queries=["python"])
+        )
+        assert adapter._session_cookies is None
+
+    def test_env_var_parsed_and_domain_pinned(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("MAGICAPPLY_INDEED_ACK", "1")
+        monkeypatch.setenv(
+            "INDEED_SESSION_COOKIES", "CTK=abc; PPID=def; INDEED_CSRF_TOKEN=xyz"
+        )
+        adapter = IndeedAdapter.from_config(
+            IndeedSource(name="indeed-search", queries=["python"])
+        )
+        assert adapter._session_cookies is not None
+        assert [(c["name"], c["value"]) for c in adapter._session_cookies] == [
+            ("CTK", "abc"),
+            ("PPID", "def"),
+            ("INDEED_CSRF_TOKEN", "xyz"),
+        ]
+        assert all(c["domain"] == ".indeed.com" for c in adapter._session_cookies)
+
+    def test_cookies_injected_via_session_add_cookies(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from magicapply.infrastructure.sources import indeed as mod
+
+        # Non-blocked response so discover() completes on first pass.
+        monkeypatch.setattr(mod, "_fetch", lambda *a, **k: "<html></html>")
+
+        added: list[list[dict]] = []
+
+        class _FakeSession:
+            def __init__(self, **_kwargs) -> None:
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def add_cookies(self, cookies) -> None:
+                added.append(list(cookies))
+
+            def drop_proxy_context(self, _proxy) -> None:  # noqa: ARG002
+                pass
+
+        monkeypatch.setattr(mod, "PlaywrightSession", _FakeSession)
+
+        adapter = IndeedAdapter(
+            name="indeed-search",
+            queries=["python"],
+            location=None,
+            rate_limit_per_minute=6000,
+            acknowledged=True,
+            session_cookies=[{"name": "CTK", "value": "abc"}],
+        )
+        list(adapter.discover())
+        assert added == [[{"name": "CTK", "value": "abc"}]]
+
+    def test_cookies_win_over_proxy_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When cookies are set, the adapter must pass `proxy_pool=None`
+        to `PlaywrightSession` — per-proxy contexts are anonymous and
+        would break the authenticated session."""
+        from magicapply.infrastructure.sources import indeed as mod
+
+        constructor_kwargs: list[dict] = []
+
+        class _FakeSession:
+            def __init__(self, **kwargs) -> None:
+                constructor_kwargs.append(kwargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def add_cookies(self, _cookies) -> None:
+                pass
+
+            def drop_proxy_context(self, _proxy) -> None:  # noqa: ARG002
+                pass
+
+        monkeypatch.setattr(mod, "PlaywrightSession", _FakeSession)
+        monkeypatch.setattr(mod, "_fetch", lambda *a, **k: "<html></html>")
+
+        # Sentinel pool object — never mind that it's not a real ProxyPool.
+        sentinel_pool = object()
+        adapter = IndeedAdapter(
+            name="indeed-search",
+            queries=["python"],
+            location=None,
+            rate_limit_per_minute=6000,
+            acknowledged=True,
+            proxy_pool=sentinel_pool,  # type: ignore[arg-type]
+            session_cookies=[{"name": "CTK", "value": "abc"}],
+        )
+        list(adapter.discover())
+        assert constructor_kwargs == [{"headless": True, "proxy_pool": None}]
+
+    def test_no_cookies_leaves_proxy_pool_active(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Backwards compat: with no cookies, the proxy_pool passes through
+        to the session unchanged."""
+        from magicapply.infrastructure.sources import indeed as mod
+
+        constructor_kwargs: list[dict] = []
+
+        class _FakeSession:
+            def __init__(self, **kwargs) -> None:
+                constructor_kwargs.append(kwargs)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def add_cookies(self, _cookies) -> None:
+                pass
+
+            def drop_proxy_context(self, _proxy) -> None:  # noqa: ARG002
+                pass
+
+        monkeypatch.setattr(mod, "PlaywrightSession", _FakeSession)
+        monkeypatch.setattr(mod, "_fetch", lambda *a, **k: "<html></html>")
+
+        class _StubPool:
+            def next(self):  # noqa: D401
+                return None
+
+        sentinel_pool = _StubPool()
+        adapter = IndeedAdapter(
+            name="indeed-search",
+            queries=["python"],
+            location=None,
+            rate_limit_per_minute=6000,
+            acknowledged=True,
+            proxy_pool=sentinel_pool,  # type: ignore[arg-type]
+            session_cookies=None,
+        )
+        list(adapter.discover())
+        assert constructor_kwargs == [{"headless": True, "proxy_pool": sentinel_pool}]
+
+
 class TestSearchUrlExtractor:
     def test_extracts_viewjob_urls_with_jk(self) -> None:
         html = """
