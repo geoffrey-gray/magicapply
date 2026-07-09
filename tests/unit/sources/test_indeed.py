@@ -9,6 +9,7 @@ from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.indeed import (
     IndeedAdapter,
     extract_job_urls,
+    extract_jobs_from_search,
     looks_like_cloudflare,
 )
 
@@ -228,6 +229,137 @@ class TestSearchUrlExtractor:
     def test_ignores_viewjob_without_jk(self) -> None:
         html = '<html><body><a href="/viewjob?foo=bar">skip</a></body></html>'
         assert extract_job_urls(html) == []
+
+    def test_extracts_modern_data_jk_attribute(self) -> None:
+        """Indeed's modern search page renders job cards as
+        `<a data-jk="…">` and constructs the /viewjob URL client-side.
+        The href attribute is either the same value or a placeholder
+        and the JS builds the real URL. Verified live 2026-07-09: real
+        search page yields 25 data-jk anchors vs. 1 /viewjob href
+        (placeholder), so this branch is essential."""
+        html = """
+        <html><body>
+          <a data-jk="realjob123">First</a>
+          <a data-jk="realjob456" href="/viewjob?jk=realjob456">Second</a>
+          <a data-jk="realjob789">Third</a>
+          <a href="/viewjob?jk=placeholder000">Sponsored placeholder</a>
+        </body></html>
+        """
+        urls = extract_job_urls(html)
+        assert urls == [
+            "https://www.indeed.com/viewjob?jk=placeholder000",
+            "https://www.indeed.com/viewjob?jk=realjob123",
+            "https://www.indeed.com/viewjob?jk=realjob456",
+            "https://www.indeed.com/viewjob?jk=realjob789",
+        ]
+
+    def test_data_jk_and_href_do_not_double_count(self) -> None:
+        html = """
+        <html><body>
+          <a data-jk="abc" href="/viewjob?jk=abc">Same job, both attrs</a>
+        </body></html>
+        """
+        assert extract_job_urls(html) == ["https://www.indeed.com/viewjob?jk=abc"]
+
+
+class TestSearchPageHydrationExtractor:
+    """Verify `extract_jobs_from_search` pulls full Job records straight
+    from the search page's `window.mosaic.initialData` blob, bypassing
+    detail-page fetches. Real data shape captured from a logged-in
+    2026-07-09 Indeed search — mirrored here as a compact synthetic
+    fixture with the same field names."""
+
+    @staticmethod
+    def _hydrated_html(records: list[dict]) -> str:
+        """Wrap a list of job-card dicts in the shape Indeed hydrates."""
+        import json as _json
+        payload = {
+            "metaData": {"isJpBundle": False},
+            "mosaicProviderJobCardsModel": {
+                "results": records,
+                "resultCount": len(records),
+            },
+        }
+        return (
+            "<html><body>"
+            '<script>window.mosaic.providerData["mosaic-provider-jobcards"] = '
+            + _json.dumps(payload)
+            + ";</script></body></html>"
+        )
+
+    def test_extracts_full_job_record(self) -> None:
+        html = self._hydrated_html([
+            {
+                "jobkey": "abc123",
+                "title": "Staff Data Scientist",
+                "company": "Twilio",
+                "formattedLocation": "Remote",
+                "snippet": "<ul><li>ML platforms</li></ul>",
+                "sponsored": False,
+                "indeedApplyable": True,
+                "createDate": 1704067200000,
+            }
+        ])
+        jobs = extract_jobs_from_search(html, source_name="indeed-search")
+        assert len(jobs) == 1
+        j = jobs[0]
+        assert j.title == "Staff Data Scientist"
+        assert j.company == "Twilio"
+        assert j.location == "Remote"
+        assert "ML platforms" in j.description
+        assert j.url == "https://www.indeed.com/viewjob?jk=abc123"
+        assert j.source_name == "indeed-search"
+        assert j.raw["jobkey"] == "abc123"
+        assert j.raw["source_extraction"] == "search-page-hydration"
+
+    def test_dedupes_by_jobkey(self) -> None:
+        html = self._hydrated_html([
+            {"jobkey": "dup1", "title": "Eng", "company": "Acme"},
+            {"jobkey": "dup1", "title": "Eng (repeat card)", "company": "Acme"},
+            {"jobkey": "uniq", "title": "PM", "company": "Beta"},
+        ])
+        jobs = extract_jobs_from_search(html, source_name="indeed-search")
+        assert [j.raw["jobkey"] for j in jobs] == ["dup1", "uniq"]
+
+    def test_skips_records_missing_title_or_company(self) -> None:
+        html = self._hydrated_html([
+            {"jobkey": "a", "title": "OK", "company": "Acme"},
+            {"jobkey": "b", "title": "No company"},
+            {"jobkey": "c", "company": "No title"},
+            {"jobkey": "d", "displayTitle": "Falls back to displayTitle", "company": "Delta"},
+        ])
+        jobs = extract_jobs_from_search(html, source_name="indeed-search")
+        assert [j.raw["jobkey"] for j in jobs] == ["a", "d"]
+
+    def test_missing_hydration_blob_returns_empty(self) -> None:
+        assert extract_jobs_from_search(
+            "<html><body>no hydration here</body></html>",
+            source_name="indeed-search",
+        ) == []
+
+    def test_malformed_json_returns_empty(self) -> None:
+        broken = (
+            '<html><body><script>window.mosaic.initialData = {"country" '
+            "not valid json here.</script></body></html>"
+        )
+        assert extract_jobs_from_search(broken, source_name="indeed-search") == []
+
+    def test_escaped_copy_in_bundle_string_is_ignored(self) -> None:
+        """Indeed's JS bundle contains an escaped copy of the assignment
+        literal. The regex anchors on the unescaped assignment, and
+        raw_decode picks up the last match (the real one)."""
+        html = (
+            "<html><body>"
+            '<script>var bundle = "window.mosaic.providerData[\\"'
+            'mosaic-provider-jobcards\\"] = '
+            r'{\"nothing\":true}";</script>'
+            + self._hydrated_html([
+                {"jobkey": "real1", "title": "Real Job", "company": "Real Co"},
+            ]).replace("<html><body>", "").replace("</body></html>", "")
+            + "</body></html>"
+        )
+        jobs = extract_jobs_from_search(html, source_name="indeed-search")
+        assert [j.raw["jobkey"] for j in jobs] == ["real1"]
 
 
 class TestCloudflareDetection:

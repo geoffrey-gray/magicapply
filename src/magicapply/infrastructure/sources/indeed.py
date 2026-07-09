@@ -1,11 +1,15 @@
 """Indeed adapter — Playwright-driven search with Cloudflare-challenge surfacing.
 
-Per configured query, opens the Indeed search page, walks the
-``/viewjob?jk=<id>`` anchors out of the rendered HTML, fetches each job
-detail page, and extracts its ``schema.org`` ``JobPosting`` JSON-LD block
-(reuses ``sources/jsonld.py``).
+Per configured query, opens the Indeed search page and reads the full
+result set (title, company, location, snippet, ``jobkey``) directly out
+of the ``window.mosaic.initialData`` hydration blob embedded in the
+HTML. Detail-page fetches are skipped by design — Indeed's second-tier
+"Additional Verification Required" interstitial fires on
+``/viewjob?jk=…`` even when the search page loads cleanly, so parsing
+hydration is both more reliable and 10-25× fewer HTTP round trips.
 
-Indeed hides behind Cloudflare. Two escape hatches, in order:
+Indeed hides behind Cloudflare. Two escape hatches for the search page,
+in order:
 
 1. **Proxy rotation** (when a ``ProxyPool`` is injected) — the adapter
    requests a fresh proxy per search attempt. On ``looks_like_bot_block``,
@@ -16,34 +20,33 @@ Indeed hides behind Cloudflare. Two escape hatches, in order:
    retry budget), the query is logged and dropped. Other queries and
    other sources are unaffected.
 
+Session cookies (``INDEED_SESSION_COOKIES``) take precedence over proxy
+rotation — an authenticated session mostly bypasses Cloudflare, and
+per-proxy contexts would break auth anyway.
+
 ToS-sensitive: like LinkedIn, requires an explicit acknowledgement
 (``MAGICAPPLY_INDEED_ACK=1``) before making requests.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import urllib.parse
 from collections import deque
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import Any
 
 from lxml import html as lhtml
 
 from magicapply.config.models import IndeedSource
+from magicapply.domain.models.job import Job
 from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
-from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
 from magicapply.infrastructure.sources.base import SourceError, parse_cookie_string
-from magicapply.infrastructure.sources.jsonld import (
-    extract_jobposting_dicts,
-    jsonld_to_job,
-)
 from magicapply.infrastructure.sources.rate_limit import RateLimiter
-
-if TYPE_CHECKING:
-    from magicapply.domain.models.job import Job
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +58,23 @@ _BOT_BLOCK_MARKERS = (
     "just a moment...",
     "checking your browser",
     "blocked - indeed.com",
+    # Indeed's second-tier interstitial (post-Cloudflare). Fires on detail
+    # pages when we survive the CF challenge but Indeed still rate-limits.
+    # We no longer fetch detail pages, but the marker stays as a
+    # search-page defensive check.
+    "additional verification required",
+    "security check - indeed.com",
+)
+
+# Indeed hydrates the search results into a JS global before rendering.
+# The job card list lives under
+# `window.mosaic.providerData["mosaic-provider-jobcards"] = {…}`, wrapping
+# a `mosaicProviderJobCardsModel.results` array. `initialData` is a
+# separate, smaller blob holding page-level metadata (country, csrf, …)
+# — not the jobs. Anchor on the opening `{` after the assignment so
+# `raw_decode` picks up the object literal cleanly.
+_JOB_CARDS_BLOB_RE = re.compile(
+    r'window\.mosaic\.providerData\[["\']mosaic-provider-jobcards["\']\]\s*=\s*(\{)'
 )
 
 _DEFAULT_MAX_QUERY_RETRIES = 3
@@ -196,34 +216,20 @@ class IndeedAdapter:
             yield _Blocked()
             return
 
-        job_urls = extract_job_urls(content)
-        for job_url in job_urls:
-            rate.wait()
-            # Reuse the same proxy that worked for the search page — the
-            # per-context state is already warm and Cloudflare-cleared.
-            job_html = _fetch(session, job_url, proxy=proxy)
-            if job_html is None:
-                continue
-            if looks_like_bot_block(job_html):
-                logger.warning(
-                    "Indeed blocked by bot protection on detail page %s; skipping",
-                    job_url,
-                )
-                continue
-            for posting in extract_jobposting_dicts(job_html):
-                try:
-                    job = jsonld_to_job(
-                        posting, source_name=self.name, fallback_url=job_url
-                    )
-                    if self._enrich_apply_urls:
-                        job = enrich_job_from_detail_html(
-                            job, job_html, source="indeed"
-                        )
-                    yield job
-                except (KeyError, TypeError, ValueError) as exc:
-                    logger.warning(
-                        "Indeed skip malformed JSON-LD from %s: %s", job_url, exc
-                    )
+        # Full job records (title/company/location/snippet) are embedded
+        # in the search page's `window.mosaic.initialData` hydration blob.
+        # Skipping per-jk detail-page fetches sidesteps Indeed's
+        # second-tier "Additional Verification Required" wall that fires
+        # on `/viewjob?jk=…` even after the search page loads cleanly.
+        jobs = extract_jobs_from_search(content, source_name=self.name)
+        if not jobs and extract_job_urls(content):
+            logger.warning(
+                "Indeed search page for %r has %d job URLs but no hydration "
+                "records — check if the mosaic.initialData shape changed",
+                query, len(extract_job_urls(content)),
+            )
+        for job in jobs:
+            yield job
 
 
 class _Blocked:
@@ -281,28 +287,122 @@ def _mark_blocked(
         )
 
 
+def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
+    """Parse full ``Job`` records from an Indeed search page's hydration
+    blob (``window.mosaic.providerData["mosaic-provider-jobcards"]``).
+
+    Indeed embeds every result on the page — title, company,
+    ``formattedLocation``, HTML snippet, ``jobkey``, apply/redirect URLs
+    — into a JSON literal assigned to a JS global before rendering.
+    Parsing that blob directly means we never navigate to
+    ``/viewjob?jk=…`` for each result, sidestepping Indeed's second-tier
+    "Additional Verification Required" interstitial that fires on those
+    URLs even when the search page loaded cleanly.
+
+    Returns ``[]`` when the hydration blob is absent or malformed; the
+    caller decides whether that means "empty search" or "shape changed"
+    based on whether ``extract_job_urls`` finds candidate ``data-jk``
+    anchors."""
+    matches = list(_JOB_CARDS_BLOB_RE.finditer(html))
+    if not matches:
+        return []
+    # Escaped copies live inside the JS bundle string literal. The real
+    # payload is the last match — its `{` is unescaped.
+    start = matches[-1].start(1)
+    try:
+        data, _ = json.JSONDecoder().raw_decode(html[start:])
+    except json.JSONDecodeError as exc:
+        logger.warning("Indeed job-cards blob failed to parse: %s", exc)
+        return []
+
+    jobs: list[Job] = []
+    seen: set[str] = set()
+    for record in _walk_for_job_records(data):
+        jk = record.get("jobkey")
+        if not isinstance(jk, str) or jk in seen:
+            continue
+        title = record.get("title") or record.get("displayTitle")
+        company = record.get("company")
+        if not (title and company):
+            continue
+        seen.add(jk)
+        jobs.append(
+            Job.new(
+                source_name=source_name,
+                url=f"https://www.indeed.com/viewjob?jk={jk}",
+                title=str(title),
+                company=str(company),
+                description=str(record.get("snippet") or ""),
+                location=str(record["formattedLocation"])
+                if record.get("formattedLocation")
+                else None,
+                raw={
+                    "jobkey": jk,
+                    "createDate": record.get("createDate"),
+                    "pubDate": record.get("pubDate"),
+                    "sourceId": record.get("sourceId"),
+                    "sponsored": record.get("sponsored"),
+                    "indeedApplyable": record.get("indeedApplyable"),
+                    "thirdPartyApplyUrl": record.get("thirdPartyApplyUrl"),
+                    "source_extraction": "search-page-hydration",
+                },
+            )
+        )
+    return jobs
+
+
+def _walk_for_job_records(node: Any) -> list[dict[str, Any]]:
+    """Depth-first walk of the parsed hydration dict, collecting any node
+    that looks like an Indeed job record (a dict with a string
+    ``jobkey``). Handles arbitrary nesting under ``mosaicProviderJobCards``
+    / ``results`` / etc. without hard-coding paths."""
+    out: list[dict[str, Any]] = []
+    if isinstance(node, dict):
+        if isinstance(node.get("jobkey"), str):
+            out.append(node)
+        for v in node.values():
+            out.extend(_walk_for_job_records(v))
+    elif isinstance(node, list):
+        for v in node:
+            out.extend(_walk_for_job_records(v))
+    return out
+
+
 def extract_job_urls(html: str) -> list[str]:
-    """Pull ``/viewjob?jk=<id>`` URLs out of an Indeed search HTML page."""
+    """Pull ``/viewjob?jk=<id>`` URLs out of an Indeed search HTML page.
+
+    Indeed's modern search page renders cards as ``<a data-jk="…">`` and
+    constructs the ``/viewjob?jk=…`` URL client-side — the ``href``
+    attribute is either the same value or a placeholder. Empirically
+    verified: a real search page shows 25 ``data-jk`` anchors but only
+    1 ``href*="/viewjob"`` anchor (a sponsored/example card).
+
+    We accept both shapes: the modern ``data-jk`` attribute (primary) and
+    the legacy ``href="/viewjob?jk=…"`` fallback for older snapshots or
+    static captures used in tests / fixtures. Both funnel through the
+    same JK-→-canonical-URL builder so downstream code is unchanged."""
     tree = lhtml.fromstring(html)
-    urls: set[str] = set()
+    jks: set[str] = set()
+    # Modern: <a data-jk="…"> cards.
+    for anchor in tree.xpath("//a[@data-jk]"):
+        jk = (anchor.get("data-jk") or "").strip()
+        if jk:
+            jks.add(jk)
+    # Legacy / fallback: <a href="/viewjob?jk=…">.
     for anchor in tree.xpath("//a[contains(@href, '/viewjob')]"):
         href = (anchor.get("href") or "").strip()
         if "jk=" not in href:
             continue
-        if href.startswith("/"):
-            href = f"https://www.indeed.com{href}"
-        # Keep the jk parameter; drop everything else.
-        parts = urllib.parse.urlsplit(href)
+        parts = urllib.parse.urlsplit(
+            href if href.startswith("http") else f"https://www.indeed.com{href}"
+        )
         query = urllib.parse.parse_qs(parts.query)
         jk = query.get("jk", [""])[0]
-        if not jk:
-            continue
-        urls.add(
-            urllib.parse.urlunsplit(
-                (parts.scheme, parts.netloc, "/viewjob", f"jk={jk}", "")
-            )
-        )
-    return sorted(urls)
+        if jk:
+            jks.add(jk)
+    return sorted(
+        f"https://www.indeed.com/viewjob?jk={jk}" for jk in jks
+    )
 
 
 def looks_like_bot_block(html: str) -> bool:
