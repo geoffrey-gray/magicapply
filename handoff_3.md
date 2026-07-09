@@ -217,9 +217,11 @@ Do **not** start: review web UI, Alembic, new ATS, aggressive scraper scaling.
 
 ## 8. Commits landed with this handoff
 
-*(Filled by the commit that adds this file — see `git log` on `main`.)*
+| SHA | Summary |
+|-----|---------|
+| `9307f26` | Keyword scoring, volume drip discovery, auth login, form fixes (+ handoff_2/3, runbook §8) |
 
-Uncommitted intentionally left out:
+Untracked intentionally left out:
 
 - `scratch/` — probes only  
 - `configs/curated_proxies.yaml` — ephemeral free-proxy list  
