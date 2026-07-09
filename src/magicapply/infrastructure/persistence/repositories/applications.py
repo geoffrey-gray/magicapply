@@ -158,6 +158,8 @@ def _domain_to_row(app: Application) -> ApplicationRow:
         state=app.state.value,
         score=app.score,
         score_rationale=app.score_rationale,
+        score_after_tailor=app.score_after_tailor,
+        score_after_rationale=app.score_after_rationale,
         error=app.error,
         attempts=app.attempts,
         tailored_path=app.tailored_path,
@@ -172,6 +174,8 @@ def _copy_domain_into_row(app: Application, row: ApplicationRow) -> None:
     row.state = app.state.value
     row.score = app.score
     row.score_rationale = app.score_rationale
+    row.score_after_tailor = app.score_after_tailor
+    row.score_after_rationale = app.score_after_rationale
     row.error = app.error
     row.attempts = app.attempts
     row.tailored_path = app.tailored_path
@@ -188,6 +192,8 @@ def _row_to_domain(row: ApplicationRow) -> Application:
         state=ApplicationState(row.state),
         score=row.score,
         score_rationale=row.score_rationale,
+        score_after_tailor=row.score_after_tailor,
+        score_after_rationale=row.score_after_rationale,
         error=row.error,
         attempts=row.attempts,
         tailored_path=row.tailored_path,

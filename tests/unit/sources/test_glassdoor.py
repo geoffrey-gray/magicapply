@@ -301,4 +301,5 @@ class TestSessionCookies:
             proxy_pool=sentinel_pool,  # type: ignore[arg-type]
         )
         list(adapter.discover())
-        assert constructor_kwargs == [{"headless": True, "proxy_pool": None}]
+        assert constructor_kwargs[0]["headless"] is True
+        assert constructor_kwargs[0]["proxy_pool"] is None

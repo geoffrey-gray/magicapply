@@ -118,11 +118,15 @@ class AnswerRouter:
             if years_match:
                 need = int(years_match.group(1))
                 has = self._answers.years_of_experience or 0
-                option = _match_yes_no_option(field.options, has >= need)
+                option = _match_yes_no_option(
+                    field.options, has >= need, attr="experience_years"
+                )
                 if option is not None:
                     return ResolvedAnswer("select", option)
             if self._rules.skill_screening.pattern.search(label):
-                option = _match_yes_no_option(field.options, True)
+                option = _match_yes_no_option(
+                    field.options, True, attr="skill_screening"
+                )
                 if option is not None:
                     return ResolvedAnswer("select", option)
 
@@ -130,14 +134,18 @@ class AnswerRouter:
                 if rule.pattern.search(label):
                     attr = rule.attr
                     if attr == "_us_located":
-                        option = _match_yes_no_option(field.options, True)
+                        option = _match_yes_no_option(
+                            field.options, True, attr=attr
+                        )
                         if option is None:
                             return ResolvedAnswer("unhandled")
                         return ResolvedAnswer("select", option)
                     value = getattr(self._answers, attr, None)
                     if value is None:
                         return ResolvedAnswer("unhandled")
-                    option = _match_yes_no_option(field.options, value)
+                    option = _match_yes_no_option(
+                        field.options, bool(value), attr=attr
+                    )
                     if option is None:
                         return ResolvedAnswer("unhandled")
                     return ResolvedAnswer("select", option)
@@ -205,17 +213,33 @@ class AnswerRouter:
                 )
             return ResolvedAnswer("unhandled")
 
-        # 4. Text / textarea — identity patterns win first, then anything
-        #    that reads like a screening question goes to the narrative
-        #    engine. "Cover letter" and similar known-handler-owned
-        #    textareas fall through to unhandled so the handler's explicit
-        #    fill is not overwritten.
+        # 4. Text / textarea.
+        # Order: Workday-owned labels → identity → yes/no → DEI → narrative.
+        # Handler-owned runs before identity so "Country Phone Code" does not
+        # match the generic country/phone identity rules (Workday multiselect).
+        # Greenhouse "How did you hear" is identity (not handler_owned); Workday
+        # source widgets skip via workday_multiselect variant at step 0.
         if field.kind in {"text", "textarea"}:
             if any(rule.pattern.search(label) for rule in self._rules.handler_owned_widget):
                 return ResolvedAnswer("unhandled")
+
             for rule in self._rules.identity:
                 if rule.pattern.search(label):
                     return _identity_answer(rule.attr, self._answers)
+
+            for rule in self._rules.yes_no:
+                if rule.pattern.search(label):
+                    attr = rule.attr
+                    if attr == "_us_located":
+                        return ResolvedAnswer("static", "Yes")
+                    value = getattr(self._answers, attr, None)
+                    if value is None:
+                        return ResolvedAnswer("unhandled")
+                    return ResolvedAnswer("static", "Yes" if value else "No")
+
+            for rule in self._rules.dei:
+                if rule.pattern.search(label):
+                    return _dei_text_answer(rule.attr, self._answers)
 
             if _is_handler_owned_textarea(label):
                 return ResolvedAnswer("unhandled")
@@ -238,6 +262,21 @@ def _identity_answer(attr: str, answers: StaticAnswers) -> ResolvedAnswer:
     return ResolvedAnswer("static", str(value))
 
 
+_DEI_DECLINE = "Decline to state"
+
+
+def _dei_text_answer(attr: str, answers: StaticAnswers) -> ResolvedAnswer:
+    """Free-text DEI screens (Greenhouse custom questions mis-typed as text).
+
+    Operator-null DEI attrs mean "decline" — never invent a demographic value
+    and never hand the mock narrative a Yes/No-shaped question.
+    """
+    value = getattr(answers, attr, None)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return ResolvedAnswer("static", _DEI_DECLINE)
+    return ResolvedAnswer("static", str(value))
+
+
 def _first_name(full_name: str) -> str:
     parts = full_name.strip().split()
     return parts[0] if parts else ""
@@ -248,8 +287,19 @@ def _last_name(full_name: str) -> str:
     return " ".join(parts[1:]) if len(parts) > 1 else ""
 
 
-def _match_yes_no_option(options: list[str], truthy: bool) -> str | None:
-    """Given [Yes, No] / [yes, no] / [true, false] pick the matching one."""
+def _match_yes_no_option(
+    options: list[str],
+    truthy: bool,
+    *,
+    attr: str | None = None,
+) -> str | None:
+    """Pick a radio/select option for a boolean StaticAnswers attr.
+
+    Handles short Yes/No widgets and longer ATS phrases such as
+    "I am authorized to work in the US without sponsorship" /
+    "I need H-1B sponsorship". ``attr`` disambiguates sponsorship vs
+    work-auth so the same option list maps correctly for both.
+    """
     positives = {"yes", "true", "1", "y"}
     negatives = {"no", "false", "0", "n"}
     for opt in options:
@@ -259,6 +309,53 @@ def _match_yes_no_option(options: list[str], truthy: bool) -> str | None:
                 return opt
         elif lo in negatives or lo.startswith("no"):
             return opt
+
+    without_sponsorship: list[str] = []
+    needs_sponsorship: list[str] = []
+    authorized: list[str] = []
+    for opt in options:
+        lo = opt.strip().lower()
+        if not lo:
+            continue
+        if "without sponsorship" in lo or "no sponsorship" in lo:
+            without_sponsorship.append(opt)
+        elif re.search(
+            r"\bneed(?:s)?\b.*sponsorship|sponsorship required|"
+            r"require(?:s)? sponsorship|h-?1b|visa sponsorship",
+            lo,
+        ):
+            needs_sponsorship.append(opt)
+        elif (
+            "authorized to work" in lo
+            or "legally authorized" in lo
+            or "citizen" in lo
+            or "green card" in lo
+            or "green-card" in lo
+        ):
+            authorized.append(opt)
+
+    if attr == "needs_sponsorship_us":
+        # True → must pick a "I need sponsorship" option; False → without.
+        if truthy:
+            return needs_sponsorship[0] if needs_sponsorship else None
+        if without_sponsorship:
+            return without_sponsorship[0]
+        if authorized:
+            return authorized[0]
+        return None
+
+    # authorized_to_work_us / experience / skill / generic:
+    # True → without-sponsorship or authorized/citizen phrasing.
+    if truthy:
+        if without_sponsorship:
+            return without_sponsorship[0]
+        if authorized:
+            return authorized[0]
+        return None
+
+    # truthy=False for authorization → needs-sponsorship / not authorized.
+    if needs_sponsorship:
+        return needs_sponsorship[0]
     return None
 
 
@@ -314,14 +411,17 @@ def _match_option_by_substring(options: list[str], answer: str) -> str | None:
 
 
 def _looks_open_ended(label: str) -> bool:
-    """Heuristic: labels that read like screening questions."""
+    """Heuristic: labels that read like screening questions.
+
+    Deliberately omits "how did you" — source questions resolve via
+    ``how_did_you_hear`` identity. A bare ``?`` still catches open screens.
+    """
     return any(
         marker in label
         for marker in (
             "why ",
             "tell us",
             "describe",
-            "how did you",
             "what interests",
             "why are you",
             "?",

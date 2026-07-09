@@ -94,7 +94,8 @@ _JOBS: list[dict[str, Any]] = [
         "location": "Remote",
         "description": (
             "Lead engineering teams across the platform group. "
-            "You will partner with product and design."
+            "You will partner with product and design. "
+            "Requires Python and distributed systems experience."
         ),
     },
 ]
@@ -145,21 +146,21 @@ _CROSS_ATS_JOBS: list[dict[str, Any]] = [
         "title": "Senior Platform Engineer",
         "company": "Beta",
         "location": "Remote",
-        "description": "Distributed platform work.",
+        "description": "Distributed systems and platform work in Python.",
     },
     {
         "path": "/jobs.lever.co/senior-sre/apply",
         "title": "Senior SRE",
         "company": "Gamma",
         "location": "Remote",
-        "description": "Reliability engineering.",
+        "description": "Reliability engineering with Python and distributed systems.",
     },
     {
         "path": "/jobs.ashbyhq.com/staff-swe/application",
         "title": "Staff Software Engineer",
         "company": "Delta",
         "location": "Remote",
-        "description": "Backend + platform.",
+        "description": "Backend + platform with Python and distributed systems.",
     },
 ]
 

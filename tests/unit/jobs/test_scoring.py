@@ -1,10 +1,16 @@
-"""Tests for prefilter, LLM scorer, and composed JobScorer."""
+"""Tests for prefilter, LLM scorer, keyword scorer, and composed JobScorer."""
 
 from __future__ import annotations
 
-from magicapply.config.models import ScoringConfig, ScoringPrefilter
+from magicapply.config.models import (
+    KeywordBank,
+    KeywordEntry,
+    ScoringConfig,
+    ScoringPrefilter,
+)
 from magicapply.domain.jobs.scoring import (
     JobScorer,
+    KeywordAlignmentScorer,
     LLMScorer,
     Prefilter,
     Score,
@@ -97,11 +103,49 @@ class TestLLMScorer:
         assert any("RESUME CONTENT" in b.text for b in call.system if b.cacheable)
 
 
+class TestKeywordAlignmentScorer:
+    def test_scores_jd_terms_present_on_resume(self) -> None:
+        bank = KeywordBank(
+            keywords=[
+                KeywordEntry(term="python", evidence="years of python"),
+                KeywordEntry(
+                    term="distributed systems",
+                    synonyms=["microservices"],
+                    evidence="built microservices",
+                ),
+            ]
+        )
+        scorer = KeywordAlignmentScorer(
+            resume_text="Skills: python, kubernetes. Built APIs.",
+            bank=bank,
+        )
+        # JD mentions python + distributed systems; resume only has python.
+        s = scorer.score(
+            _job(description="We use Python and distributed systems daily.")
+        )
+        assert s.value == 50
+        assert "1/2" in s.rationale
+
+    def test_full_coverage_is_100(self) -> None:
+        bank = KeywordBank(
+            keywords=[KeywordEntry(term="python", evidence="e")]
+        )
+        scorer = KeywordAlignmentScorer(
+            resume_text="Primary language: Python.",
+            bank=bank,
+        )
+        s = scorer.score(_job(description="Must know Python."))
+        assert s.value == 100
+
+
 class TestJobScorer:
     def test_prefilter_miss_short_circuits(self) -> None:
         llm = MockLLMClient("should-not-be-called")
         cfg = ScoringConfig(prefilter=ScoringPrefilter(exclude=["python"]))
-        combined = JobScorer(Prefilter(cfg), LLMScorer(llm, base_resume_text="R", scoring_prompt="score it"))
+        combined = JobScorer(
+            Prefilter(cfg),
+            LLMScorer(llm, base_resume_text="R", scoring_prompt="score it"),
+        )
         s = combined.score(_job())
         assert s.value == 0
         assert "prefilter" in s.rationale
@@ -109,7 +153,22 @@ class TestJobScorer:
 
     def test_prefilter_pass_calls_llm(self) -> None:
         llm = MockLLMClient('{"score": 88, "rationale": "great"}')
-        combined = JobScorer(Prefilter(ScoringConfig()), LLMScorer(llm, base_resume_text="R", scoring_prompt="score it"))
+        combined = JobScorer(
+            Prefilter(ScoringConfig()),
+            LLMScorer(llm, base_resume_text="R", scoring_prompt="score it"),
+        )
         s = combined.score(_job())
         assert s == Score(value=88, rationale="great")
         assert len(llm.calls) == 1
+
+    def test_prefilter_pass_calls_keyword_fit(self) -> None:
+        bank = KeywordBank(
+            keywords=[KeywordEntry(term="python", evidence="e")]
+        )
+        combined = JobScorer(
+            Prefilter(ScoringConfig()),
+            KeywordAlignmentScorer(resume_text="I use Python daily.", bank=bank),
+        )
+        s = combined.score(_job(description="Python required."))
+        assert s.value == 100
+        assert "keyword alignment" in s.rationale

@@ -148,6 +148,14 @@ class TestHappyPath:
         # Rendered DOCX sits alongside the source artifacts for ATS upload.
         docx = app_dir / "resume.docx"
         assert docx.exists()
+        # Post-tailor keyword alignment (empty bank → 0) still written.
+        assert reloaded.score_after_tailor is not None
+        assert (app_dir / "alignment.json").exists()
+        import json
+
+        alignment = json.loads((app_dir / "alignment.json").read_text())
+        assert "before" in alignment and "after" in alignment
+        assert "delta" in alignment
         assert docx.read_bytes()[:4] == b"PK\x03\x04"
 
     def test_resume_yaml_parses_as_tailored_resume(

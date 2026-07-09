@@ -39,6 +39,8 @@ class ApplicationRow(SQLModel, table=True):
     state: str = Field(index=True)
     score: int | None = None
     score_rationale: str | None = None
+    score_after_tailor: int | None = None
+    score_after_rationale: str | None = None
     error: str | None = None
     attempts: int = 0
     tailored_path: str | None = None

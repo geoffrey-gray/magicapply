@@ -97,6 +97,13 @@ class Application(BaseModel):
     state: ApplicationState = ApplicationState.DISCOVERED
     score: int | None = Field(default=None, ge=0, le=100)
     score_rationale: str | None = None
+    score_after_tailor: int | None = Field(default=None, ge=0, le=100)
+    """Keyword-alignment score re-measured on the tailored resume artifact.
+
+    Set by the tailoring pipeline so operators can compare lift vs ``score``
+    (pre-tailor base resume). None until tailor has run.
+    """
+    score_after_rationale: str | None = None
     error: str | None = None
     attempts: int = 0
     tailored_path: str | None = None

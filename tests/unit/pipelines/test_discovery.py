@@ -61,7 +61,7 @@ def _pipeline(
     apps_repo = SqlApplicationsRepository(engine)
     scorer = JobScorer(
         prefilter=Prefilter(ScoringConfig(threshold=threshold)),
-        llm_scorer=LLMScorer(
+        fit_scorer=LLMScorer(
             MockLLMClient([response] * 10),
             base_resume_text="R",
             scoring_prompt="score it",

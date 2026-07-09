@@ -224,6 +224,83 @@ class TestSelector:
         [f] = _scan("<form><input name='e' type='email'></form>")
         assert f.selector == "input[name='e']"
 
+    def test_special_char_id_uses_attribute_selector(self) -> None:
+        # Apostrophe in id must not crash XPath and must yield a Playwright-safe
+        # attribute selector (bare #id'foo is invalid CSS).
+        [f] = _scan(
+            """
+            <form>
+              <label for="q'weird">Phone*</label>
+              <input id="q'weird" name="phone" type="tel">
+            </form>
+            """
+        )
+        assert f.label == "Phone"
+        assert f.selector == '[id="q\'weird"]'
+
+
+class TestCssToXpath:
+    def test_action_contains_selector(self) -> None:
+        from magicapply.infrastructure.browser.ats.form_scan import _xpath_from_css
+
+        xp = _xpath_from_css("form[action*='apply']")
+        assert "contains(@action" in xp
+        assert "apply" in xp
+        # End-to-end: page with action containing apply is found
+        fields = scan_form(
+            _FakePage(
+                """
+                <html><body>
+                  <form action="/careers/apply/123"><input name="n" type="text"></form>
+                  <form action="/search"><input name="noise" type="text"></form>
+                </body></html>
+                """
+            ),
+            form_selector="form[action*='apply']",
+        )
+        assert [f.name for f in fields] == ["n"]
+
+    def test_unsupported_selector_returns_empty_not_raise(self) -> None:
+        fields = scan_form(
+            _FakePage("<html><body><form><input name='x'></form></body></html>"),
+            form_selector="form:has(input)",
+        )
+        assert fields == []
+
+
+class TestXPathEscaping:
+    def test_apostrophe_in_id_does_not_raise(self) -> None:
+        fields = _scan(
+            """
+            <form>
+              <label for="foo'bar">Email</label>
+              <input id="foo'bar" name="email" type="email">
+              <input type="radio" name="a'b" value="1" id="r1">
+              <label for="r1">One</label>
+              <input type="radio" name="a'b" value="2" id="r2">
+              <label for="r2">Two</label>
+            </form>
+            """
+        )
+        kinds = {f.kind for f in fields}
+        assert "text" in kinds or "email" in kinds or any(
+            f.name == "email" for f in fields
+        )
+        radio = next(f for f in fields if f.kind == "radio")
+        assert radio.options == ["1", "2"]
+
+    def test_strips_required_asterisk_from_label_for(self) -> None:
+        [f] = _scan(
+            """
+            <form>
+              <label for="phone">Phone*</label>
+              <input id="phone" name="phone" type="tel" required>
+            </form>
+            """
+        )
+        assert f.label == "Phone"
+        assert f.required is True
+
 
 class TestAshbyLabels:
     def test_fieldset_prompt_without_legend(self) -> None:

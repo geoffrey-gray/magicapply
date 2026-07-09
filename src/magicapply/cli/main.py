@@ -17,6 +17,7 @@ from typing import Annotated
 import typer
 
 from magicapply import __version__
+from magicapply.cli.commands import auth as auth_cmds
 from magicapply.cli.commands import config as config_cmds
 from magicapply.cli.commands import custom_ats as custom_ats_cmds
 from magicapply.cli.commands import pipeline as pipeline_cmds
@@ -35,6 +36,7 @@ app.add_typer(config_cmds.app, name="config")
 app.add_typer(custom_ats_cmds.app, name="custom-ats")
 app.add_typer(profiles_cmds.app, name="profiles")
 app.add_typer(status_cmds.app, name="status")
+app.add_typer(auth_cmds.app, name="auth")
 
 # Pipeline commands live at the top level per ARCHITECTURE.md §7.
 app.command()(pipeline_cmds.discover)
@@ -78,6 +80,15 @@ def doctor(
         typer.echo(f"db         {db_path} ({db_path.stat().st_size} bytes)")
     else:
         typer.echo(f"db         {db_path} (not created yet)")
+    try:
+        from magicapply.infrastructure.browser.auth_session import site_status
+
+        for row in site_status(data_dir):
+            typer.echo(
+                f"auth {row['site']:<10} resolved={row['resolved']}"
+            )
+    except Exception:  # noqa: BLE001 — doctor never gates
+        pass
 
 
 def _chromium_status() -> str:

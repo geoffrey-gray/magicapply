@@ -34,6 +34,7 @@ class TestBaseConfig:
         assert cfg.version == 1
         assert cfg.llm.provider == "anthropic"
         assert cfg.scoring.threshold == 70
+        assert cfg.scoring.mode == "keyword"
         assert len(cfg.sources) == 1
         assert isinstance(cfg.sources[0], CareerPageSource)
 

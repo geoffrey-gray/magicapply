@@ -200,12 +200,14 @@ class TestWorkdayFields:
             "check", check=True
         )
 
-    def test_how_did_you_hear_is_handler_owned_not_narrative(self) -> None:
+    def test_workday_how_did_you_hear_variant_is_skipped(self) -> None:
+        """Workday source multiselect is variant-owned, not free-text identity."""
         narrative = _RecordingNarrative()
         field = FormField(
             selector="#source--source",
             label="How Did You Hear About Us?*",
             kind="text",
+            variant="workday_multiselect",
         )
         result = _router(narrative=narrative).resolve(field, _job())
         assert result.strategy == "unhandled"
@@ -230,6 +232,77 @@ class TestYesNoSelect:
             options=["Yes", "No"],
         )
         assert _router().resolve(field, _job()) == ResolvedAnswer("select", "No")
+
+    def test_needs_sponsorship_long_phrase_options(self) -> None:
+        """Ashby / custom screens use multi-sentence sponsorship options."""
+        field = FormField(
+            selector="#sp",
+            label="Will you now or in the future require sponsorship to work in the US?",
+            kind="radio",
+            options=[
+                "I am authorized to work in the US without sponsorship",
+                "I am on an H-1B and need a transfer",
+                "I need H-1B sponsorship (new application / lottery)",
+                "Other",
+            ],
+        )
+        result = _router().resolve(field, _job())
+        assert result.strategy == "select"
+        assert "without sponsorship" in result.value
+
+    def test_phone_with_required_asterisk_label(self) -> None:
+        field = FormField(
+            selector="#phone",
+            label="Phone*",
+            kind="text",
+            required=True,
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("static", "555-0100")
+
+    def test_sponsorship_free_text_is_static_no(self) -> None:
+        """Greenhouse free-text sponsorship must not use narrative mock Yes."""
+        field = FormField(
+            selector="#question_1",
+            label=(
+                "Do you now, or will you in the future, require immigration "
+                "sponsorship to work at Reddit?"
+            ),
+            kind="text",
+            required=True,
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("static", "No")
+
+    def test_authorized_free_text_is_static_yes(self) -> None:
+        field = FormField(
+            selector="#q",
+            label="Are you currently authorized to work in the U.S.?",
+            kind="text",
+            required=True,
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("static", "Yes")
+
+    def test_how_did_you_hear_uses_static(self) -> None:
+        field = FormField(
+            selector="#q",
+            label="How did you hear about this job?",
+            kind="text",
+            required=True,
+        )
+        answers = _default_static().model_copy(update={"how_did_you_hear": "LinkedIn"})
+        assert _router(static=answers).resolve(field, _job()) == ResolvedAnswer(
+            "static", "LinkedIn"
+        )
+
+    def test_dei_free_text_declines_when_unset(self) -> None:
+        field = FormField(
+            selector="#430",
+            label="What gender identity do you most closely identify with?",
+            kind="text",
+            required=True,
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer(
+            "static", "Decline to state"
+        )
 
     def test_hispanic_no(self) -> None:
         field = FormField(
@@ -264,13 +337,25 @@ class TestYesNoSelect:
         )
         assert _router(static=answers).resolve(field, _job()).strategy == "unhandled"
 
-    def test_no_matching_option_is_unhandled(self) -> None:
-        # Bank has bool but options are exotic — router bails rather than guess.
+    def test_authorized_maps_citizen_green_card_phrases(self) -> None:
+        # Multi-word options without a literal Yes — map via citizen/green-card phrases.
         field = FormField(
             selector="#auth",
             label="Are you authorized to work in the US?",
             kind="select",
             options=["Citizen", "Green card", "H1B"],
+        )
+        result = _router().resolve(field, _job())
+        assert result.strategy == "select"
+        assert result.value == "Citizen"
+
+    def test_no_matching_option_is_unhandled(self) -> None:
+        # Truly exotic options with no yes/no or work-auth phrase → bail.
+        field = FormField(
+            selector="#auth",
+            label="Are you authorized to work in the US?",
+            kind="select",
+            options=["Alpha", "Bravo", "Charlie"],
         )
         assert _router().resolve(field, _job()).strategy == "unhandled"
 

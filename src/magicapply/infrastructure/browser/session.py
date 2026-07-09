@@ -69,6 +69,7 @@ class PlaywrightSession(AbstractContextManager["PlaywrightSession"]):
         user_agent_pool: Sequence[str] | None = None,
         viewport_pool: Sequence[tuple[int, int]] | None = None,
         rng: random.Random | None = None,
+        chromium_args: Sequence[str] | None = None,
     ) -> None:
         self._headless = headless
         self._storage_state_path = storage_state_path
@@ -76,6 +77,8 @@ class PlaywrightSession(AbstractContextManager["PlaywrightSession"]):
         self._user_agent_pool = tuple(user_agent_pool) if user_agent_pool else DEFAULT_USER_AGENTS
         self._viewport_pool = tuple(viewport_pool) if viewport_pool else DEFAULT_VIEWPORTS
         self._rng = rng or random.Random()
+        # Extra Chromium flags (e.g. remote X / blank-window workarounds).
+        self._chromium_args = list(chromium_args) if chromium_args else []
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -86,7 +89,25 @@ class PlaywrightSession(AbstractContextManager["PlaywrightSession"]):
 
     def __enter__(self) -> PlaywrightSession:
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=self._headless)
+        launch_kwargs: dict = {"headless": self._headless}
+        args = list(self._chromium_args)
+        # Headed on Xvfb / remote X: need software GL. Do NOT pass
+        # --disable-software-rasterizer — that blanks the window on Xvfb.
+        # --use-gl=swiftshader paints reliably; no-sandbox helps in VMs.
+        if not self._headless:
+            for flag in (
+                "--disable-gpu",
+                "--use-gl=swiftshader",
+                "--enable-unsafe-swiftshader",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--ozone-platform=x11",
+            ):
+                if flag not in args:
+                    args.append(flag)
+        if args:
+            launch_kwargs["args"] = args
+        self._browser = self._pw.chromium.launch(**launch_kwargs)
         storage_state: str | None = None
         if (
             self._storage_state_path is not None

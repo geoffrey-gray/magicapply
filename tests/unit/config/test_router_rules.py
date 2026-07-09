@@ -126,8 +126,8 @@ class TestLoaderIntegration:
         cfg = self._write_configs(tmp_path)
         # No router_rules.yaml in configs dir.
         loaded = load_config(cfg)
-        # Package default has 22 identity rows (see test_router_rules_parity).
-        assert len(loaded.router_rules.identity) == 22
+        # Package default identity rows (see router_rules.yaml + parity test).
+        assert len(loaded.router_rules.identity) == 23
 
     def test_loader_raises_on_malformed_override(self, tmp_path: Path) -> None:
         cfg = self._write_configs(tmp_path)

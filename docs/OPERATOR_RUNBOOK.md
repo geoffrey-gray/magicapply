@@ -191,18 +191,88 @@ uv run pytest tests/integration/e2e/test_e2e_captured_live.py -q  # slow; Chromi
 
 ---
 
-## 8. Sources env vars (quick reference)
+## 8. Auth login (recommended) + env fallbacks
+
+**Preferred:** log in once with Playwright (no DevTools cookie dump):
 
 ```bash
-# LinkedIn (W.5c — operator provides cookie in ~/magicapply/.env)
-LINKEDIN_LI_AT=<paste li_at value>
+# Needs a display (desktop / VNC). Opens Chromium — log in, then press Enter.
+uv run magicapply auth login linkedin --root configs
+uv run magicapply auth login indeed --root configs
+uv run magicapply auth login glassdoor --root configs
+
+# Non-interactive / agent-friendly: auto-save when session cookie appears
+uv run magicapply auth login linkedin --root configs --force --auto-save --timeout 600
+
+uv run magicapply auth status --root configs   # no secret values shown
+uv run magicapply auth sites                   # registry of known sites
+uv run magicapply auth clear linkedin --root configs
+```
+
+**VM → host GUI (libvirt):** the VM has no display. On the **host** (once):
+
+```bash
+# 1) Tunnel host X (:0) to TCP localhost:6000
+nix-shell -p socat --run \
+  'socat TCP-LISTEN:6000,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:/tmp/.X11-unix/X0' &
+nix-shell -p xhost --run 'xhost +'   # temporary; undo with: xhost -
+
+# 2) Reverse-forward that into the VM as display :10
+ssh -fN -R 6010:127.0.0.1:6000 magicapply-dev
+
+# 3) Login (window should appear on the host desktop)
+ssh magicapply-dev 'export DISPLAY=127.0.0.1:10 PATH=$HOME/.local/bin:$PATH
+  cd ~/magicapply && uv run magicapply auth login linkedin --root configs --force --auto-save'
+```
+
+If the Chromium window is **blank white**, the tunnel is up but paint failed — try again after the software-GL flags (shipped in session), or use **virt-manager console / VNC** into the VM and run `auth login` there instead.
+
+Sessions save under `data/auth/<site>_storage_state.json` (gitignored via `data/`).
+Discover prefers storage_state, then Cookie env, then legacy single cookies.
+
+**Fallback env vars** (paste Cookie header only into `.env`, never into chat):
+
+```bash
+# LinkedIn
+LINKEDIN_SESSION_COOKIES=<full Cookie header from linkedin.com request>
+LINKEDIN_LI_AT=<li_at only — weaker fallback>
 MAGICAPPLY_LINKEDIN_ACK=1
 
 # Indeed / Glassdoor
 MAGICAPPLY_INDEED_ACK=1
 MAGICAPPLY_GLASSDOOR_ACK=1
-GLASSDOOR_SESSION=<optional session cookie>
+INDEED_SESSION_COOKIES=<full Cookie header>
+GLASSDOOR_SESSION_COOKIES=<full Cookie header>
+GLASSDOOR_SESSION=<optional legacy gdSession>
 ```
+
+Adding a new auth site later: register it in
+`infrastructure/browser/auth_sites.py` and call `resolve_session_auth` from
+that adapter — `magicapply auth login <name>` works automatically.
+
+### Safe discovery cadence (LinkedIn / Indeed / Glassdoor)
+
+**Do not** run continuous multi-page scrapes or raise caps aggressively. Goal is
+a **drip**, not 600 jobs in one shot (ban risk).
+
+Per-source fields in `base_config.yaml` (config over code):
+
+| Field | Safe default | Meaning |
+|-------|--------------|---------|
+| `remote_only` | `true` | Remote workplace filter |
+| `posted_within_days` | `7` | Past-week style date filter |
+| `max_pages` | `3–6` LinkedIn, `5` Indeed/GD | Hard cap on search pages **per run** |
+| `rate_limit_per_minute` | `3` | Slow serial pacing (+ jitter on LinkedIn) |
+| `enrich_apply_urls` | `false` | Per-job detail enrich multiplies traffic |
+| `max_jobs_per_run` | `80–150` (LinkedIn) | Hard job ceiling even if pages full |
+| `page_dwell_ms_*` / `pause_*` | LinkedIn only | Human-like dwell + every-N-page pause |
+
+**Cadence:** run `magicapply discover` **1–2× per day**, not in a loop. On
+`ERR_TOO_MANY_REDIRECTS` or auth-wall logs, **stop and refresh `LINKEDIN_LI_AT`**
+— do not bump `max_pages`. Raise caps only after clean multi-page runs.
+
+Adapters paginate serially until empty page, circuit-break, or caps.
+**Prefilter still runs after discover** — second funnel for fit.
 
 ---
 

@@ -6,6 +6,8 @@ State machine transition performed by this pipeline:
 Artifacts written to disk under ``<data_dir>/tailored/<application_id>/`` so
 the user can inspect exactly what will be sent to the ATS:
     - ``resume.yaml``       -- the tailored resume (YAML, same shape as base)
+    - ``resume.docx``       -- format-preserving DOCX with keyword swaps
+    - ``alignment.json``    -- keyword-alignment before vs after tailor
     - ``cover_letter.md``   -- the cover-letter body (only when
                               ``generate_cover_letter=True``; Phase 1 defers
                               the wire-up per ``final_dod_plan.md`` W.2)
@@ -17,6 +19,7 @@ TAILORED applications are not returned on a re-run.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +27,11 @@ from pathlib import Path
 import yaml
 
 from magicapply.config.models import KeywordBank
+from magicapply.domain.keywords.alignment import (
+    docx_plain_text,
+    score_keyword_alignment,
+    serialize_resume_text,
+)
 from magicapply.domain.keywords.extractor import KeywordExtractor
 from magicapply.domain.keywords.matcher import match_bank
 from magicapply.domain.models.application import ApplicationState
@@ -132,12 +140,13 @@ class TailoringPipeline:
             # at the run level, save. Formatting survives byte-for-byte.
             # Failures here (source DOCX missing, disk full) are treated
             # like tailoring failures — reported per-app, no crash.
+            docx_path = app_dir / "resume.docx"
             try:
                 self._renderer.render(
                     source_docx=self._source_docx,
                     matched_bank=matched,
                     jd_terms=extracted,
-                    out_path=app_dir / "resume.docx",
+                    out_path=docx_path,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("resume render failed for %s: %s", app.id, exc)
@@ -145,6 +154,41 @@ class TailoringPipeline:
                     f"{app.id}: render {type(exc).__name__}: {exc}"
                 )
                 continue
+
+            # Post-tailor keyword alignment against the DOCX artifact that
+            # will be uploaded. Compare to discover-time `app.score`.
+            try:
+                after_text = (
+                    docx_plain_text(docx_path)
+                    if docx_path.exists()
+                    else serialize_resume_text(tailored)
+                )
+                after = score_keyword_alignment(after_text, job, self._bank)
+                app.score_after_tailor = after.value
+                app.score_after_rationale = after.rationale
+                before_val = app.score if app.score is not None else 0
+                (app_dir / "alignment.json").write_text(
+                    json.dumps(
+                        {
+                            "before": app.score,
+                            "after": after.value,
+                            "delta": after.value - before_val,
+                            "before_rationale": app.score_rationale,
+                            "after_rationale": after.rationale,
+                            "jd_terms": after.jd_terms,
+                            "matched_after": after.matched,
+                            "missing_after": after.missing,
+                        },
+                        indent=2,
+                        sort_keys=False,
+                    )
+                    + "\n"
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Scoring is diagnostic — do not fail the tailor if it breaks.
+                logger.warning(
+                    "post-tailor alignment score failed for %s: %s", app.id, exc
+                )
 
             app.tailored_path = str(app_dir)
             app.transition_to(

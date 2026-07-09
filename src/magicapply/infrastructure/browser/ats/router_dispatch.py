@@ -65,7 +65,14 @@ def fill_composable_scanned(
 
     selector = _first_scannable_selector(page, form_selectors)
     if selector is None:
-        logger.warning("%s: no application form found for composable fill", handler_label)
+        msg = f"{handler_label}: no application form found for composable fill"
+        logger.warning(msg)
+        # GenericHandler is the catch-all for LinkedIn/Indeed listing pages
+        # with no apply form — fail so dry-run does not false-positive APPLIED.
+        # Big-4 handlers still fill via _fill_static selectors when the scan
+        # finds nothing (fixture tests, partial pages).
+        if ats == "generic" or handler_label == "Generic":
+            raise RuntimeError(msg)
         return
 
     report = composer.fill_scanned(page, selector, ats=ats, schema_id=schema_id)

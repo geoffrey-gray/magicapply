@@ -1,15 +1,20 @@
 """Two-stage job scoring.
 
 Stage 1: `Prefilter` — cheap rule checks (location, seniority, must-have /
-exclude keywords). Filters out anything hopeless before spending LLM tokens.
+exclude keywords). Filters out anything hopeless before spending LLM tokens
+(or running keyword alignment).
 
-Stage 2: `LLMScorer` — sends surviving jobs to the LLM, receives a
-`{score: 0-100, rationale: "..."}` JSON payload. The base resume is placed
-in a cacheable SystemBlock so a discovery run of N jobs pays the resume
-tokens exactly once.
+Stage 2: a fit scorer — either:
 
-`JobScorer` composes both. A prefilter miss short-circuits with score=0 and
-a diagnostic rationale — no LLM call.
+- `KeywordAlignmentScorer` (Phase 1 default) — ATS-style fraction of
+  KeywordBank terms emphasized by the JD that appear on the resume.
+- `LLMScorer` — sends surviving jobs to the LLM, receives a
+  `{score: 0-100, rationale: "..."}` JSON payload. The base resume is placed
+  in a cacheable SystemBlock so a discovery run of N jobs pays the resume
+  tokens exactly once.
+
+`JobScorer` composes both stages. A prefilter miss short-circuits with
+score=0 and a diagnostic rationale — no fit scorer call.
 """
 
 from __future__ import annotations
@@ -17,8 +22,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from typing import Protocol
 
-from magicapply.config.models import ScoringConfig
+from magicapply.config.models import KeywordBank, ScoringConfig
+from magicapply.domain.keywords.alignment import score_keyword_alignment
 from magicapply.domain.models.job import Job
 from magicapply.infrastructure.llm.client import LLMClient, LLMMessage, SystemBlock
 
@@ -37,8 +44,14 @@ class Score:
     rationale: str
 
 
+class FitScorer(Protocol):
+    """Second-stage scorer: produce a 0–100 fit score for one Job."""
+
+    def score(self, job: Job) -> Score: ...
+
+
 class Prefilter:
-    """Fast rule-based screening before any LLM call."""
+    """Fast rule-based screening before any fit scorer call."""
 
     def __init__(self, config: ScoringConfig) -> None:
         self._pre = config.prefilter
@@ -70,6 +83,18 @@ class Prefilter:
             )
 
         return PrefilterResult(True, "")
+
+
+class KeywordAlignmentScorer:
+    """Deterministic ATS-style keyword coverage (no LLM)."""
+
+    def __init__(self, *, resume_text: str, bank: KeywordBank) -> None:
+        self._resume_text = resume_text
+        self._bank = bank
+
+    def score(self, job: Job) -> Score:
+        result = score_keyword_alignment(self._resume_text, job, self._bank)
+        return Score(value=result.value, rationale=result.rationale)
 
 
 class LLMScorer:
@@ -107,17 +132,18 @@ class LLMScorer:
 
 
 class JobScorer:
-    """Composed scorer: prefilter first, then LLM if it passes."""
+    """Composed scorer: prefilter first, then fit scorer if it passes."""
 
-    def __init__(self, prefilter: Prefilter, llm_scorer: LLMScorer) -> None:
+    def __init__(self, prefilter: Prefilter, fit_scorer: FitScorer) -> None:
         self._pre = prefilter
-        self._llm = llm_scorer
+        self._fit = fit_scorer
 
     def score(self, job: Job) -> Score:
         gate = self._pre.check(job)
         if not gate.passed:
             return Score(value=0, rationale=f"prefilter: {gate.reason}")
-        return self._llm.score(job)
+        return self._fit.score(job)
+
 
 
 def _parse_score(raw: str) -> Score:

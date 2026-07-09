@@ -15,6 +15,7 @@ upload, or "unhandled — log and continue".
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 from lxml import html as lhtml
@@ -27,7 +28,33 @@ from magicapply.infrastructure.browser.forms.fields import (
 )
 
 # Re-export for backward compatibility (answer_router, tests).
-__all__ = ["FieldKind", "FormField", "scan_form"]
+__all__ = ["FieldKind", "FormField", "scan_form", "xpath_string_literal"]
+
+
+def xpath_string_literal(value: str) -> str:
+    """Quote ``value`` for safe embedding in an XPath 1.0 string literal.
+
+    lxml/libxml2 raises ``XPathEvalError: Invalid expression`` when a single
+    quote appears inside a ``'…'``-quoted predicate. Prefer single quotes when
+    the value has none; double quotes when it has singles but no doubles;
+    otherwise use ``concat(...)`` (XPath 1.0 has no backslash escapes).
+    """
+    if "'" not in value:
+        return f"'{value}'"
+    if '"' not in value:
+        return f'"{value}"'
+    # Both quote types present: concat('a', "'", 'b', "'", 'c')
+    parts: list[str] = []
+    for i, chunk in enumerate(value.split("'")):
+        if i:
+            parts.append('"\'"')
+        if chunk:
+            parts.append(f"'{chunk}'")
+    if not parts:
+        return "''"
+    if len(parts) == 1:
+        return parts[0]
+    return "concat(" + ", ".join(parts) + ")"
 
 
 def scan_form(page: PageDriver, form_selector: str = "form") -> list[FormField]:
@@ -36,9 +63,19 @@ def scan_form(page: PageDriver, form_selector: str = "form") -> list[FormField]:
     ``form_selector`` is a CSS-ish selector used only to trim the DOM to the
     right form when a page has multiple. Under the hood the scanner uses
     lxml + XPath, so ``form_selector`` is normalised to XPath.
+
+    Unknown or untranslatable selectors return ``[]`` (never raise) so a
+    single bad recipe entry cannot fail the whole apply.
     """
+    try:
+        xpath = _xpath_from_css(form_selector)
+    except ValueError:
+        return []
     tree = lhtml.fromstring(page.content())
-    form_els = tree.xpath(_xpath_from_css(form_selector))
+    try:
+        form_els = tree.xpath(xpath)
+    except Exception:  # noqa: BLE001 — lxml XPathEvalError etc.
+        return []
     if not form_els:
         return []
     root = form_els[0]
@@ -147,13 +184,21 @@ def _enrich_workday_variant(field: FormField, el) -> FormField:
 
 
 def _selector_for(el) -> str:
-    """Prefer #id when available; else [name='…']; else the tag itself."""
+    """Prefer #id when available; else [name='…']; else the tag itself.
+
+    IDs/names with CSS-special characters use attribute selectors so
+    Playwright can resolve them (``#foo'bar`` is not a valid CSS id).
+    """
     el_id = el.get("id")
     if el_id:
+        if re.search(r"[^A-Za-z0-9_-]", el_id):
+            escaped = el_id.replace("\\", "\\\\").replace('"', '\\"')
+            return f'[id="{escaped}"]'
         return f"#{el_id}"
     name = el.get("name")
     if name:
-        return f"{el.tag}[name='{name}']"
+        escaped = name.replace("\\", "\\\\").replace("'", "\\'")
+        return f"{el.tag}[name='{escaped}']"
     return el.tag
 
 
@@ -178,19 +223,21 @@ def _label_for(el, root, *, kind: FieldKind | None = None) -> str:
 
     el_id = el.get("id")
     if el_id:
-        matches = root.xpath(f"//label[@for='{el_id}']")
+        matches = root.xpath(f"//label[@for={xpath_string_literal(el_id)}]")
         if matches:
-            return _clean_text(matches[0].text_content())
+            # Strip required markers ("Phone*") so AnswerRouter identity
+            # regexes like ``^phone$`` match.
+            return _normalize_label(matches[0].text_content())
 
     parent = el.getparent()
     while parent is not None:
         if parent.tag == "label":
-            return _clean_text(parent.text_content())
+            return _normalize_label(parent.text_content())
         parent = parent.getparent()
 
     aria = el.get("aria-label") or el.get("aria-labelledby")
     if aria:
-        return aria
+        return _normalize_label(aria)
 
     name = el.get("name")
     return name.replace("_", " ") if name else ""
@@ -248,7 +295,7 @@ def _radio_group_label(el, root) -> str:
         labelledby = parent.get("aria-labelledby")
         if labelledby:
             for ref in labelledby.split():
-                nodes = root.xpath(f"//*[@id='{ref}']")
+                nodes = root.xpath(f"//*[@id={xpath_string_literal(ref)}]")
                 if nodes:
                     text = _normalize_label(nodes[0].text_content())
                     if text.lower() not in _GENERIC_ARIA_LABELS:
@@ -279,8 +326,6 @@ def _ashby_question_label(el) -> str:
 
 def _prompt_text_from_container(container) -> str:
     """Extract a screening prompt ending in ``?`` from Ashby fieldset/div blocks."""
-    import re
-
     text = _clean_text(container.text_content())
     match = re.search(r"(.+?\?)", text)
     if not match:
@@ -290,7 +335,8 @@ def _prompt_text_from_container(container) -> str:
 
 def _radio_options(root, name: str) -> list[str]:
     options: list[str] = []
-    for opt in root.xpath(f".//input[@type='radio'][@name='{name}']"):
+    name_lit = xpath_string_literal(name)
+    for opt in root.xpath(f".//input[@type='radio'][@name={name_lit}]"):
         value = (opt.get("value") or "").strip()
         if not value:
             value = _radio_option_label(opt, root)
@@ -301,12 +347,12 @@ def _radio_options(root, name: str) -> list[str]:
 def _radio_option_label(opt, root) -> str:
     el_id = opt.get("id")
     if el_id:
-        labels = root.xpath(f".//label[@for='{el_id}']")
+        labels = root.xpath(f".//label[@for={xpath_string_literal(el_id)}]")
         if labels:
-            return _clean_text(labels[0].text_content())
+            return _normalize_label(labels[0].text_content())
     parent = opt.getparent()
     if parent is not None and parent.tag == "label":
-        return _clean_text(parent.text_content())
+        return _normalize_label(parent.text_content())
     return ""
 
 
@@ -330,24 +376,75 @@ def _clean_text(text: str) -> str:
 
 
 def _xpath_from_css(selector: str) -> str:
-    """Handle ``form``, ``form#id``, ``form.class``, and ``[attr='…']`` brackets."""
-    import re
+    """Translate a small CSS subset used by recipes into XPath 1.0.
 
-    bracket = re.fullmatch(r"\[([\w-]+)=['\"]([^'\"]+)['\"]\]", selector.strip())
-    if bracket:
-        attr, value = bracket.groups()
-        return f"//*[@{attr}='{value}']"
-    if "data-automation-id=" in selector:
-        match = re.search(r"""data-automation-id=['"]([^'"]+)['"]""", selector)
+    Supported shapes (as used in ``configs/ats_recipes/*.yaml``):
+
+    - ``form`` / bare tag
+    - ``form#id`` / ``#id``
+    - ``form.class``
+    - ``[attr='value']`` exact match
+    - ``tag[attr='value']``
+    - ``tag[attr*='value']`` / ``^=`` / ``$=`` substring matches
+      (e.g. ``form[action*='apply']``)
+    - ``[data-automation-id='…']`` / ``[data-testid='…']``
+    """
+    sel = selector.strip()
+    if not sel:
+        return "//*"
+
+    # Bare [attr op value] (no tag)
+    bare = re.fullmatch(
+        r"\[([\w-]+)(\*=|\^=|\$=|=)['\"]([^'\"]+)['\"]\]",
+        sel,
+    )
+    if bare:
+        attr, op, value = bare.groups()
+        return f"//*[{_attr_predicate(attr, op, value)}]"
+
+    # tag[attr op value]
+    tagged = re.fullmatch(
+        r"([A-Za-z][\w-]*)\[([\w-]+)(\*=|\^=|\$=|=)['\"]([^'\"]+)['\"]\]",
+        sel,
+    )
+    if tagged:
+        tag, attr, op, value = tagged.groups()
+        return f"//{tag}[{_attr_predicate(attr, op, value)}]"
+
+    if "data-automation-id=" in sel:
+        match = re.search(r"""data-automation-id=['"]([^'"]+)['"]""", sel)
         if match:
-            return f"//*[@data-automation-id='{match.group(1)}']"
-    if "#" in selector:
-        tag, _, ident = selector.partition("#")
-        return f"//{tag or '*'}[@id='{ident}']"
-    if "." in selector and not selector.startswith("["):
-        tag, _, class_name = selector.partition(".")
+            return (
+                f"//*[@data-automation-id={xpath_string_literal(match.group(1))}]"
+            )
+    if "#" in sel:
+        tag, _, ident = sel.partition("#")
+        return f"//{tag or '*'}[@id={xpath_string_literal(ident)}]"
+    if "." in sel and not sel.startswith("["):
+        tag, _, class_name = sel.partition(".")
         return (
             f"//{tag or '*'}[contains(concat(' ', normalize-space(@class), ' '), "
             f"' {class_name} ')]"
         )
-    return f"//{selector}"
+    # Bare tag name only — reject anything that still looks like CSS sugar
+    # so we never emit invalid XPath (which crashes the whole apply).
+    if re.fullmatch(r"[A-Za-z][\w-]*", sel):
+        return f"//{sel}"
+    raise ValueError(f"unsupported form_selector CSS for XPath: {selector!r}")
+
+
+def _attr_predicate(attr: str, op: str, value: str) -> str:
+    lit = xpath_string_literal(value)
+    if op == "=":
+        return f"@{attr}={lit}"
+    if op == "*=":
+        return f"contains(@{attr}, {lit})"
+    if op == "^=":
+        return f"starts-with(@{attr}, {lit})"
+    if op == "$=":
+        # XPath 1.0 has no ends-with; emulate with substring.
+        return (
+            f"substring(@{attr}, string-length(@{attr}) - string-length({lit}) + 1)"
+            f" = {lit}"
+        )
+    raise ValueError(f"unsupported attribute operator: {op!r}")

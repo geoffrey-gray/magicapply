@@ -158,7 +158,8 @@ class TestSessionCookies:
             session_cookies=[{"name": "CTK", "value": "abc"}],
         )
         list(adapter.discover())
-        assert constructor_kwargs == [{"headless": True, "proxy_pool": None}]
+        assert constructor_kwargs[0]["headless"] is True
+        assert constructor_kwargs[0]["proxy_pool"] is None
 
     def test_no_cookies_leaves_proxy_pool_active(
         self, monkeypatch: pytest.MonkeyPatch
@@ -203,7 +204,8 @@ class TestSessionCookies:
             session_cookies=None,
         )
         list(adapter.discover())
-        assert constructor_kwargs == [{"headless": True, "proxy_pool": sentinel_pool}]
+        assert constructor_kwargs[0]["headless"] is True
+        assert constructor_kwargs[0]["proxy_pool"] is sentinel_pool
 
 
 class TestSearchUrlExtractor:

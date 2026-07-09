@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from magicapply.config.models import (
     CareerPageSource,
     GlassdoorSource,
@@ -42,23 +44,32 @@ def build_source(
     ),
     *,
     proxy_pool: ProxyPool | None = None,
+    data_dir: Path | None = None,
 ) -> JobSource:
     """Return the concrete adapter for a Source config entry.
 
     Adapters that participate in proxy rotation (Indeed / Glassdoor)
     accept the `proxy_pool` kwarg; others ignore it. See
     `ARCHITECTURE.md` §9 and the plan file for the rationale — proxy
-    scraping is scoped to sources with Cloudflare-heavy front doors."""
+    scraping is scoped to sources with Cloudflare-heavy front doors.
+
+    ``data_dir`` enables optional ``data/auth/<site>_storage_state.json``
+    resolution for LinkedIn / Indeed / Glassdoor.
+    """
     if isinstance(config, CareerPageSource):
         return CareerPageAdapter.from_config(config)
     if isinstance(config, JobUrlSource):
         return JobUrlAdapter.from_config(config)
     if isinstance(config, LinkedInSource):
-        return LinkedInAdapter.from_config(config)
+        return LinkedInAdapter.from_config(config, data_dir=data_dir)
     if isinstance(config, IndeedSource):
-        return IndeedAdapter.from_config(config, proxy_pool=proxy_pool)
+        return IndeedAdapter.from_config(
+            config, proxy_pool=proxy_pool, data_dir=data_dir
+        )
     if isinstance(config, GlassdoorSource):
-        return GlassdoorAdapter.from_config(config, proxy_pool=proxy_pool)
+        return GlassdoorAdapter.from_config(
+            config, proxy_pool=proxy_pool, data_dir=data_dir
+        )
     if isinstance(config, GreenhouseSource):
         return GreenhouseAdapter.from_config(config)
     raise TypeError(f"unknown source type: {type(config).__name__}")

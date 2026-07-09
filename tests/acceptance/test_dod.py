@@ -50,6 +50,7 @@ def _make_test_docx(path: Path) -> Path:
 
     doc = Document()
     doc.add_paragraph("Acceptance Applicant")
+    doc.add_paragraph("Backend engineer with Python and distributed systems.")
     doc.save(str(path))
     return path
 
@@ -188,7 +189,8 @@ class TestDodAcceptance:
 
         # Discovery surfaced all four cross-ATS postings.
         assert "discovered: 4" in result.stdout
-        # All four passed prefilter + threshold (mock returns 82 for each).
+        # All four passed prefilter + keyword-alignment threshold (fixture
+        # JDs mention bank terms present on the resume).
         assert "scored: 4" in result.stdout
 
         # Tailoring produced four TAILORED artifacts on disk with a DOCX

@@ -17,7 +17,13 @@ import yaml
 
 from magicapply.config import LoadedConfig, Profile
 from magicapply.config.models import ScoringConfig
-from magicapply.domain.jobs.scoring import JobScorer, LLMScorer, Prefilter
+from magicapply.domain.jobs.scoring import (
+    JobScorer,
+    KeywordAlignmentScorer,
+    LLMScorer,
+    Prefilter,
+)
+from magicapply.domain.keywords.alignment import serialize_resume_text
 from magicapply.domain.keywords.extractor import KeywordExtractor
 from magicapply.domain.models.application import Application
 from magicapply.domain.models.job import Job
@@ -66,7 +72,13 @@ def build_sources_for_profile(loaded: LoadedConfig, profile: Profile) -> list[Jo
         if getattr(cfg, "enabled", True) is False:
             logger.info("source %r disabled; skipping", name)
             continue
-        out.append(build_source(cfg, proxy_pool=proxy_pool))
+        out.append(
+            build_source(
+                cfg,
+                proxy_pool=proxy_pool,
+                data_dir=loaded.data_dir(),
+            )
+        )
     return out
 
 
@@ -87,14 +99,23 @@ def build_source_scorer(
 
 
 def build_scorer(loaded: LoadedConfig, profile: Profile, scoring: ScoringConfig) -> JobScorer:
-    llm = build_client(loaded.base.llm, prompts=loaded.prompts)
     base = _load_base_resume(loaded, profile)
-    # Deterministic YAML serialization is the cacheable prompt payload the
-    # scorer sends to the LLM.
+    prefilter = Prefilter(scoring)
+    if scoring.mode == "keyword":
+        # Plain-text resume blob + KeywordBank — deterministic ATS alignment.
+        return JobScorer(
+            prefilter=prefilter,
+            fit_scorer=KeywordAlignmentScorer(
+                resume_text=serialize_resume_text(base),
+                bank=loaded.effective_bank(profile),
+            ),
+        )
+    # mode == "llm" — prompt-based score via configured provider.
+    llm = build_client(loaded.base.llm, prompts=loaded.prompts)
     base_text = yaml.safe_dump(base.model_dump(mode="json"), sort_keys=True)
     return JobScorer(
-        prefilter=Prefilter(scoring),
-        llm_scorer=LLMScorer(
+        prefilter=prefilter,
+        fit_scorer=LLMScorer(
             llm,
             base_resume_text=base_text,
             scoring_prompt=loaded.prompts.scoring,

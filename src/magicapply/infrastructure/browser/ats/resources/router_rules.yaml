@@ -26,7 +26,9 @@ identity:
   - {pattern: '\bemail\b', attr: email}
   - {pattern: '\bverify\b.*\bpassword\b|\bconfirm\b.*\bpassword\b', attr: workday_apply_password}
   - {pattern: '\bpassword\b', attr: workday_apply_password}
-  - {pattern: 'phone\s*number|phone\s*extension|\btelephone\b|\bmobile\b|^phone$', attr: phone}
+  # Label may still carry a required marker ("Phone*") if a scan path skips
+  # normalize; accept optional trailing * so Greenhouse identity fields hit.
+  - {pattern: 'phone\s*number|phone\s*extension|\btelephone\b|\bmobile\b|^phone\*?$', attr: phone}
   - {pattern: '\blinkedin\b', attr: linkedin_url}
   - {pattern: '\bgithub\b', attr: github_url}
   - {pattern: '\bportfolio\b|\bwebsite\b|\bpersonal\s+site\b', attr: portfolio_url}
@@ -42,23 +44,29 @@ identity:
   - {pattern: '\byears?\s+of\s+experience\b', attr: years_of_experience}
   - {pattern: '\bdesired\s+salary\b|\bsalary\s+expectation\b|\bcompensation\b', attr: desired_salary}
   - {pattern: '\bwork\s+authorization\b', attr: work_authorization}
+  # Greenhouse free-text (Workday multiselect is skipped via handler_owned /
+  # workday_multiselect variant — identity only applies when this path runs).
+  - {pattern: 'how\s+did\s+you\s+hear', attr: how_did_you_hear}
 
 # (regex, StaticAnswers bool attr). Feeds select / radio / checkbox yes-no.
 yes_no:
   - {pattern: 'authori[sz]ed\s+to\s+work', attr: authorized_to_work_us}
   - {pattern: 'legally\s+authori[sz]ed\s+to\s+work', attr: authorized_to_work_us}
   - {pattern: 'eligible to work.*sponsorship', attr: authorized_to_work_us, flags: [IGNORECASE]}
-  - {pattern: 'require\s+sponsorship|need\s+sponsorship|require\s+visa', attr: needs_sponsorship_us}
+  - {pattern: 'require\s+(?:immigration\s+)?sponsorship|need\s+sponsorship|require\s+visa|sponsorship to work|immigration sponsorship', attr: needs_sponsorship_us}
   - {pattern: 'previously\s+(?:worked|been\s+employed|employed)', attr: previously_employed}
   - {pattern: 'hispanic|latino|latin[a-z]', attr: hispanic_latino}
   - {pattern: 'located in the united states', attr: _us_located, flags: [IGNORECASE]}
 
-# (regex, StaticAnswers free-text attr). DEI select/radio options.
+# (regex, StaticAnswers free-text attr). DEI select/radio/text options.
+# When the attr is null, free-text screens get "Decline to state".
 dei:
   - {pattern: '\bgender\b', attr: gender}
+  - {pattern: 'transgender', attr: gender}
+  - {pattern: 'sexual\s+orientation', attr: gender}
   - {pattern: '\brace\b|\bethnicity\b', attr: ethnicity}
-  - {pattern: '\bveteran\b', attr: veteran_status}
-  - {pattern: '\bdisability\b|\bdisabled\b', attr: disability_status}
+  - {pattern: '\bveteran\b|served in the military', attr: veteran_status}
+  - {pattern: '\bdisability\b|\bdisabled\b|\bada\b', attr: disability_status}
 
 # Consent / acknowledgement — fires for BOTH checkbox and radio/select.
 consent:
@@ -92,11 +100,14 @@ sms_opt_in:
 # widget-type entries onto variant-based skip; this list keeps the
 # genuinely label-based context patterns that aren't tied to a variant.
 handler_owned_widget:
-  - {pattern: 'how\s+did\s+you\s+hear', flags: [IGNORECASE]}
+  # Labels whose Workday widgets must not be page.fill()'d. Prefer
+  # handler_owned_variants (workday_listbox/multiselect/date_spin) when the
+  # scan/recipe sets variant. Keep only labels that still appear as plain
+  # text on Workday without a reliable variant.
+  # Greenhouse free-text work-auth / sponsorship / source resolve via
+  # yes_no + identity — do NOT list them here.
   - {pattern: 'country\s+phone\s+code', flags: [IGNORECASE]}
-  - {pattern: 'selfidentif|disability', flags: [IGNORECASE]}
-  - {pattern: 'authori[sz]ed\s+to\s+work', flags: [IGNORECASE]}
-  - {pattern: 'require\s+visa\s+sponsorship', flags: [IGNORECASE]}
+  - {pattern: 'selfidentif', flags: [IGNORECASE]}
 
 # Variants the router refuses to touch because a handler recipe owns them.
 # Belt-and-braces with `handler_owned_widget` above: the label regex catches

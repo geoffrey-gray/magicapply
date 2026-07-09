@@ -157,6 +157,22 @@ def test_dry_run_apply_skips_submit() -> None:
     assert not any(a[0] == "click" for a in page.actions)
 
 
+def test_no_form_on_listing_page_fails_not_false_applied() -> None:
+    """LinkedIn/Indeed listing HTML with no apply form must not dry-run APPLIED."""
+    page, data = _composable_data(
+        job_url="https://www.linkedin.com/jobs/view/12345"
+    )
+    data = data.model_copy(update={"dry_run": True})
+    page._html = (
+        "<html><body><h1>Job listing</h1>"
+        "<a href='/apply'>Apply</a></body></html>"
+    )
+    result = GenericHandler().apply(page, data)
+    assert result.state == "failed"
+    assert result.error is not None
+    assert "no application form found" in result.error
+
+
 def test_yes_submit_clicks_button_submit() -> None:
     page, data = _composable_data(
         job_url="https://careers.example-custom.com/jobs/staff-ds/apply"

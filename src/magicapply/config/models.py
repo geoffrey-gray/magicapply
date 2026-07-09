@@ -52,13 +52,18 @@ class ScoringPrefilter(BaseModel):
 class ScoringConfig(BaseModel):
     """Job-scoring behavior.
 
-    `threshold` is applied after LLM scoring. Prefilter rules eliminate jobs
-    before an LLM is called; anything they pass is scored 0-100 and compared
-    against `threshold` to decide auto-apply.
+    `mode` selects the second-stage fit scorer after prefilter:
+    - ``keyword`` (default) — ATS-style KeywordBank alignment, no LLM.
+    - ``llm`` — prompt-based 0–100 score via the configured LLM provider.
+
+    `threshold` is applied after fit scoring. Prefilter rules eliminate jobs
+    before the fit scorer runs; anything they pass is scored 0-100 and
+    compared against `threshold` to decide auto-apply.
     """
 
     model_config = _Strict
 
+    mode: Literal["keyword", "llm"] = "keyword"
     threshold: int = Field(default=70, ge=0, le=100)
     prefilter: ScoringPrefilter = Field(default_factory=ScoringPrefilter)
 
@@ -169,13 +174,28 @@ class LinkedInSource(_SourceBase):
     Disabled by default. LinkedIn's ToS forbids scraping and their bot
     detection is aggressive — the user opts in explicitly per source, and
     provides a `LINKEDIN_LI_AT` cookie via env.
+
+    Defaults favour **safe drip discovery** (low rpm, few pages, no
+    apply-url enrich). Raise caps only after multi-page runs complete
+    without redirect/auth walls.
     """
 
     type: Literal["linkedin"] = "linkedin"
     enabled: bool = False
     queries: list[str] = Field(default_factory=list)
-    rate_limit_per_minute: int = Field(default=10, gt=0)
-    enrich_apply_urls: bool = True
+    rate_limit_per_minute: int = Field(default=3, gt=0)
+    enrich_apply_urls: bool = False
+    remote_only: bool = True
+    posted_within_days: int | None = Field(default=7, ge=0)
+    max_pages: int = Field(default=6, ge=1, le=50)
+    # Human-like pacing (milliseconds).
+    page_dwell_ms_min: int = Field(default=2500, ge=0)
+    page_dwell_ms_max: int = Field(default=8000, ge=0)
+    pause_every_n_pages: int = Field(default=3, ge=0)
+    pause_ms_min: int = Field(default=15_000, ge=0)
+    pause_ms_max: int = Field(default=45_000, ge=0)
+    stop_on_redirect_error: bool = True
+    max_jobs_per_run: int = Field(default=150, ge=1, le=2000)
 
 
 class IndeedSource(_SourceBase):
@@ -190,8 +210,11 @@ class IndeedSource(_SourceBase):
     enabled: bool = False
     queries: list[str] = Field(default_factory=list)
     location: str | None = None
-    rate_limit_per_minute: int = Field(default=5, gt=0)
-    enrich_apply_urls: bool = True
+    rate_limit_per_minute: int = Field(default=3, gt=0)
+    enrich_apply_urls: bool = False
+    remote_only: bool = True
+    posted_within_days: int | None = Field(default=7, ge=0)
+    max_pages: int = Field(default=5, ge=1, le=50)
 
 
 class GlassdoorSource(_SourceBase):
@@ -206,8 +229,11 @@ class GlassdoorSource(_SourceBase):
     type: Literal["glassdoor"] = "glassdoor"
     enabled: bool = False
     queries: list[str] = Field(default_factory=list)
-    rate_limit_per_minute: int = Field(default=5, gt=0)
-    enrich_apply_urls: bool = True
+    rate_limit_per_minute: int = Field(default=3, gt=0)
+    enrich_apply_urls: bool = False
+    remote_only: bool = True
+    posted_within_days: int | None = Field(default=7, ge=0)
+    max_pages: int = Field(default=5, ge=1, le=50)
 
 
 class GreenhouseSource(_SourceBase):

@@ -37,12 +37,14 @@ import re
 import urllib.parse
 from collections import deque
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from lxml import html as lhtml
 
 from magicapply.config.models import IndeedSource
 from magicapply.domain.models.job import Job
+from magicapply.infrastructure.browser.auth_session import resolve_session_auth
 from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
 from magicapply.infrastructure.sources.base import SourceError, parse_cookie_string
@@ -50,7 +52,8 @@ from magicapply.infrastructure.sources.rate_limit import RateLimiter
 
 logger = logging.getLogger(__name__)
 
-_SEARCH_URL = "https://www.indeed.com/jobs?q={query}{location}"
+_SEARCH_BASE = "https://www.indeed.com/jobs"
+_PAGE_SIZE = 10  # Indeed classic result offset step
 
 _BOT_BLOCK_MARKERS = (
     "challenges.cloudflare.com",
@@ -81,6 +84,28 @@ _DEFAULT_MAX_QUERY_RETRIES = 3
 _DEFAULT_JITTER_RATIO = 0.3
 
 
+def build_indeed_search_url(
+    query: str,
+    *,
+    location: str | None = None,
+    remote_only: bool = True,
+    posted_within_days: int | None = 7,
+    start: int = 0,
+) -> str:
+    """Build an Indeed search URL with optional remote/date/page filters."""
+    loc = location
+    if remote_only and not loc:
+        loc = "Remote"
+    params: list[tuple[str, str]] = [("q", query)]
+    if loc:
+        params.append(("l", loc))
+    if posted_within_days and posted_within_days > 0:
+        params.append(("fromage", str(int(posted_within_days))))
+    if start > 0:
+        params.append(("start", str(int(start))))
+    return f"{_SEARCH_BASE}?{urllib.parse.urlencode(params)}"
+
+
 class IndeedAdapter:
     def __init__(
         self,
@@ -94,6 +119,10 @@ class IndeedAdapter:
         proxy_pool: ProxyPool | None = None,
         max_query_retries: int = _DEFAULT_MAX_QUERY_RETRIES,
         session_cookies: list[dict] | None = None,
+        remote_only: bool = True,
+        posted_within_days: int | None = 7,
+        max_pages: int = 40,
+        data_dir: Path | None = None,
     ) -> None:
         self.name = name
         self._queries = list(queries)
@@ -104,13 +133,19 @@ class IndeedAdapter:
         self._proxy_pool = proxy_pool
         self._max_query_retries = max(1, int(max_query_retries))
         self._session_cookies = session_cookies or None
+        self._remote_only = remote_only
+        self._posted_within_days = posted_within_days
+        self._max_pages = max(1, int(max_pages))
+        self._data_dir = data_dir
 
     def _effective_proxy_pool(self) -> ProxyPool | None:
-        """Cookies-win-over-proxies: when session cookies are configured,
-        the adapter routes every fetch through the shared context (no
-        proxy rotation). Called from both `discover()` and
-        `_search_one_query` so the rule stays consistent."""
-        return None if self._session_cookies else self._proxy_pool
+        """Cookies/storage_state win over proxies: when session auth is
+        configured, the adapter routes every fetch through the shared
+        context (no proxy rotation)."""
+        auth = resolve_session_auth("indeed", self._data_dir)
+        if auth.source != "none" or self._session_cookies:
+            return None
+        return self._proxy_pool
 
     @classmethod
     def from_config(
@@ -118,6 +153,7 @@ class IndeedAdapter:
         config: IndeedSource,
         *,
         proxy_pool: ProxyPool | None = None,
+        data_dir: Path | None = None,
     ) -> IndeedAdapter:
         cookie_env = os.environ.get("INDEED_SESSION_COOKIES")
         session_cookies = (
@@ -134,6 +170,10 @@ class IndeedAdapter:
             enrich_apply_urls=config.enrich_apply_urls,
             proxy_pool=proxy_pool,
             session_cookies=session_cookies,
+            remote_only=config.remote_only,
+            posted_within_days=config.posted_within_days,
+            max_pages=config.max_pages,
+            data_dir=data_dir,
         )
 
     def discover(self) -> Iterator[Job]:
@@ -147,19 +187,21 @@ class IndeedAdapter:
             return
 
         rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
-        # Cookies win over proxies. Per-proxy contexts (spun by
-        # `session.new_page(proxy=...)`) are anonymous and would break
-        # any auth session — same-account-from-multiple-IPs is also a
-        # bot-detection signal. When cookies are present we route every
-        # fetch through the shared context.
+        auth = resolve_session_auth("indeed", self._data_dir)
         effective_pool = self._effective_proxy_pool()
-        if self._session_cookies and self._proxy_pool is not None:
+        if auth.source != "none" and self._proxy_pool is not None:
             logger.info(
-                "Indeed: session cookies present, skipping proxy pool for this source"
+                "Indeed: auth via %s, skipping proxy pool for this source",
+                auth.source,
             )
-        with PlaywrightSession(headless=True, proxy_pool=effective_pool) as session:
-            if self._session_cookies:
-                session.add_cookies(self._session_cookies)
+        with PlaywrightSession(
+            headless=True,
+            proxy_pool=effective_pool,
+            storage_state_path=auth.storage_state_path,
+        ) as session:
+            cookies = auth.cookies or self._session_cookies
+            if cookies:
+                session.add_cookies(cookies)
             queue: deque[tuple[str, int]] = deque((q, 0) for q in self._queries)
             while queue:
                 query, attempts = queue.popleft()
@@ -189,47 +231,69 @@ class IndeedAdapter:
         query: str,
         rate: RateLimiter,
     ) -> Iterator["Job | _Blocked"]:
-        location_part = (
-            f"&l={urllib.parse.quote_plus(self._location)}" if self._location else ""
-        )
-        url = _SEARCH_URL.format(
-            query=urllib.parse.quote_plus(query),
-            location=location_part,
-        )
-        rate.wait()
-
+        """Paginate Indeed search until empty page, full dupes, or max_pages."""
+        seen_urls: set[str] = set()
         pool = self._effective_proxy_pool()
-        proxy = pool.next() if pool else None
-        content = _fetch(session, url, proxy=proxy)
-        if content is None:
-            # Nav timeout / network error. Treat the same as a bot block
-            # when we have a proxy pool: burn the proxy and requeue so
-            # the pool learns which endpoints are dead-for-Indeed.
-            if pool is not None and proxy is not None:
-                _mark_blocked(
-                    session, pool, proxy, kind="timeout", query=query
-                )
-                yield _Blocked()
-            return
-        if looks_like_bot_block(content):
-            _mark_blocked(session, pool, proxy, kind="search", query=query)
-            yield _Blocked()
-            return
 
-        # Full job records (title/company/location/snippet) are embedded
-        # in the search page's `window.mosaic.initialData` hydration blob.
-        # Skipping per-jk detail-page fetches sidesteps Indeed's
-        # second-tier "Additional Verification Required" wall that fires
-        # on `/viewjob?jk=…` even after the search page loads cleanly.
-        jobs = extract_jobs_from_search(content, source_name=self.name)
-        if not jobs and extract_job_urls(content):
-            logger.warning(
-                "Indeed search page for %r has %d job URLs but no hydration "
-                "records — check if the mosaic.initialData shape changed",
-                query, len(extract_job_urls(content)),
+        for page_idx in range(self._max_pages):
+            start = page_idx * _PAGE_SIZE
+            url = build_indeed_search_url(
+                query,
+                location=self._location,
+                remote_only=self._remote_only,
+                posted_within_days=self._posted_within_days,
+                start=start,
             )
-        for job in jobs:
-            yield job
+            rate.wait()
+            proxy = pool.next() if pool else None
+            content = _fetch(session, url, proxy=proxy)
+            if content is None:
+                if pool is not None and proxy is not None:
+                    _mark_blocked(
+                        session, pool, proxy, kind="timeout", query=query
+                    )
+                    yield _Blocked()
+                return
+            if looks_like_bot_block(content):
+                _mark_blocked(session, pool, proxy, kind="search", query=query)
+                yield _Blocked()
+                return
+
+            # Full job records from mosaic hydration — no detail fetches.
+            jobs = extract_jobs_from_search(content, source_name=self.name)
+            if not jobs and extract_job_urls(content):
+                logger.warning(
+                    "Indeed search page for %r start=%d has %d job URLs but no "
+                    "hydration records — check mosaic shape",
+                    query,
+                    start,
+                    len(extract_job_urls(content)),
+                )
+
+            new_on_page = 0
+            for job in jobs:
+                if job.url in seen_urls:
+                    continue
+                seen_urls.add(job.url)
+                new_on_page += 1
+                yield job
+
+            logger.info(
+                "Indeed query %r page %d (start=%d): %d jobs (%d new)",
+                query,
+                page_idx + 1,
+                start,
+                len(jobs),
+                new_on_page,
+            )
+            if not jobs or new_on_page == 0:
+                break
+
+        logger.info(
+            "Indeed query %r finished: %d unique jobs across pages",
+            query,
+            len(seen_urls),
+        )
 
 
 class _Blocked:

@@ -50,6 +50,32 @@ def status(
             dry = sum(1 for a in apps_in_state if a.dry_run)
             real = total - dry
             note = f"real: {real}, dry_run: {dry}"
+        # Keyword-alignment before/after when tailor has re-scored.
+        scored = [a.score for a in apps_in_state if a.score is not None]
+        after = [
+            a.score_after_tailor
+            for a in apps_in_state
+            if a.score_after_tailor is not None
+        ]
+        if scored:
+            avg_before = sum(scored) / len(scored)
+            score_note = f"avg score: {avg_before:.0f}"
+            if after:
+                avg_after = sum(after) / len(after)
+                pairs = [
+                    (a.score, a.score_after_tailor)
+                    for a in apps_in_state
+                    if a.score is not None and a.score_after_tailor is not None
+                ]
+                if pairs:
+                    avg_delta = sum(b - a for a, b in pairs) / len(pairs)
+                    score_note = (
+                        f"avg score: {avg_before:.0f} → {avg_after:.0f} "
+                        f"(Δ {avg_delta:+.0f}, n={len(pairs)})"
+                    )
+                else:
+                    score_note = f"avg score: {avg_before:.0f} → {avg_after:.0f}"
+            note = f"{note}; {score_note}" if note else score_note
         table.add_row(state.value, str(total), note)
     console.print(table)
 

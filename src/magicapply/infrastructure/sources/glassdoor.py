@@ -29,12 +29,14 @@ import os
 import urllib.parse
 from collections import deque
 from collections.abc import Iterator
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from lxml import html as lhtml
 
 from magicapply.config.models import GlassdoorSource
 from magicapply.domain.models.job import Job
+from magicapply.infrastructure.browser.auth_session import resolve_session_auth
 from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
 from magicapply.infrastructure.sources.base import SourceError, parse_cookie_string
@@ -46,10 +48,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SEARCH_URL = "https://www.glassdoor.com/Job/jobs.htm?sc.keyword={query}"
+_SEARCH_BASE = "https://www.glassdoor.com/Job/jobs.htm"
 
 _DEFAULT_MAX_QUERY_RETRIES = 3
 _DEFAULT_JITTER_RATIO = 0.3
+
+
+def build_glassdoor_search_url(
+    query: str,
+    *,
+    remote_only: bool = True,
+    posted_within_days: int | None = 7,
+    page: int = 1,
+) -> str:
+    """Build a Glassdoor job-search URL with optional remote/date/page filters.
+
+    ``page`` is 1-based (Glassdoor ``p`` param). Date uses ``fromAge`` in days.
+    Remote uses ``remoteWorkType=1`` (Glassdoor public search); if a live
+    dump shows a different param the builder is the single place to fix it.
+    """
+    params: list[tuple[str, str]] = [("sc.keyword", query)]
+    if remote_only:
+        params.append(("remoteWorkType", "1"))
+    if posted_within_days and posted_within_days > 0:
+        params.append(("fromAge", str(int(posted_within_days))))
+    if page > 1:
+        params.append(("p", str(int(page))))
+    return f"{_SEARCH_BASE}?{urllib.parse.urlencode(params)}"
 
 
 class GlassdoorAdapter:
@@ -65,6 +90,10 @@ class GlassdoorAdapter:
         proxy_pool: ProxyPool | None = None,
         max_query_retries: int = _DEFAULT_MAX_QUERY_RETRIES,
         session_cookies: list[dict] | None = None,
+        remote_only: bool = True,
+        posted_within_days: int | None = 7,
+        max_pages: int = 40,
+        data_dir: Path | None = None,
     ) -> None:
         self.name = name
         self._queries = list(queries)
@@ -78,12 +107,15 @@ class GlassdoorAdapter:
         # legacy single-cookie env var (`GLASSDOOR_SESSION` → `gdSession`
         # only). Both may be set; both fire.
         self._session_cookies = session_cookies or None
+        self._remote_only = remote_only
+        self._posted_within_days = posted_within_days
+        self._max_pages = max(1, int(max_pages))
+        self._data_dir = data_dir
 
     def _effective_proxy_pool(self) -> ProxyPool | None:
-        """Cookies-win-over-proxies: either the legacy single-cookie or
-        the multi-cookie env var routes every fetch through the shared
-        context. Called from both `discover()` and `_search_one_query`."""
-        if self._session or self._session_cookies:
+        """Auth (storage_state or cookies) wins over proxies."""
+        auth = resolve_session_auth("glassdoor", self._data_dir)
+        if auth.source != "none" or self._session or self._session_cookies:
             return None
         return self._proxy_pool
 
@@ -93,6 +125,7 @@ class GlassdoorAdapter:
         config: GlassdoorSource,
         *,
         proxy_pool: ProxyPool | None = None,
+        data_dir: Path | None = None,
     ) -> GlassdoorAdapter:
         cookie_env = os.environ.get("GLASSDOOR_SESSION_COOKIES")
         session_cookies = (
@@ -109,6 +142,10 @@ class GlassdoorAdapter:
             enrich_apply_urls=config.enrich_apply_urls,
             proxy_pool=proxy_pool,
             session_cookies=session_cookies,
+            remote_only=config.remote_only,
+            posted_within_days=config.posted_within_days,
+            max_pages=config.max_pages,
+            data_dir=data_dir,
         )
 
     def discover(self) -> Iterator[Job]:
@@ -122,19 +159,22 @@ class GlassdoorAdapter:
             return
 
         rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
-        # Cookies win over proxies (see `_effective_proxy_pool` docstring).
+        auth = resolve_session_auth("glassdoor", self._data_dir)
         effective_pool = self._effective_proxy_pool()
-        if (self._session or self._session_cookies) and self._proxy_pool is not None:
+        if auth.source != "none" and self._proxy_pool is not None:
             logger.info(
-                "Glassdoor: session cookies present, skipping proxy pool for this source"
+                "Glassdoor: auth via %s, skipping proxy pool for this source",
+                auth.source,
             )
-        with PlaywrightSession(headless=True, proxy_pool=effective_pool) as session:
-            cookies_to_inject: list[dict] = []
-            if self._session:
-                # Legacy single-cookie env var — always wires `gdSession`.
+        with PlaywrightSession(
+            headless=True,
+            proxy_pool=effective_pool,
+            storage_state_path=auth.storage_state_path,
+        ) as session:
+            cookies_to_inject: list[dict] = list(auth.cookies)
+            if not cookies_to_inject and self._session:
                 cookies_to_inject.append(_session_cookie(self._session))
-            if self._session_cookies:
-                # New multi-cookie env var. Both may be set; both fire.
+            if not auth.cookies and self._session_cookies:
                 cookies_to_inject.extend(self._session_cookies)
             if cookies_to_inject:
                 session.add_cookies(cookies_to_inject)
@@ -165,37 +205,67 @@ class GlassdoorAdapter:
         query: str,
         rate: RateLimiter,
     ) -> Iterator["Job | _Blocked"]:
-        url = _SEARCH_URL.format(query=urllib.parse.quote_plus(query))
-        rate.wait()
+        """Paginate Glassdoor search until empty page, full dupes, or max_pages."""
+        seen_urls: set[str] = set()
         pool = self._effective_proxy_pool()
-        proxy = pool.next() if pool else None
-        content = _fetch(session, url, proxy=proxy)
-        if content is None:
-            if pool is not None and proxy is not None:
-                _mark_blocked(
-                    session, pool, proxy, kind="timeout", query=query
-                )
-                yield _Blocked()
-            return
-        if looks_like_cloudflare(content):
-            _mark_blocked(session, pool, proxy, kind="search", query=query)
-            yield _Blocked()
-            return
 
-        # Cards are fully rendered into the search page's DOM — every
-        # `<li data-test="jobListing">` carries jobid, title anchor,
-        # employer, location, and a descSnippet. Parsing them directly
-        # avoids the per-listing detail fetches (30× fewer HTTP round
-        # trips) and stays under Glassdoor's rate limit.
-        jobs = extract_jobs_from_search(content, source_name=self.name)
-        if not jobs and extract_job_urls(content):
-            logger.warning(
-                "Glassdoor search page for %r has %d card URLs but no "
-                "extractable records — check if card DOM shape changed",
-                query, len(extract_job_urls(content)),
+        for page_idx in range(self._max_pages):
+            page_num = page_idx + 1  # Glassdoor p= is 1-based
+            url = build_glassdoor_search_url(
+                query,
+                remote_only=self._remote_only,
+                posted_within_days=self._posted_within_days,
+                page=page_num,
             )
-        for job in jobs:
-            yield job
+            rate.wait()
+            proxy = pool.next() if pool else None
+            content = _fetch(session, url, proxy=proxy)
+            if content is None:
+                if pool is not None and proxy is not None:
+                    _mark_blocked(
+                        session, pool, proxy, kind="timeout", query=query
+                    )
+                    yield _Blocked()
+                return
+            if looks_like_cloudflare(content):
+                _mark_blocked(session, pool, proxy, kind="search", query=query)
+                yield _Blocked()
+                return
+
+            # Cards rendered inline — no detail fetches.
+            jobs = extract_jobs_from_search(content, source_name=self.name)
+            if not jobs and extract_job_urls(content):
+                logger.warning(
+                    "Glassdoor search page for %r p=%d has %d card URLs but no "
+                    "extractable records — check card DOM shape",
+                    query,
+                    page_num,
+                    len(extract_job_urls(content)),
+                )
+
+            new_on_page = 0
+            for job in jobs:
+                if job.url in seen_urls:
+                    continue
+                seen_urls.add(job.url)
+                new_on_page += 1
+                yield job
+
+            logger.info(
+                "Glassdoor query %r page %d: %d jobs (%d new)",
+                query,
+                page_num,
+                len(jobs),
+                new_on_page,
+            )
+            if not jobs or new_on_page == 0:
+                break
+
+        logger.info(
+            "Glassdoor query %r finished: %d unique jobs across pages",
+            query,
+            len(seen_urls),
+        )
 
 
 def _fetch(

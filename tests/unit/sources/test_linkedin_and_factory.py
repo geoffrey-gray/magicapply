@@ -45,10 +45,11 @@ class TestLinkedInGuards:
     ) -> None:
         monkeypatch.setenv("MAGICAPPLY_LINKEDIN_ACK", "1")
         monkeypatch.delenv("LINKEDIN_LI_AT", raising=False)
+        monkeypatch.delenv("LINKEDIN_SESSION_COOKIES", raising=False)
         adapter = LinkedInAdapter.from_config(
             LinkedInSource(name="linkedin-search", queries=["python"])
         )
-        with pytest.raises(SourceError, match="LINKEDIN_LI_AT"):
+        with pytest.raises(SourceError, match="auth login linkedin|LINKEDIN"):
             list(adapter.discover())
 
     def test_empty_queries_ack_returns_nothing_gracefully(
