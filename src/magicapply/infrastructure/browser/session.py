@@ -93,9 +93,24 @@ class PlaywrightSession(AbstractContextManager["PlaywrightSession"]):
             and self._storage_state_path.exists()
         ):
             storage_state = str(self._storage_state_path)
+        # Apply UA + viewport to the shared context too — not just per-proxy
+        # ones. Cloudflare on Indeed / Glassdoor fingerprints the default
+        # `HeadlessChrome/…` UA and serves a static block page before
+        # cookies / auth ever come into play. Empirically verified: same
+        # request with a real `Chrome/124.0.0.0` UA + realistic viewport
+        # yields 1.59 MB of real search results; default headless UA gets
+        # a 35 KB "Blocked - Indeed.com" page. UA/viewport are pinned per
+        # session (not per fetch) so the request signature stays
+        # consistent within one discover run — matches real-user behavior
+        # and satisfies Cloudflare's "stable browser identity" heuristic.
         self._context = self._browser.new_context(
             storage_state=storage_state,
             locale="en-US",
+            user_agent=self._rng.choice(self._user_agent_pool),
+            viewport={
+                "width": (v := self._rng.choice(self._viewport_pool))[0],
+                "height": v[1],
+            },
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
         return self

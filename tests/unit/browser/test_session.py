@@ -154,3 +154,78 @@ class TestProxyContexts:
         page = session.new_page()
         assert page in session._context.pages  # type: ignore[union-attr]  # noqa: SLF001
         assert session._browser.contexts == []  # type: ignore[union-attr]  # noqa: SLF001
+
+
+# ---- Shared context UA / viewport (regression: Cloudflare-defeat fix) -----
+
+
+class TestSharedContextIdentity:
+    """The shared context (used by non-proxied fetches — LinkedIn cookie
+    path, Indeed/Glassdoor when cookies win over proxies, etc.) must have
+    a realistic User-Agent and viewport. Playwright's default headless
+    UA (`HeadlessChrome/…`) is trivially fingerprinted by Cloudflare;
+    empirically that lands us on a 35 KB "Blocked - Indeed.com" page,
+    while a real Chrome UA + realistic viewport yields 1.59 MB of real
+    search results. This regression test locks the fix in."""
+
+    def _patched_session(
+        self, monkeypatch: pytest.MonkeyPatch, rng: random.Random | None = None
+    ) -> PlaywrightSession:
+        """Return a PlaywrightSession that has already been `__enter__`-ed
+        against a fake Playwright — no Chromium needed."""
+        from magicapply.infrastructure.browser import session as session_mod
+
+        fake_browser = _FakeBrowser()
+
+        class _FakeChromium:
+            def launch(self, **_kwargs) -> _FakeBrowser:
+                return fake_browser
+
+        class _FakePlaywright:
+            chromium = _FakeChromium()
+
+            def stop(self) -> None:
+                pass
+
+        class _FakeStarter:
+            def start(self) -> _FakePlaywright:
+                return _FakePlaywright()
+
+        monkeypatch.setattr(session_mod, "sync_playwright", _FakeStarter)
+        s = PlaywrightSession(rng=rng or random.Random(0))
+        s.__enter__()
+        return s
+
+    def test_shared_context_gets_ua_from_pool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        s = self._patched_session(monkeypatch)
+        # __enter__ created exactly one context: the shared one.
+        assert len(s._browser.contexts) == 1  # type: ignore[union-attr]  # noqa: SLF001
+        ctx = s._browser.contexts[0]  # type: ignore[union-attr]  # noqa: SLF001
+        assert ctx.kwargs["user_agent"] in DEFAULT_USER_AGENTS
+        vp = ctx.kwargs["viewport"]
+        assert (vp["width"], vp["height"]) in DEFAULT_VIEWPORTS
+
+    def test_shared_context_never_uses_headless_chrome_default_ua(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Sanity: the whole point of this fix is to NOT let Playwright
+        fall back to `HeadlessChrome/...`. The pool must never leak that
+        string."""
+        s = self._patched_session(monkeypatch)
+        ctx = s._browser.contexts[0]  # type: ignore[union-attr]  # noqa: SLF001
+        assert "HeadlessChrome" not in ctx.kwargs["user_agent"]
+
+    def test_shared_context_ua_deterministic_from_rng(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Same seed → same UA. Lets operators pin a specific UA when
+        reproducing a discover run."""
+        seed = 42
+        first = self._patched_session(monkeypatch, rng=random.Random(seed))
+        second = self._patched_session(monkeypatch, rng=random.Random(seed))
+        assert (
+            first._browser.contexts[0].kwargs["user_agent"]  # type: ignore[union-attr]  # noqa: SLF001
+            == second._browser.contexts[0].kwargs["user_agent"]  # type: ignore[union-attr]  # noqa: SLF001
+        )
