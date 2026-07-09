@@ -1,18 +1,23 @@
-"""Glassdoor adapter — Playwright-driven search with optional session cookie.
+"""Glassdoor adapter — Playwright-driven search, parses cards from HTML directly.
 
-Shape mirrors Indeed: per-query the adapter opens the Glassdoor search page,
-walks ``/job-listing/`` anchors out of the DOM, then fetches each detail
-page and extracts its ``schema.org`` ``JobPosting`` JSON-LD. Cloudflare
-challenges are detected via the shared helper and drive a proxy-rotation
-retry loop (see `sources/indeed.py` for the full pattern — Glassdoor is a
-sister adapter with the same escape hatches).
+Per query, opens the Glassdoor search page and reads the visible job
+cards straight out of the DOM — Glassdoor renders every result as an
+``<li data-test="jobListing" data-jobid="…">`` with title, employer,
+location, salary, and a description snippet already inline. Detail-page
+fetches are skipped by design (as with Indeed): they hit rate-limit
+walls and cost 30× more HTTP round trips for the same data.
 
-If ``GLASSDOOR_SESSION`` is set in env the adapter attaches it as a session
-cookie so the authenticated views (which show more jobs and richer detail
-pages) are reachable. Unauthenticated calls still work for public listings.
-When a `ProxyPool` is also configured, the session cookie is only applied
-to the SHARED context — per-proxy contexts stay anonymous, which is the
-right behavior for scraping through random IPs.
+Cloudflare challenges on the search page are detected via the shared
+helper and drive a proxy-rotation retry loop (see `sources/indeed.py`
+for the full pattern — Glassdoor is a sister adapter with the same
+escape hatches).
+
+If ``GLASSDOOR_SESSION`` (legacy single-cookie) or
+``GLASSDOOR_SESSION_COOKIES`` (browser Cookie header string) is set in
+env, the adapter injects the cookies into the shared context so the
+authenticated views (which show more jobs) are reachable. When both a
+cookie and a `ProxyPool` are configured, cookies win — per-proxy
+contexts stay anonymous, which would break auth anyway.
 
 ToS-sensitive: requires ``MAGICAPPLY_GLASSDOOR_ACK=1``.
 """
@@ -29,19 +34,15 @@ from typing import TYPE_CHECKING
 from lxml import html as lhtml
 
 from magicapply.config.models import GlassdoorSource
+from magicapply.domain.models.job import Job
 from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
-from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
 from magicapply.infrastructure.sources.base import SourceError, parse_cookie_string
 from magicapply.infrastructure.sources.indeed import _Blocked, looks_like_cloudflare
-from magicapply.infrastructure.sources.jsonld import (
-    extract_jobposting_dicts,
-    jsonld_to_job,
-)
 from magicapply.infrastructure.sources.rate_limit import RateLimiter
 
 if TYPE_CHECKING:
-    from magicapply.domain.models.job import Job
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -181,31 +182,20 @@ class GlassdoorAdapter:
             yield _Blocked()
             return
 
-        for job_url in extract_job_urls(content):
-            rate.wait()
-            job_html = _fetch(session, job_url, proxy=proxy)
-            if job_html is None:
-                continue
-            if looks_like_cloudflare(job_html):
-                logger.warning(
-                    "Glassdoor blocked by bot protection on detail %s; skipping",
-                    job_url,
-                )
-                continue
-            for posting in extract_jobposting_dicts(job_html):
-                try:
-                    job = jsonld_to_job(
-                        posting, source_name=self.name, fallback_url=job_url
-                    )
-                    if self._enrich_apply_urls:
-                        job = enrich_job_from_detail_html(
-                            job, job_html, source="glassdoor"
-                        )
-                    yield job
-                except (KeyError, TypeError, ValueError) as exc:
-                    logger.warning(
-                        "Glassdoor skip malformed JSON-LD from %s: %s", job_url, exc
-                    )
+        # Cards are fully rendered into the search page's DOM — every
+        # `<li data-test="jobListing">` carries jobid, title anchor,
+        # employer, location, and a descSnippet. Parsing them directly
+        # avoids the per-listing detail fetches (30× fewer HTTP round
+        # trips) and stays under Glassdoor's rate limit.
+        jobs = extract_jobs_from_search(content, source_name=self.name)
+        if not jobs and extract_job_urls(content):
+            logger.warning(
+                "Glassdoor search page for %r has %d card URLs but no "
+                "extractable records — check if card DOM shape changed",
+                query, len(extract_job_urls(content)),
+            )
+        for job in jobs:
+            yield job
 
 
 def _fetch(
@@ -246,6 +236,102 @@ def _mark_blocked(
         logger.warning(
             "Glassdoor blocked by bot protection for %r; skipping query", query
         )
+
+
+def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
+    """Parse full ``Job`` records from a Glassdoor search page.
+
+    Glassdoor renders every result inline as
+    ``<li data-test="jobListing" data-jobid="<id>">`` — the anchor
+    ``<a data-test="job-title" href="/job-listing/…">`` carries both
+    the title text and the canonical detail URL, and sibling elements
+    hold the employer name, ``emp-location``, ``descSnippet``, and
+    optional salary. Skipping detail-page fetches sidesteps
+    Glassdoor's per-listing rate limit and cuts 30× round trips.
+
+    Returns ``[]`` when no jobListing cards are present; the caller
+    warns if URL anchors exist but records don't (schema drift)."""
+    tree = lhtml.fromstring(html)
+    jobs: list[Job] = []
+    seen: set[str] = set()
+    for card in tree.xpath('//li[@data-test="jobListing"]'):
+        jobid = (card.get("data-jobid") or "").strip()
+        if not jobid or jobid in seen:
+            continue
+        title_anchors = card.xpath('.//a[@data-test="job-title"]')
+        if not title_anchors:
+            continue
+        title = _clean_text(title_anchors[0].text_content())
+        href = (title_anchors[0].get("href") or "").strip()
+        if not (title and href):
+            continue
+        url = href if href.startswith("http") else f"https://www.glassdoor.com{href}"
+
+        company = _card_company(card)
+        if not company:
+            continue
+
+        location = _card_first_text(card, './/*[@data-test="emp-location"]')
+        snippet = _card_first_text(card, './/*[@data-test="descSnippet"]')
+        salary = _card_first_text(card, './/*[@data-test="detailSalary"]')
+        job_age = _card_first_text(card, './/*[@data-test="job-age"]')
+
+        seen.add(jobid)
+        jobs.append(
+            Job.new(
+                source_name=source_name,
+                url=url.split("?")[0].rstrip("/"),
+                title=title,
+                company=company,
+                description=snippet or "",
+                location=location or None,
+                raw={
+                    "jobid": jobid,
+                    "salary_snippet": salary,
+                    "posted_age": job_age,
+                    "source_extraction": "search-page-card",
+                },
+            )
+        )
+    return jobs
+
+
+def _card_company(card: object) -> str | None:
+    """Extract the employer name from a Glassdoor card.
+
+    Preferred: the ``span.EmployerProfile_compactEmployerName…`` child of
+    ``div#job-employer-<jobid>`` — Glassdoor keeps ``compactEmployerName``
+    stable across CSS-module hash rotations. Fallback: the
+    ``div#job-employer-…`` container text with the rating stripped off
+    the tail."""
+    span = card.xpath(  # type: ignore[attr-defined]
+        './/span[contains(@class, "compactEmployerName")]'
+    )
+    if span:
+        cleaned = _clean_text(span[0].text_content())
+        if cleaned:
+            return cleaned
+    emp_div = card.xpath(  # type: ignore[attr-defined]
+        './/div[starts-with(@id, "job-employer-")]'
+    )
+    if emp_div:
+        full = _clean_text(emp_div[0].text_content())
+        # Ratings look like "Ultragenyx3.4" or "Ultragenyx 3.4" — chop
+        # off any trailing digit/decimal run.
+        import re as _re
+        return _re.sub(r"\s*\d(?:\.\d+)?\s*$", "", full) or None
+    return None
+
+
+def _card_first_text(card: object, xpath: str) -> str | None:
+    hits = card.xpath(xpath)  # type: ignore[attr-defined]
+    if not hits:
+        return None
+    return _clean_text(hits[0].text_content()) or None
+
+
+def _clean_text(text: str) -> str:
+    return " ".join(text.split())
 
 
 def extract_job_urls(html: str) -> list[str]:

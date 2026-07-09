@@ -9,6 +9,7 @@ from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.glassdoor import (
     GlassdoorAdapter,
     extract_job_urls,
+    extract_jobs_from_search,
 )
 
 
@@ -61,6 +62,128 @@ class TestSearchUrlExtractor:
 
     def test_empty_page_returns_empty(self) -> None:
         assert extract_job_urls("<html><body></body></html>") == []
+
+
+class TestSearchPageCardExtractor:
+    """Verify `extract_jobs_from_search` pulls full Job records straight
+    from the search-page's `<li data-test="jobListing">` DOM cards,
+    bypassing detail-page fetches. Shape mirrors what a real Glassdoor
+    search page renders — see live capture from 2026-07-09."""
+
+    @staticmethod
+    def _card_html(
+        *,
+        jobid: str,
+        title: str,
+        company: str | None,
+        href: str = "/job-listing/some-slug-JV_IC1_KO0.htm?jl={jobid}",
+        location: str | None = "Remote",
+        snippet: str | None = "Great role summary here.",
+        salary: str | None = None,
+    ) -> str:
+        parts = [
+            f'<li data-test="jobListing" data-jobid="{jobid}">',
+            f'  <a data-test="job-title" href="{href.format(jobid=jobid)}">{title}</a>',
+        ]
+        if company is not None:
+            parts.append(
+                f'  <div id="job-employer-{jobid}">'
+                f'    <span class="EmployerProfile_compactEmployerName__xyz">{company}</span>'
+                f'    <span class="rating-single-star_RatingText">3.5</span>'
+                f"  </div>"
+            )
+        if location is not None:
+            parts.append(f'  <div data-test="emp-location">{location}</div>')
+        if snippet is not None:
+            parts.append(f'  <div data-test="descSnippet">{snippet}</div>')
+        if salary is not None:
+            parts.append(f'  <div data-test="detailSalary">{salary}</div>')
+        parts.append("</li>")
+        return "\n".join(parts)
+
+    def _page(self, cards_html: list[str]) -> str:
+        return (
+            '<html><body><ul class="JobsList">'
+            + "".join(cards_html)
+            + "</ul></body></html>"
+        )
+
+    def test_extracts_full_card(self) -> None:
+        html = self._page([
+            self._card_html(
+                jobid="777",
+                title="Senior Data Scientist",
+                company="Acme AI",
+                location="San Francisco, CA",
+                snippet="Own ML platform.",
+                salary="$200K - $260K",
+            )
+        ])
+        jobs = extract_jobs_from_search(html, source_name="glassdoor-search")
+        assert len(jobs) == 1
+        j = jobs[0]
+        assert j.title == "Senior Data Scientist"
+        assert j.company == "Acme AI"
+        assert j.location == "San Francisco, CA"
+        assert "ML platform" in j.description
+        assert j.url == (
+            "https://www.glassdoor.com/job-listing/some-slug-JV_IC1_KO0.htm"
+        )
+        assert j.raw["jobid"] == "777"
+        assert j.raw["salary_snippet"] == "$200K - $260K"
+        assert j.raw["source_extraction"] == "search-page-card"
+
+    def test_dedupes_by_jobid(self) -> None:
+        html = self._page([
+            self._card_html(jobid="42", title="A", company="Acme"),
+            self._card_html(jobid="42", title="A dup", company="Acme"),
+            self._card_html(jobid="99", title="B", company="Beta"),
+        ])
+        jobs = extract_jobs_from_search(html, source_name="glassdoor-search")
+        assert [j.raw["jobid"] for j in jobs] == ["42", "99"]
+
+    def test_skips_cards_missing_company_or_title(self) -> None:
+        html = self._page([
+            self._card_html(jobid="1", title="OK", company="Acme"),
+            self._card_html(jobid="2", title="", company="Beta"),
+            self._card_html(jobid="3", title="No company", company=None),
+        ])
+        jobs = extract_jobs_from_search(html, source_name="glassdoor-search")
+        assert [j.raw["jobid"] for j in jobs] == ["1"]
+
+    def test_absolute_href_kept_as_is(self) -> None:
+        html = self._page([
+            self._card_html(
+                jobid="55",
+                title="Eng",
+                company="Delta",
+                href="https://www.glassdoor.com/job-listing/eng-delta-JV_1.htm?jl={jobid}",
+            )
+        ])
+        jobs = extract_jobs_from_search(html, source_name="glassdoor-search")
+        assert jobs[0].url == "https://www.glassdoor.com/job-listing/eng-delta-JV_1.htm"
+
+    def test_no_cards_returns_empty(self) -> None:
+        assert extract_jobs_from_search(
+            "<html><body>no cards here</body></html>",
+            source_name="glassdoor-search",
+        ) == []
+
+    def test_company_fallback_strips_rating_suffix(self) -> None:
+        """When the compactEmployerName span isn't present, the extractor
+        falls back to the `job-employer-<id>` div's full text and strips
+        the trailing rating (e.g. `Ultragenyx3.4` → `Ultragenyx`)."""
+        html = (
+            '<html><body><ul>'
+            '<li data-test="jobListing" data-jobid="99">'
+            '  <a data-test="job-title" href="/job-listing/x-JV_1.htm">Role</a>'
+            '  <div id="job-employer-99">Ultragenyx3.4</div>'
+            '  <div data-test="emp-location">Remote</div>'
+            '</li></ul></body></html>'
+        )
+        jobs = extract_jobs_from_search(html, source_name="glassdoor-search")
+        assert len(jobs) == 1
+        assert jobs[0].company == "Ultragenyx"
 
 
 class TestSessionCookies:
