@@ -33,19 +33,31 @@ sleep 1
 openbox &
 sleep 0.5
 
+# Bright root + large canaries so an empty black WM is never mistaken for "VNC broken".
 if command -v xsetroot >/dev/null 2>&1; then
-  xsetroot -solid '#2b4c6f' || true
+  xsetroot -solid '#00aa00' || true
 fi
 
+# -noxdamage: more reliable full updates on Xvfb; avoid stale black client view.
 x11vnc -display ":${DISPLAY_NUM}" -rfbport "${RFBPORT}" \
-  -localhost -shared -forever -nopw -xkb -bg \
+  -localhost -shared -forever -nopw -xkb -noxdamage -bg \
   -o /tmp/x11vnc.log
 
+if command -v xterm >/dev/null 2>&1; then
+  xterm -geometry 90x28+40+40 -bg white -fg black \
+    -e bash -c 'echo "MagicApply VNC OK (DISPLAY='"${DISPLAY}"')"; echo "If you see this white terminal, the stream works."; sleep 86400' &
+fi
 if command -v xmessage >/dev/null 2>&1; then
-  xmessage -geometry 480x100+80+80 "MagicApply VNC OK — DISPLAY=${DISPLAY} port ${RFBPORT}" &
+  xmessage -geometry 560x160+200+420 -bg yellow -fg black \
+    "MagicApply VNC OK — yellow = stream works" &
+fi
+if command -v xrefresh >/dev/null 2>&1; then
+  xrefresh || true
 fi
 
 echo "VNC stack up: DISPLAY=${DISPLAY} rfbport=${RFBPORT} (localhost only)"
 echo "Host tunnel:  ssh -fN -L ${RFBPORT}:127.0.0.1:${RFBPORT} magicapply-dev"
-echo "Host viewer:  vncviewer 127.0.0.1:${RFBPORT}"
+echo "Host viewer:  vncviewer -RemoteResize=0 127.0.0.1:${RFBPORT}"
+echo "  (RemoteResize=0 avoids TigerVNC black/letterbox on fixed Xvfb size)"
 echo "Auth login:   DISPLAY=${DISPLAY} uv run magicapply auth login linkedin --root configs --force --auto-save"
+echo "Verify from host (non-GUI): scripts/vnc_host_snapshot.py → /tmp/vnc_host_capture.png"

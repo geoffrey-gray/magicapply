@@ -121,12 +121,20 @@ This starts Xvfb `:1` (1400×900), openbox, and x11vnc on **localhost:5901** onl
 # Tunnel (safe even when host == hypervisor)
 ssh -fN -o ExitOnForwardFailure=yes -L 5901:127.0.0.1:5901 magicapply-dev
 
-# Client (install once): nix-shell -p tigervnc --run 'vncviewer 127.0.0.1:5901'
-# or Remmina / any VNC viewer → 127.0.0.1:5901
-vncviewer 127.0.0.1:5901
+# Client (install once). Disable remote resize — TigerVNC requesting a
+# non-Xvfb size can leave a black/letterboxed view.
+nix-shell -p tigervnc --run 'vncviewer -RemoteResize=0 127.0.0.1:5901'
 ```
 
-You should see a dark-blueish desktop and a “MagicApply VNC OK” dialog. **Black bands alone** usually mean letterboxing or no mapped windows — not a dead tunnel.
+You should see a **green** desktop, a **white** xterm (“MagicApply VNC OK”), and a **yellow** dialog.  
+If the viewer is pure black: (1) guest had no canaries / black root — re-run `dev_vnc_up.sh`; (2) use `-RemoteResize=0`.
+
+**Prove the stream without a GUI** (host side, after tunnel is up):
+
+```bash
+nix-shell -p python3 --run 'python3 scripts/vnc_host_snapshot.py'
+# expect: PASS, nonblack_grid >> 0, /tmp/vnc_host_capture.ppm
+```
 
 ### Headed auth / smoke
 
