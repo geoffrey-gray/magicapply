@@ -96,6 +96,67 @@ The mount depends on two settings that were tuned when the VM was first brought 
 
 The wrapper at `/mnt/storage/VMs/magicapply-dev-setup/virtiofsd-wrapper.sh` is intentionally minimal — just `--sandbox=none "$@"` — because NixOS doesn't grant virtiofsd the caps for the default namespace sandbox. If you need to debug a fresh mount failure, temporarily add `--log-level debug` and redirect stderr to a world-readable log; `magicapply-dev.qcow2` will pick it up on the next `virsh start`.
 
+## Headed GUI stream (VNC) — recommended for `auth login`
+
+The domain XML has **no** SPICE/VNC graphics device (serial console only). For interactive Chromium on the laptop, run a **guest** virtual display and view it with a host VNC client.
+
+### One-time guest packages
+
+```bash
+ssh magicapply-dev 'sudo -n DEBIAN_FRONTEND=noninteractive apt-get install -y \
+  xvfb x11vnc openbox xterm x11-apps x11-utils scrot'
+```
+
+### Start the stack (guest)
+
+```bash
+ssh magicapply-dev 'bash ~/magicapply/scripts/dev_vnc_up.sh'
+```
+
+This starts Xvfb `:1` (1400×900), openbox, and x11vnc on **localhost:5901** only, plus an `xmessage` canary so an empty desktop is not mistaken for a dead stream.
+
+### View on this laptop (host)
+
+```bash
+# Tunnel (safe even when host == hypervisor)
+ssh -fN -o ExitOnForwardFailure=yes -L 5901:127.0.0.1:5901 magicapply-dev
+
+# Client (install once): nix-shell -p tigervnc --run 'vncviewer 127.0.0.1:5901'
+# or Remmina / any VNC viewer → 127.0.0.1:5901
+vncviewer 127.0.0.1:5901
+```
+
+You should see a dark-blueish desktop and a “MagicApply VNC OK” dialog. **Black bands alone** usually mean letterboxing or no mapped windows — not a dead tunnel.
+
+### Headed auth / smoke
+
+Keep the SSH session that runs Playwright **open** for the whole login (detaching the parent kills Chromium).
+
+```bash
+ssh magicapply-dev
+export DISPLAY=:1 PATH=$HOME/.local/bin:$PATH UV_LINK_MODE=copy
+cd ~/magicapply
+uv run magicapply auth login linkedin --root configs --force --auto-save --timeout 900
+```
+
+Optional paint smoke (no credentials):
+
+```bash
+ssh magicapply-dev 'export DISPLAY=:1 PATH=$HOME/.local/bin:$PATH UV_LINK_MODE=copy
+  cd ~/magicapply && uv run python scripts/pw_headed_smoke.py'
+```
+
+Headed Chromium uses software GL flags in `PlaywrightSession` (`--use-gl=swiftshader`). Do not re-add `--disable-software-rasterizer` — it blanks windows on Xvfb.
+
+### Optional later: libvirt SPICE
+
+If you want a real hypervisor console instead of guest Xvfb, shut down the domain and add Spice + QXL to `magicapply-dev.xml` (see [Spice User Manual](https://www.spice-space.org/spice-user-manual.html)), redefine/start, install guest QXL/`spice-vdagent`, then `remote-viewer` on the host. Not required for auth.
+
+### Avoid
+
+- Host X11 reverse-forward into the guest (blank Chromium / flaky paint).
+- Binding x11vnc to `0.0.0.0` without a tunnel.
+
 ## Fallback: sync host checkout → VM
 
 Only useful if virtiofs regressed or the disk was re-provisioned before the fixes above landed:

@@ -209,23 +209,26 @@ uv run magicapply auth sites                   # registry of known sites
 uv run magicapply auth clear linkedin --root configs
 ```
 
-**VM → host GUI (libvirt):** the VM has no display. On the **host** (once):
+**VM → laptop GUI:** the domain has no SPICE/VNC device. Use guest **Xvfb + x11vnc** (full recipe in [VM_DEV.md](VM_DEV.md) § Headed GUI stream):
 
 ```bash
-# 1) Tunnel host X (:0) to TCP localhost:6000
-nix-shell -p socat --run \
-  'socat TCP-LISTEN:6000,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:/tmp/.X11-unix/X0' &
-nix-shell -p xhost --run 'xhost +'   # temporary; undo with: xhost -
+# Guest (once per boot)
+ssh magicapply-dev 'bash ~/magicapply/scripts/dev_vnc_up.sh'
 
-# 2) Reverse-forward that into the VM as display :10
-ssh -fN -R 6010:127.0.0.1:6000 magicapply-dev
+# Host laptop
+ssh -fN -L 5901:127.0.0.1:5901 magicapply-dev
+vncviewer 127.0.0.1:5901   # or Remmina / TigerVNC
 
-# 3) Login (window should appear on the host desktop)
-ssh magicapply-dev 'export DISPLAY=127.0.0.1:10 PATH=$HOME/.local/bin:$PATH
-  cd ~/magicapply && uv run magicapply auth login linkedin --root configs --force --auto-save'
+# Guest — keep this SSH session open for the whole login
+ssh magicapply-dev
+export DISPLAY=:1 PATH=$HOME/.local/bin:$PATH UV_LINK_MODE=copy
+cd ~/magicapply
+uv run magicapply auth login linkedin --root configs --force --auto-save --timeout 900
 ```
 
-If the Chromium window is **blank white**, the tunnel is up but paint failed — try again after the software-GL flags (shipped in session), or use **virt-manager console / VNC** into the VM and run `auth login` there instead.
+**Easier alternative:** run `auth login` on a real desktop (Mac) and copy `data/auth/*_storage_state.json` into the VM. Cookie env fallbacks below still work.
+
+Do **not** rely on host X11 reverse tunnels into the guest — paint is flaky. Hosted Chromium already uses software GL (`--use-gl=swiftshader`) for Xvfb.
 
 Sessions save under `data/auth/<site>_storage_state.json` (gitignored via `data/`).
 Discover prefers storage_state, then Cookie env, then legacy single cookies.
