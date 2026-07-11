@@ -200,7 +200,11 @@ class TestHappyPath:
         )
 
         assert result.exit_code == 0, result.stdout
-        assert ("goto", "https://boards.greenhouse.io/acme/jobs/1") in patched_session.calls
+        # Board GH URLs are rewritten to the embed form before navigation.
+        assert (
+            "goto",
+            "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=1",
+        ) in patched_session.calls
         fills = {c[1] for c in patched_session.calls if c[0] == "fill"}
         assert "#first_name" in fills
         assert "#last_name" in fills
