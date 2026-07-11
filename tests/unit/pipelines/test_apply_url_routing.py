@@ -137,9 +137,13 @@ def test_apply_pipeline_routes_via_apply_url_not_listing(
     ) in page.calls
 
 
-def test_apply_pipeline_skips_indeed_board_listing_without_external(
+def test_apply_pipeline_attempts_indeed_listing_via_generic(
     engine: Engine, tmp_path: Path
 ) -> None:
+    """Indeed/LinkedIn listing URLs must be applied (Generic), not refused.
+
+    Rate is controlled by apply throttle — not by skipping board hosts.
+    """
     job = Job.new(
         source_name="indeed-search",
         url="https://www.indeed.com/viewjob?jk=abc123",
@@ -167,6 +171,7 @@ def test_apply_pipeline_skips_indeed_board_listing_without_external(
         calls: list[tuple[str, ...]] = []
 
         def goto(self, url: str) -> None:
+            self.url = url
             self.calls.append(("goto", url))
 
         def fill(self, selector: str, value: str) -> None:
@@ -176,7 +181,12 @@ def test_apply_pipeline_skips_indeed_board_listing_without_external(
             pass
 
         def content(self) -> str:
-            return "<html></html>"
+            # Minimal form so GenericHandler can dry-run rather than hard-fail.
+            return (
+                "<html><body><form>"
+                "<input id='first_name' /><input type='submit' />"
+                "</form></body></html>"
+            )
 
         def set_input_files(self, selector: str, files: str) -> None:
             pass
@@ -204,12 +214,13 @@ def test_apply_pipeline_skips_indeed_board_listing_without_external(
         application_data=data,
     )
 
-    assert report.final_state is ApplicationState.SKIPPED
-    assert report.error is not None and "board listing" in report.error
-    assert page.calls == []  # never navigated
+    assert isinstance(ATSHandlerFactory.for_url(job.url), GenericHandler)
+    assert ("goto", job.url) in page.calls
+    # Must not refuse board listings as SKIPPED.
+    assert report.final_state is not ApplicationState.SKIPPED
     saved = apps.get(app.id)
     assert saved is not None
-    assert saved.state is ApplicationState.SKIPPED
+    assert saved.state is not ApplicationState.SKIPPED
 
 
 def test_apply_pipeline_resolves_stripe_raw_to_greenhouse(

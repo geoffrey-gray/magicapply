@@ -156,6 +156,7 @@ from magicapply.config import load_config
 from magicapply.cli.composition import build_repos
 from magicapply.domain.models.application import ApplicationState
 from magicapply.infrastructure.sources.apply_url import (
+    is_external_apply_url,
     is_job_board_listing_url,
     resolve_job_apply_destination,
 )
@@ -168,19 +169,23 @@ tailored = apps_repo.list_by_state_and_profile(ApplicationState.TAILORED, profil
 if not tailored:
     raise SystemExit(0)
 
-candidates = []
-for app in tailored:
+board_hosts = ("linkedin.com", "indeed.com", "glassdoor.com")
+
+def rank(app):
     job = jobs_repo.get(app.job_id)
     if job is None:
-        continue
+        return (3, app.job_id)
     dest = resolve_job_apply_destination(job)
-    if is_job_board_listing_url(dest):
-        continue
-    candidates.append(app.job_id)
+    au = (job.apply_url or "").strip()
+    if is_external_apply_url(au, board_hosts=board_hosts) or (
+        dest and not is_job_board_listing_url(dest)
+    ):
+        return (0, dest or app.job_id)
+    if dest or au or job.url:
+        return (1, app.job_id)
+    return (2, app.job_id)
 
-if not candidates:
-    raise SystemExit(0)
-print(sorted(candidates)[0])
+print(sorted(tailored, key=rank)[0].job_id)
 PY
   )" || true
 
