@@ -74,9 +74,12 @@ class GreenhouseAdapter:
             rate_limiter=rate_limiter,
         )
 
-    def discover(self) -> Iterator[Job]:
+    def discover(
+        self, *, known_ids: frozenset[str] | None = None
+    ) -> Iterator[Job]:
         if not self._boards:
             return
+        known = known_ids or frozenset()
 
         for board in self._boards:
             self._rate_limiter.wait()
@@ -101,12 +104,18 @@ class GreenhouseAdapter:
                 if not title or not _title_matches(title, self._title_keywords):
                     continue
                 try:
-                    yield _posting_to_job(posting, source_name=self.name, board=board)
+                    job = _posting_to_job(
+                        posting, source_name=self.name, board=board
+                    )
                 except (KeyError, TypeError, ValueError) as exc:
                     job_url = posting.get("absolute_url") or url
                     logger.warning(
                         "Greenhouse skip malformed posting from %s: %s", job_url, exc
                     )
+                    continue
+                if job.id in known:
+                    continue
+                yield job
 
 
 def _title_matches(title: str, keywords: list[str]) -> bool:

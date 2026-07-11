@@ -570,3 +570,111 @@ class TestRetryOnBlock:
         # Note: the current behavior IS to retry even without a pool; the
         # assertion documents that. If we ever change it to fail-fast,
         # bump this expectation.
+
+
+class TestKnownIdsSkip:
+    """max_jobs_per_run counts *new* jobs only; known corpus IDs are skipped."""
+
+    def test_skips_known_and_fills_budget_with_new(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from magicapply.domain.models.job import Job
+        from magicapply.infrastructure.sources import indeed as mod
+
+        known = Job.new(
+            source_name="indeed-search",
+            url="https://www.indeed.com/viewjob?jk=known1",
+            title="Known Role",
+            company="Acme",
+            description="python",
+        )
+        fresh_a = Job.new(
+            source_name="indeed-search",
+            url="https://www.indeed.com/viewjob?jk=fresh1",
+            title="Fresh Role A",
+            company="Beta",
+            description="python",
+        )
+        fresh_b = Job.new(
+            source_name="indeed-search",
+            url="https://www.indeed.com/viewjob?jk=fresh2",
+            title="Fresh Role B",
+            company="Gamma",
+            description="python",
+        )
+
+        def fake_search(self, session, query, rate):  # noqa: ARG001
+            yield known
+            yield fresh_a
+            yield fresh_b
+
+        class _FakeSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def add_cookies(self, _cookies) -> None:
+                pass
+
+        monkeypatch.setattr(mod, "PlaywrightSession", lambda **kwargs: _FakeSession())
+        monkeypatch.setattr(IndeedAdapter, "_search_one_query", fake_search)
+        monkeypatch.setattr(
+            IndeedAdapter,
+            "_post_serp_enrich",
+            lambda self, session, job, rate: job,  # noqa: ARG005
+        )
+
+        adapter = IndeedAdapter(
+            name="indeed-search",
+            queries=["python"],
+            location=None,
+            rate_limit_per_minute=6000,
+            acknowledged=True,
+            enrich_apply_urls=False,
+            max_jobs_per_run=2,
+        )
+        got = list(adapter.discover(known_ids=frozenset({known.id})))
+        assert [j.id for j in got] == [fresh_a.id, fresh_b.id]
+
+    def test_known_only_page_yields_nothing_without_burning_budget_logic(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from magicapply.domain.models.job import Job
+        from magicapply.infrastructure.sources import indeed as mod
+
+        known = Job.new(
+            source_name="indeed-search",
+            url="https://www.indeed.com/viewjob?jk=k1",
+            title="Old",
+            company="Acme",
+            description="python",
+        )
+
+        def fake_search(self, session, query, rate):  # noqa: ARG001
+            yield known
+
+        class _FakeSession:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def add_cookies(self, _cookies) -> None:
+                pass
+
+        monkeypatch.setattr(mod, "PlaywrightSession", lambda **kwargs: _FakeSession())
+        monkeypatch.setattr(IndeedAdapter, "_search_one_query", fake_search)
+
+        adapter = IndeedAdapter(
+            name="indeed-search",
+            queries=["python"],
+            location=None,
+            rate_limit_per_minute=6000,
+            acknowledged=True,
+            enrich_apply_urls=False,
+            max_jobs_per_run=10,
+        )
+        assert list(adapter.discover(known_ids=frozenset({known.id}))) == []

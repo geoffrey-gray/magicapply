@@ -165,7 +165,9 @@ class GlassdoorAdapter:
             data_dir=data_dir,
         )
 
-    def discover(self) -> Iterator[Job]:
+    def discover(
+        self, *, known_ids: frozenset[str] | None = None
+    ) -> Iterator[Job]:
         if not self._ack:
             raise SourceError(
                 "Glassdoor scraping refused: set MAGICAPPLY_GLASSDOOR_ACK=1 "
@@ -179,12 +181,20 @@ class GlassdoorAdapter:
         auth = resolve_session_auth("glassdoor", self._data_dir)
         effective_pool = self._effective_proxy_pool()
         self._detail_budget = DetailBudget(self._max_board_detail_fetches)
+        # Per-run intake of *new* jobs only (see LinkedIn/Indeed).
         jobs_left = self._max_jobs
+        known = known_ids or frozenset()
         if auth.source != "none" and self._proxy_pool is not None:
             logger.info(
                 "Glassdoor: auth via %s, skipping proxy pool for this source",
                 auth.source,
             )
+        logger.info(
+            "Glassdoor discover: known_ids=%d max_new=%d max_pages=%d",
+            len(known),
+            self._max_jobs,
+            self._max_pages,
+        )
         with PlaywrightSession(
             headless=True,
             proxy_pool=effective_pool,
@@ -205,6 +215,8 @@ class GlassdoorAdapter:
                     if isinstance(job, _Blocked):
                         blocked = True
                         break
+                    if job.id in known:
+                        continue
                     enriched = self._post_serp_enrich(session, job, rate)
                     if enriched is None:
                         continue
@@ -212,7 +224,7 @@ class GlassdoorAdapter:
                     jobs_left -= 1
                     if jobs_left <= 0:
                         logger.info(
-                            "Glassdoor max_jobs_per_run=%d reached; stopping",
+                            "Glassdoor max_jobs_per_run=%d new jobs reached; stopping",
                             self._max_jobs,
                         )
                         return

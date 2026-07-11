@@ -59,7 +59,10 @@ class _JsonLdHttpAdapter:
             timeout=20.0,
         )
 
-    def discover(self) -> Iterator[Job]:
+    def discover(
+        self, *, known_ids: frozenset[str] | None = None
+    ) -> Iterator[Job]:
+        known = known_ids or frozenset()
         for url in self._urls:
             self._rate_limiter.wait()
             try:
@@ -79,6 +82,8 @@ class _JsonLdHttpAdapter:
                     job = jsonld_to_job(
                         posting, source_name=self.name, fallback_url=url
                     )
+                    if job.id in known:
+                        continue
                     job = enrich_job_from_detail_html(
                         job,
                         response.text,

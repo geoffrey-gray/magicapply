@@ -194,7 +194,9 @@ class IndeedAdapter:
             data_dir=data_dir,
         )
 
-    def discover(self) -> Iterator[Job]:
+    def discover(
+        self, *, known_ids: frozenset[str] | None = None
+    ) -> Iterator[Job]:
         if not self._ack:
             raise SourceError(
                 "Indeed scraping refused: set MAGICAPPLY_INDEED_ACK=1 to "
@@ -207,14 +209,21 @@ class IndeedAdapter:
         rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
         auth = resolve_session_auth("indeed", self._data_dir)
         effective_pool = self._effective_proxy_pool()
-        # Fresh budget each discover run.
+        # Fresh budget each discover run. ``jobs_left`` counts *new* jobs only.
         self._detail_budget = DetailBudget(self._max_board_detail_fetches)
         jobs_left = self._max_jobs
+        known = known_ids or frozenset()
         if auth.source != "none" and self._proxy_pool is not None:
             logger.info(
                 "Indeed: auth via %s, skipping proxy pool for this source",
                 auth.source,
             )
+        logger.info(
+            "Indeed discover: known_ids=%d max_new=%d max_pages=%d",
+            len(known),
+            self._max_jobs,
+            self._max_pages,
+        )
         with PlaywrightSession(
             headless=True,
             proxy_pool=effective_pool,
@@ -231,6 +240,10 @@ class IndeedAdapter:
                     if isinstance(job, _Blocked):
                         blocked = True
                         break
+                    if job.id in known:
+                        # Already in corpus — keep paging for fresher cards;
+                        # do not burn enrich budget or max_jobs_per_run.
+                        continue
                     enriched = self._post_serp_enrich(session, job, rate)
                     if enriched is None:
                         continue
@@ -238,7 +251,7 @@ class IndeedAdapter:
                     jobs_left -= 1
                     if jobs_left <= 0:
                         logger.info(
-                            "Indeed max_jobs_per_run=%d reached; stopping",
+                            "Indeed max_jobs_per_run=%d new jobs reached; stopping",
                             self._max_jobs,
                         )
                         return

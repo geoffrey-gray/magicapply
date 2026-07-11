@@ -33,15 +33,25 @@ class _StubSource:
     def __init__(self, name: str, jobs: list[Job]) -> None:
         self.name = name
         self._jobs = jobs
+        self.last_known_ids: frozenset[str] | None = None
 
-    def discover(self) -> Iterator[Job]:
-        yield from self._jobs
+    def discover(
+        self, *, known_ids: frozenset[str] | None = None
+    ) -> Iterator[Job]:
+        self.last_known_ids = known_ids
+        known = known_ids or frozenset()
+        for job in self._jobs:
+            if job.id in known:
+                continue
+            yield job
 
 
 class _ErrorSource:
     name = "broken"
 
-    def discover(self) -> Iterator[Job]:
+    def discover(
+        self, *, known_ids: frozenset[str] | None = None
+    ) -> Iterator[Job]:
         raise SourceError("boom")
         yield  # pragma: no cover
 
@@ -95,10 +105,29 @@ class TestHappyPath:
         p1 = _pipeline(engine, [_StubSource("s", jobs)])
         p1.run()
 
-        p2 = _pipeline(engine, [_StubSource("s", jobs)])
+        # Source filters known_ids → nothing re-yielded (no already_seen churn).
+        src2 = _StubSource("s", jobs)
+        p2 = _pipeline(engine, [src2])
         report = p2.run()
         assert report.discovered == 0
-        assert report.already_seen == 1
+        assert report.already_seen == 0
+        assert src2.last_known_ids is not None
+        assert jobs[0].id in src2.last_known_ids
+
+    def test_second_run_adds_new_jobs_only(self, engine: Engine) -> None:
+        """Each discover adds up to max new postings; known ones are not re-ingested."""
+        first = _job("SWE", "A", "https://a.com/1")
+        second = _job("Staff DS", "B", "https://b.com/2")
+        p1 = _pipeline(engine, [_StubSource("s", [first])])
+        assert p1.run().discovered == 1
+
+        src2 = _StubSource("s", [first, second])
+        report = _pipeline(engine, [src2]).run()
+        assert report.discovered == 1
+        assert report.already_seen == 0
+        assert report.scored == 1
+        assert first.id in (src2.last_known_ids or frozenset())
+        assert second.id not in (src2.last_known_ids or frozenset())
 
     def test_below_threshold_rejected(self, engine: Engine) -> None:
         jobs = [_job("SWE", "A", "https://a.com/1")]

@@ -197,6 +197,7 @@ class LinkedInSource(_SourceBase):
     require_external_apply: bool = False
     remote_only: bool = True
     posted_within_days: int | None = Field(default=7, ge=0)
+    # How deep to paginate this run while looking for new postings.
     max_pages: int = Field(default=6, ge=1, le=50)
     # Human-like pacing (milliseconds).
     page_dwell_ms_min: int = Field(default=2500, ge=0)
@@ -205,6 +206,7 @@ class LinkedInSource(_SourceBase):
     pause_ms_min: int = Field(default=15_000, ge=0)
     pause_ms_max: int = Field(default=45_000, ge=0)
     stop_on_redirect_error: bool = True
+    # Max *new* jobs to ingest per discover run (already-known IDs skipped).
     max_jobs_per_run: int = Field(default=150, ge=1, le=2000)
 
 
@@ -229,6 +231,7 @@ class IndeedSource(_SourceBase):
     board_detail_fallback: bool = True
     max_board_detail_fetches: int = Field(default=8, ge=0, le=100)
     require_external_apply: bool = False
+    # Max *new* jobs to ingest per discover run (already-known IDs skipped).
     max_jobs_per_run: int = Field(default=50, ge=1, le=2000)
     remote_only: bool = True
     posted_within_days: int | None = Field(default=7, ge=0)
@@ -256,6 +259,7 @@ class GlassdoorSource(_SourceBase):
     board_detail_fallback: bool = True
     max_board_detail_fetches: int = Field(default=8, ge=0, le=100)
     require_external_apply: bool = False
+    # Max *new* jobs to ingest per discover run (already-known IDs skipped).
     max_jobs_per_run: int = Field(default=50, ge=1, le=2000)
     remote_only: bool = True
     posted_within_days: int | None = Field(default=7, ge=0)

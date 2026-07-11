@@ -343,14 +343,14 @@ a **drip**, not 600 jobs in one shot (ban risk).
 |-------|--------------|---------|
 | `remote_only` | `true` | Remote workplace filter |
 | `posted_within_days` | `7` | Past-week style date filter |
-| `max_pages` | `1–2` for smoke; `3–6` LI / `5` Indeed/GD max | Hard cap on search pages **per run** |
+| `max_pages` | `1–2` for smoke; `3–6` LI / `5` Indeed/GD max | How deep to paginate **this run** looking for new postings |
 | `rate_limit_per_minute` | `3` | Slow serial pacing (+ jitter) |
 | `enrich_descriptions` | `true` | Prefer JD from **destination** ATS/career page |
 | `enrich_apply_urls` | `true` | Allow board detail to resolve missing offsite apply |
 | `board_detail_fallback` (Indeed/GD) / `linkedin_description_fallback` (LI) | `true` | Board listing detail when offsite incomplete |
 | `max_board_detail_fetches` (Indeed/GD) / `max_linkedin_detail_fetches` (LI) | `8` | Cap on board detail visits **per discover run** |
 | `require_external_apply` | `false` | Keep board-native-only jobs; apply falls back to listing URL via GenericHandler. Set `true` to drop them. |
-| `max_jobs_per_run` | `30–50` | Hard job ceiling even if pages full |
+| `max_jobs_per_run` | `30–50` | Max **new** jobs to add this run (skips corpus IDs while paging) |
 | `page_dwell_ms_*` / `pause_*` | LinkedIn only | Human-like dwell + every-N-page pause |
 
 **Cadence:** run `magicapply discover` **1–2× per day**, not in a loop. On

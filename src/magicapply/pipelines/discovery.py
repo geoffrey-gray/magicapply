@@ -62,10 +62,15 @@ class DiscoveryPipeline:
     def run(self) -> DiscoveryReport:
         report = DiscoveryReport()
 
+        # Corpus snapshot for this run. Paginated sources use this to skip
+        # already-ingested IDs so max_jobs_per_run means "up to N *new*
+        # jobs", not "re-scrape the same top-N SERP cards every time."
+        known_ids = frozenset(j.id for j in self._jobs.list_all())
+
         all_jobs = []
         for source in self._sources:
             try:
-                for job in source.discover():
+                for job in source.discover(known_ids=known_ids):
                     all_jobs.append(job)
             except SourceError as exc:
                 logger.warning("source %s failed: %s", source.name, exc)

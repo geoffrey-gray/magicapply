@@ -217,7 +217,9 @@ class LinkedInAdapter:
             data_dir=data_dir,
         )
 
-    def discover(self) -> Iterator[Job]:
+    def discover(
+        self, *, known_ids: frozenset[str] | None = None
+    ) -> Iterator[Job]:
         # ToS gate first: nothing else is attempted without an explicit ack.
         if not self._ack:
             raise SourceError(
@@ -236,8 +238,17 @@ class LinkedInAdapter:
 
         # Jitter is required — fixed 6s intervals are a bot signal.
         rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
+        # Per-run intake of *new* jobs only — already-known IDs are skipped
+        # while paging so we do not re-check the same top-N forever.
         jobs_left = self._max_jobs
-        logger.info("LinkedIn auth resolved via %s", auth.source)
+        known = known_ids or frozenset()
+        logger.info(
+            "LinkedIn auth resolved via %s (known_ids=%d, max_new=%d, max_pages=%d)",
+            auth.source,
+            len(known),
+            self._max_jobs,
+            self._max_pages,
+        )
 
         with PlaywrightSession(
             headless=True,
@@ -251,13 +262,17 @@ class LinkedInAdapter:
                 if jobs_left <= 0:
                     break
                 for job in self._search_one_query(
-                    session, query, rate, jobs_left=jobs_left
+                    session,
+                    query,
+                    rate,
+                    jobs_left=jobs_left,
+                    known_ids=known,
                 ):
                     yield job
                     jobs_left -= 1
                     if jobs_left <= 0:
                         logger.info(
-                            "LinkedIn max_jobs_per_run=%d reached; stopping",
+                            "LinkedIn max_jobs_per_run=%d new jobs reached; stopping",
                             self._max_jobs,
                         )
                         return
@@ -269,8 +284,15 @@ class LinkedInAdapter:
         rate: RateLimiter,
         *,
         jobs_left: int,
+        known_ids: frozenset[str],
     ) -> Iterator[Job]:
-        """Paginate LinkedIn search: one Page, serial gotos, circuit-break on walls."""
+        """Paginate LinkedIn search: one Page, serial gotos, circuit-break on walls.
+
+        ``jobs_left`` is the remaining *new* intake budget for this run.
+        Cards already in ``known_ids`` are skipped (no enrich, no budget
+        consume). Paging continues past known SERP results until the budget
+        is filled, pages are exhausted, or the SERP stops producing cards.
+        """
         seen_urls: set[str] = set()
         used_legacy_fallback = False
         yielded = 0
@@ -345,6 +367,8 @@ class LinkedInAdapter:
                         if job.url in seen_urls:
                             continue
                         seen_urls.add(job.url)
+                        if job.id in known_ids:
+                            continue
                         if self._remote_only:
                             job = _annotate_remote_location(job)
                         job = self._post_serp_enrich(session, job, rate)
@@ -356,12 +380,16 @@ class LinkedInAdapter:
                             break
                     break
 
-                new_on_page = 0
+                serp_new = 0
+                skipped_known = 0
                 for job in jobs:
                     if job.url in seen_urls:
                         continue
                     seen_urls.add(job.url)
-                    new_on_page += 1
+                    serp_new += 1
+                    if job.id in known_ids:
+                        skipped_known += 1
+                        continue
                     job = self._post_serp_enrich(session, job, rate)
                     if job is None:
                         continue
@@ -371,23 +399,30 @@ class LinkedInAdapter:
                         break
 
                 logger.info(
-                    "LinkedIn query %r page %d (start=%d): %d jobs (%d new)",
+                    "LinkedIn query %r page %d (start=%d): %d serp "
+                    "(%d unique-on-run, %d already-in-db, yielded_new=%d)",
                     query,
                     page_idx + 1,
                     start,
                     len(jobs),
-                    new_on_page,
+                    serp_new,
+                    skipped_known,
+                    yielded,
                 )
-                if not jobs or new_on_page == 0:
+                # Stop only when SERP is empty or pagination is stuck
+                # (no unique URLs). Do NOT stop just because every card
+                # was already in the corpus — keep paging for fresher ones.
+                if not jobs or serp_new == 0:
                     break
         finally:
             page.close()
 
         if not used_legacy_fallback:
             logger.info(
-                "LinkedIn query %r finished: %d unique jobs across pages",
+                "LinkedIn query %r finished: %d unique SERP urls, %d new yielded",
                 query,
                 len(seen_urls),
+                yielded,
             )
 
     def _detail_budget_remaining(self) -> bool:

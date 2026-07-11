@@ -17,11 +17,18 @@ class JobSource(Protocol):
 
     Instances bind to one config entry (by `name`). They own their own HTTP
     client and rate limiter — no shared mutable state between sources.
+
+    ``known_ids`` is the set of job IDs already in the corpus. Paginated
+    sources (LinkedIn / Indeed / Glassdoor) **skip** those without counting
+    them against ``max_jobs_per_run`` and keep paging for *new* postings.
+    ``max_jobs_per_run`` is a per-run intake cap, not a total corpus size.
     """
 
     name: str
 
-    def discover(self) -> Iterator[Job]: ...
+    def discover(
+        self, *, known_ids: frozenset[str] | None = None
+    ) -> Iterator[Job]: ...
 
 
 def parse_cookie_string(cookie_string: str, *, domain: str) -> list[dict]:
