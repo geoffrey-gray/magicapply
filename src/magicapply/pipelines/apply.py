@@ -14,9 +14,12 @@ not this composition.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
+from urllib.parse import urlparse
 
 from magicapply.domain.apply.throttle import ApplyThrottle
 from magicapply.domain.models.application import Application, ApplicationState
@@ -189,13 +192,24 @@ class ApplyPipeline:
         session: _SessionProto,
         profile_name: str,
         dry_run: bool,
+        max_outcomes: int | None = None,
+        deadline: datetime | None = None,
+        pace_seconds: float | None = None,
+        include_retry_states: bool = False,
+        sleep: Callable[[float], None] = time.sleep,
+        clock: Callable[[], datetime] | None = None,
     ) -> list[ApplyReport]:
-        """Apply to every TAILORED application for a profile in one session.
+        """Apply to TAILORED applications for a profile in one session.
 
-        Reuses ``apply_one`` per job — the browser session is shared, but
-        each job gets a fresh page. A missing Job row for an Application is
-        logged and skipped rather than crashing the batch, matching how
-        ``TailoringPipeline`` treats the same corruption case.
+        Default (no pacing kwargs): one pass over every TAILORED row — historical
+        batch behavior.
+
+        Paced mode (``max_outcomes`` / ``deadline`` / ``pace_seconds``):
+        re-lists candidates, rotates Indeed / LinkedIn / external destinations,
+        sleeps after counted outcomes and on throttle denials, and optionally
+        includes FAILED / NEEDS_INTERVENTION via ``apply_one(..., retry=True)``.
+        Throttle deny does not count toward ``max_outcomes``. Successful dry-run
+        rows are already APPLIED and never appear in the TAILORED queue.
         """
         if self._jobs is None or self._data_builder is None:
             raise RuntimeError(
@@ -203,11 +217,125 @@ class ApplyPipeline:
                 "supply them to ApplyPipeline.__init__"
             )
 
+        now_fn = clock or (lambda: datetime.now(UTC))
+        paced = any(
+            v is not None for v in (max_outcomes, deadline, pace_seconds)
+        ) or include_retry_states
+
+        if not paced:
+            return self._apply_batch_once(
+                session=session,
+                profile_name=profile_name,
+                dry_run=dry_run,
+                include_retry_states=False,
+            )
+
         reports: list[ApplyReport] = []
-        tailored = self._apps.list_by_state_and_profile(
-            ApplicationState.TAILORED, profile_name
-        )
-        for app in tailored:
+        wave = 0
+        while True:
+            if deadline is not None and now_fn() >= deadline:
+                logger.info("apply_batch: deadline reached; stopping")
+                break
+            if max_outcomes is not None and _count_outcomes(reports) >= max_outcomes:
+                logger.info(
+                    "apply_batch: max_outcomes=%s reached; stopping", max_outcomes
+                )
+                break
+
+            candidates = self._list_batch_candidates(
+                profile_name, include_retry_states=include_retry_states
+            )
+            ordered = _order_by_host_bucket(candidates, wave=wave, jobs=self._jobs)
+            if not ordered:
+                logger.info("apply_batch: no candidates remaining this wave")
+                break
+
+            wave_progress = False
+            for app in ordered:
+                if deadline is not None and now_fn() >= deadline:
+                    break
+                if max_outcomes is not None and _count_outcomes(reports) >= max_outcomes:
+                    break
+
+                job = self._jobs.get(app.job_id)
+                if job is None:
+                    logger.warning(
+                        "apply_batch: no job for application %s (job_id=%s); skipping",
+                        app.id,
+                        app.job_id,
+                    )
+                    continue
+
+                retry = app.state is not ApplicationState.TAILORED
+                data = self._data_builder(app, job, dry_run=dry_run)  # type: ignore[call-arg]
+                page = session.new_page()
+                report = self.apply_one(
+                    page=page,
+                    application=app,
+                    job=job,
+                    application_data=data,
+                    retry=retry,
+                )
+                reports.append(report)
+                wave_progress = True
+
+                if _is_throttle_defer(report):
+                    wait = pace_seconds if pace_seconds is not None else 900.0
+                    if deadline is not None:
+                        remaining = (deadline - now_fn()).total_seconds()
+                        wait = max(0.0, min(wait, remaining))
+                    if wait > 0:
+                        logger.info(
+                            "apply_batch: throttle defer; sleeping %.0fs "
+                            "(caller may re-enter batch after rediscover)",
+                            wait,
+                        )
+                        sleep(wait)
+                    # Return to ``run`` so it can rediscover and open a new wave
+                    # rather than spinning the same TAILORED rows.
+                    return reports
+
+                if _is_counted_outcome(report):
+                    if (
+                        max_outcomes is not None
+                        and _count_outcomes(reports) >= max_outcomes
+                    ):
+                        break
+                    if pace_seconds is not None:
+                        wait = pace_seconds
+                        if deadline is not None:
+                            remaining = (deadline - now_fn()).total_seconds()
+                            wait = max(0.0, min(wait, remaining))
+                        if wait > 0:
+                            logger.info(
+                                "apply_batch: paced sleep %.0fs after outcome %s",
+                                wait,
+                                report.final_state.value,
+                            )
+                            sleep(wait)
+
+            wave += 1
+            if not wave_progress:
+                break
+            # Exhausted current candidate set — return so ``run`` can rediscover.
+            break
+
+        return reports
+
+    def _apply_batch_once(
+        self,
+        *,
+        session: _SessionProto,
+        profile_name: str,
+        dry_run: bool,
+        include_retry_states: bool,
+    ) -> list[ApplyReport]:
+        """Historical one-pass batch over TAILORED (optional retry states)."""
+        assert self._jobs is not None and self._data_builder is not None
+        reports: list[ApplyReport] = []
+        for app in self._list_batch_candidates(
+            profile_name, include_retry_states=include_retry_states
+        ):
             job = self._jobs.get(app.job_id)
             if job is None:
                 logger.warning(
@@ -216,6 +344,7 @@ class ApplyPipeline:
                     app.job_id,
                 )
                 continue
+            retry = app.state is not ApplicationState.TAILORED
             data = self._data_builder(app, job, dry_run=dry_run)  # type: ignore[call-arg]
             page = session.new_page()
             reports.append(
@@ -224,6 +353,95 @@ class ApplyPipeline:
                     application=app,
                     job=job,
                     application_data=data,
+                    retry=retry,
                 )
             )
         return reports
+
+    def _list_batch_candidates(
+        self,
+        profile_name: str,
+        *,
+        include_retry_states: bool,
+    ) -> list[Application]:
+        apps = list(
+            self._apps.list_by_state_and_profile(
+                ApplicationState.TAILORED, profile_name
+            )
+        )
+        if include_retry_states:
+            apps.extend(
+                self._apps.list_by_state_and_profile(
+                    ApplicationState.FAILED, profile_name
+                )
+            )
+            apps.extend(
+                self._apps.list_by_state_and_profile(
+                    ApplicationState.NEEDS_INTERVENTION, profile_name
+                )
+            )
+        return apps
+
+
+def _is_throttle_defer(report: ApplyReport) -> bool:
+    return bool(report.error and report.error.startswith("throttle:"))
+
+
+def _is_counted_outcome(report: ApplyReport) -> bool:
+    if _is_throttle_defer(report):
+        return False
+    return report.final_state in {
+        ApplicationState.APPLIED,
+        ApplicationState.FAILED,
+        ApplicationState.NEEDS_INTERVENTION,
+    }
+
+
+def _count_outcomes(reports: list[ApplyReport]) -> int:
+    return sum(1 for r in reports if _is_counted_outcome(r))
+
+
+def _host_bucket(url: str) -> str:
+    host = urlparse(url or "").netloc.lower()
+    if "indeed.com" in host:
+        return "indeed"
+    if "linkedin.com" in host:
+        return "linkedin"
+    return "external"
+
+
+def _order_by_host_bucket(
+    apps: list[Application],
+    *,
+    wave: int,
+    jobs: JobsRepository,
+) -> list[Application]:
+    """Rotate preference: indeed / linkedin / external (≈ 2:2:1 over 5 waves)."""
+    from magicapply.infrastructure.sources.apply_url import resolve_job_apply_destination
+
+    preference = ("indeed", "linkedin", "external", "indeed", "linkedin")
+    pref = preference[wave % len(preference)]
+    buckets: dict[str, list[Application]] = {
+        "indeed": [],
+        "linkedin": [],
+        "external": [],
+    }
+    for app in apps:
+        job = jobs.get(app.job_id)
+        if job is None:
+            buckets["external"].append(app)
+            continue
+        dest = resolve_job_apply_destination(job)
+        buckets[_host_bucket(dest)].append(app)
+
+    def _sort_key(a: Application) -> tuple:
+        return (-(a.score or 0), a.updated_at, a.job_id)
+
+    for key in buckets:
+        buckets[key].sort(key=_sort_key)
+
+    order = [pref] + [b for b in ("indeed", "linkedin", "external") if b != pref]
+    ordered: list[Application] = []
+    for key in order:
+        ordered.extend(buckets[key])
+    return ordered

@@ -323,3 +323,105 @@ class TestApplyBatchMissingJob:
 
         assert len(reports) == 1
         assert reports[0].application_id == good_app.id
+
+
+class TestApplyBatchPaced:
+    def test_max_outcomes_stops_after_n(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        _seed_tailored(engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/1")
+        _seed_tailored(engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/2")
+        _seed_tailored(engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/3")
+        jobs = SqlJobsRepository(engine)
+        apps = SqlApplicationsRepository(engine)
+        pipeline = ApplyPipeline(
+            applications_repo=apps,
+            jobs_repo=jobs,
+            data_builder=_data_builder,
+        )
+        sleeps: list[float] = []
+        reports = pipeline.apply_batch(
+            session=_FakeSession(),
+            profile_name="swe",
+            dry_run=True,
+            max_outcomes=2,
+            pace_seconds=1.0,
+            sleep=sleeps.append,
+        )
+        assert len(reports) == 2
+        assert all(r.final_state is ApplicationState.APPLIED for r in reports)
+        assert sleeps == [1.0]  # pace after first outcome; second hits max
+
+    def test_throttle_deny_does_not_count_and_sleeps(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        from magicapply.domain.apply.throttle import ApplyThrottle, ThrottleDecision
+        from magicapply.config.models import ApplyThrottleConfig, ThrottleCaps
+
+        _seed_tailored(engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/1")
+        _seed_tailored(engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/2")
+        jobs = SqlJobsRepository(engine)
+        apps = SqlApplicationsRepository(engine)
+
+        class _AlwaysDeny(ApplyThrottle):
+            def check(self, *, ats: str) -> ThrottleDecision:  # type: ignore[override]
+                return ThrottleDecision.deny("test deny")
+
+        throttle = _AlwaysDeny(
+            config=ApplyThrottleConfig(
+                ats_default=ThrottleCaps(hourly=4, daily=55),
+                global_cap=ThrottleCaps(hourly=4, daily=55),
+            ),
+            ats_hourly_count=lambda *a: 0,
+            ats_daily_count=lambda *a: 0,
+            global_hourly_count=lambda *a: 0,
+            global_daily_count=lambda *a: 0,
+        )
+        pipeline = ApplyPipeline(
+            applications_repo=apps,
+            jobs_repo=jobs,
+            data_builder=_data_builder,
+            throttle=throttle,
+        )
+        sleeps: list[float] = []
+        reports = pipeline.apply_batch(
+            session=_FakeSession(),
+            profile_name="swe",
+            dry_run=True,
+            max_outcomes=5,
+            pace_seconds=30.0,
+            sleep=sleeps.append,
+        )
+        # First app throttle-denied → sleep + re-list; both still TAILORED
+        assert reports
+        assert all(
+            r.error and r.error.startswith("throttle:") for r in reports
+        )
+        assert sleeps  # slept after throttle
+        assert apps.list_by_state(ApplicationState.APPLIED) == []
+
+    def test_include_retry_states_applies_failed(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        _, app = _seed_tailored(
+            engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/99"
+        )
+        apps = SqlApplicationsRepository(engine)
+        app.transition_to(ApplicationState.APPLYING)
+        app.transition_to(ApplicationState.FAILED, reason="boom")
+        apps.save(app)
+        jobs = SqlJobsRepository(engine)
+        pipeline = ApplyPipeline(
+            applications_repo=apps,
+            jobs_repo=jobs,
+            data_builder=_data_builder,
+        )
+        reports = pipeline.apply_batch(
+            session=_FakeSession(),
+            profile_name="swe",
+            dry_run=True,
+            include_retry_states=True,
+            max_outcomes=1,
+        )
+        assert len(reports) == 1
+        assert reports[0].final_state is ApplicationState.APPLIED

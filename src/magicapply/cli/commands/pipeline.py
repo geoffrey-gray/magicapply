@@ -8,6 +8,9 @@ silently doing nothing.
 
 from __future__ import annotations
 
+import logging
+import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -27,7 +30,10 @@ from magicapply.config import ConfigError, LoadedConfig, load_config
 from magicapply.config.paths import default_config_root
 from magicapply.domain.models.application import ApplicationState
 from magicapply.infrastructure.browser.session import PlaywrightSession
+from magicapply.pipelines.apply import ApplyReport, _count_outcomes
 from magicapply.pipelines.discovery import DiscoveryPipeline
+
+logger = logging.getLogger(__name__)
 
 console = Console()
 
@@ -135,58 +141,184 @@ def run(
             "application; --yes-submit performs real submissions.",
         ),
     ] = True,
+    max_applies: Annotated[
+        int | None,
+        typer.Option(
+            "--max-applies",
+            help="Stop after this many counted apply outcomes (APPLIED / FAILED / "
+            "NEEDS_INTERVENTION). Throttle denials do not count. Omit for a "
+            "single one-shot pass over TAILORED apps.",
+        ),
+    ] = None,
+    duration_hours: Annotated[
+        float | None,
+        typer.Option(
+            "--duration-hours",
+            help="Hard deadline for paced runs (hours from now).",
+        ),
+    ] = None,
+    pace_seconds: Annotated[
+        float | None,
+        typer.Option(
+            "--pace-seconds",
+            help="Sleep this many seconds after each counted apply outcome "
+            "(and as throttle backoff). Defaults to 1080 when --max-applies is set.",
+        ),
+    ] = None,
 ) -> None:
     """Full cycle: discover → tailor → apply, in one command.
 
-    Sequences the three pipelines for a profile: DiscoveryPipeline surfaces
-    and scores new jobs, TailoringPipeline rewrites the summary + generates
-    a cover letter for every scored application, and ApplyPipeline.apply_batch
-    drives every TAILORED application through the ATS handler in a single
-    shared Chromium session. Default is dry-run (see the ``apply`` command
-    for details); pass ``--yes-submit`` to actually click Submit.
+    Sequences DiscoveryPipeline, TailoringPipeline, and ApplyPipeline.apply_batch
+    for a profile. Default is a one-shot pass. With ``--max-applies`` /
+    ``--duration-hours``, the process stays alive and re-discovers / re-tailors /
+    re-batches under domain throttle + optional pace sleeps — one MagicApply
+    process owns the loop (no external shell apply loop).
     """
     loaded = _load(root)
     profile_cfg = loaded.profile(profile)
-
     jobs_repo, apps_repo = build_repos(loaded.data_dir())
 
-    # --- discover ---
+    paced = max_applies is not None or duration_hours is not None
+    if paced and pace_seconds is None:
+        pace_seconds = 1080.0
+    deadline: datetime | None = None
+    if duration_hours is not None:
+        deadline = datetime.now(UTC) + timedelta(hours=duration_hours)
+
     sources = build_sources_for_profile(loaded, profile_cfg)
     scoring = profile_cfg.scoring or loaded.base.scoring
     scorer = build_scorer(loaded, profile_cfg, scoring)
-    discover_report = DiscoveryPipeline(
-        sources=sources,
-        jobs_repo=jobs_repo,
-        applications_repo=apps_repo,
-        scorer=scorer,
-        profile_name=profile_cfg.name,
-        score_threshold=scoring.threshold,
-        source_scorer=build_source_scorer(apps_repo),
-    ).run()
-    _render_discover(discover_report)
+    pipeline = build_apply_pipeline(loaded, apps_repo, jobs_repo)
+    all_reports: list[ApplyReport] = []
 
-    # --- tailor ---
-    tailor_report = build_tailoring_pipeline(
-        loaded, profile_cfg, apps_repo, jobs_repo
-    ).run()
-    _render_tailor(tailor_report)
+    def _discover_and_tailor() -> None:
+        discover_report = DiscoveryPipeline(
+            sources=sources,
+            jobs_repo=jobs_repo,
+            applications_repo=apps_repo,
+            scorer=scorer,
+            profile_name=profile_cfg.name,
+            score_threshold=scoring.threshold,
+            source_scorer=build_source_scorer(apps_repo),
+        ).run()
+        _render_discover(discover_report)
+        tailor_report = build_tailoring_pipeline(
+            loaded, profile_cfg, apps_repo, jobs_repo
+        ).run()
+        _render_tailor(tailor_report)
 
-    # --- apply ---
-    tailored_ready = apps_repo.list_by_state_and_profile(
-        ApplicationState.TAILORED, profile_cfg.name
-    )
-    if not tailored_ready:
-        console.print("[dim]no TAILORED applications; skipping apply phase[/dim]")
+    if not paced:
+        _discover_and_tailor()
+        tailored_ready = apps_repo.list_by_state_and_profile(
+            ApplicationState.TAILORED, profile_cfg.name
+        )
+        if not tailored_ready:
+            console.print("[dim]no TAILORED applications; skipping apply phase[/dim]")
+            return
+        with PlaywrightSession(headless=headless) as session:
+            apply_reports = pipeline.apply_batch(
+                session=session,
+                profile_name=profile_cfg.name,
+                dry_run=no_submit,
+            )
+        _render_apply(apply_reports, dry_run=no_submit)
         return
 
-    pipeline = build_apply_pipeline(loaded, apps_repo, jobs_repo)
-    with PlaywrightSession(headless=headless) as session:
-        apply_reports = pipeline.apply_batch(
-            session=session,
-            profile_name=profile_cfg.name,
-            dry_run=no_submit,
+    console.print(
+        f"[cyan]paced run[/cyan] max_applies={max_applies} "
+        f"duration_hours={duration_hours} pace_seconds={pace_seconds}"
+    )
+    empty_waves = 0
+    while True:
+        if deadline is not None and datetime.now(UTC) >= deadline:
+            console.print("[yellow]duration deadline reached[/yellow]")
+            break
+        counted = _count_outcomes(all_reports)
+        if max_applies is not None and counted >= max_applies:
+            console.print(f"[green]max applies reached:[/green] {counted}")
+            break
+
+        try:
+            _discover_and_tailor()
+        except Exception as exc:  # noqa: BLE001 — continue paced run
+            logger.warning("discover/tailor failed (continue): %s", exc)
+            console.print(f"[yellow]discover/tailor error (continue):[/yellow] {exc}")
+
+        remaining = None
+        if max_applies is not None:
+            remaining = max(0, max_applies - _count_outcomes(all_reports))
+            if remaining == 0:
+                break
+
+        candidates = (
+            apps_repo.list_by_state_and_profile(
+                ApplicationState.TAILORED, profile_cfg.name
+            )
+            + apps_repo.list_by_state_and_profile(
+                ApplicationState.FAILED, profile_cfg.name
+            )
+            + apps_repo.list_by_state_and_profile(
+                ApplicationState.NEEDS_INTERVENTION, profile_cfg.name
+            )
         )
-    _render_apply(apply_reports, dry_run=no_submit)
+        if not candidates:
+            empty_waves += 1
+            console.print(
+                f"[dim]no eligible applications (wave empty #{empty_waves})[/dim]"
+            )
+            if empty_waves >= 3 and (pace_seconds or 0) > 0:
+                wait = float(pace_seconds or 1080)
+                if deadline is not None:
+                    wait = min(
+                        wait, max(0.0, (deadline - datetime.now(UTC)).total_seconds())
+                    )
+                if wait <= 0:
+                    break
+                console.print(f"[dim]sleeping {wait:.0f}s before rediscover[/dim]")
+                time.sleep(wait)
+            elif empty_waves >= 5:
+                console.print("[yellow]giving up: no eligible applications[/yellow]")
+                break
+            continue
+
+        empty_waves = 0
+        try:
+            with PlaywrightSession(headless=headless) as session:
+                wave_reports = pipeline.apply_batch(
+                    session=session,
+                    profile_name=profile_cfg.name,
+                    dry_run=no_submit,
+                    max_outcomes=remaining,
+                    deadline=deadline,
+                    pace_seconds=pace_seconds,
+                    include_retry_states=True,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("apply session failed (continue): %s", exc)
+            console.print(f"[yellow]apply session error (continue):[/yellow] {exc}")
+            wave_reports = []
+            if pace_seconds:
+                time.sleep(min(60.0, float(pace_seconds)))
+
+        all_reports.extend(wave_reports)
+        _render_apply(wave_reports, dry_run=no_submit)
+        console.print(
+            f"[dim]campaign outcomes so far: {_count_outcomes(all_reports)}"
+            f"{f'/{max_applies}' if max_applies is not None else ''}[/dim]"
+        )
+
+        if max_applies is not None and _count_outcomes(all_reports) >= max_applies:
+            break
+        if deadline is not None and datetime.now(UTC) >= deadline:
+            break
+        # Between waves, if we returned early with remaining quota, rediscover.
+        if not wave_reports and pace_seconds:
+            time.sleep(min(60.0, float(pace_seconds)))
+
+    _render_apply(all_reports, dry_run=no_submit)
+    console.print(
+        f"[bold]paced run finished[/bold] counted_outcomes={_count_outcomes(all_reports)}"
+    )
 
 
 def _render_discover(report) -> None:
