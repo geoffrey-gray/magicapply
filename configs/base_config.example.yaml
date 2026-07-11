@@ -21,11 +21,14 @@ scoring:
 static_answers:
   full_name: "Geoffrey Gray"
   email: "geoffrey.gray042@gmail.com"
+  # Phone also on base resume YAML; composition overlays resume.phone if empty.
+  phone: "321-279-2047"
   location: "Boston, MA"
   city: "Boston"
   state: "Massachusetts"
   address_line_1: "123 Main St"
   postal_code: "02108"
+  country: "United States"
   country_phone_code: "United States of America (+1)"
   phone_device_type: "Mobile"
   how_did_you_hear: "LinkedIn"
@@ -34,6 +37,7 @@ static_answers:
   previously_employed: false
   workday_sms_opt_in: true
   linkedin_url: "https://linkedin.com/in/example"
+  # current_employer: omit — filled from base resume experience at apply time
   work_authorization: "US citizen"
   authorized_to_work_us: true
   needs_sponsorship_us: false

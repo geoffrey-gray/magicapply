@@ -64,7 +64,7 @@ dei:
   - {pattern: '\bgender\b', attr: gender}
   - {pattern: 'transgender', attr: gender}
   - {pattern: 'sexual\s+orientation', attr: gender}
-  - {pattern: '\brace\b|\bethnicity\b', attr: ethnicity}
+  - {pattern: '\brace\b|\bethnicit', attr: ethnicity}
   - {pattern: '\bveteran\b|served in the military', attr: veteran_status}
   - {pattern: '\bdisability\b|\bdisabled\b|\bada\b', attr: disability_status}
 
@@ -80,6 +80,10 @@ consent:
     - {pattern: 'i accept', flags: [IGNORECASE]}
     - {pattern: 'i acknowledge', flags: [IGNORECASE]}
     - {pattern: 'i have read and understand', flags: [IGNORECASE]}
+    # Greenhouse Reddit-style privacy acknowledgements
+    - {pattern: 'privacy policy', flags: [IGNORECASE]}
+    - {pattern: 'candidate privacy', flags: [IGNORECASE]}
+    - {pattern: 'by selecting', flags: [IGNORECASE]}
   # For radio/select consent widgets, prefer an option whose text contains
   # one of these phrases (in order). Falls through to the sole option when
   # the widget is a single-choice acknowledgement (Ashby / iCIMS shape).

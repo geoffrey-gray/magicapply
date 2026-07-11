@@ -270,6 +270,11 @@ def build_application_data(
     data_dir = loaded.data_dir()
     workday_store = None
     static_answers = loaded.base.static_answers
+    # Phone / current employer from base resume when static_answers omit them.
+    from magicapply.domain.resumes.static_overlay import overlay_static_from_resume
+
+    base_resume = _load_base_resume(loaded, profile)
+    static_answers = overlay_static_from_resume(static_answers, base_resume)
     from magicapply.infrastructure.sources.apply_url import (
         job_with_resolved_apply_url,
         resolve_job_apply_destination,
@@ -291,10 +296,10 @@ def build_application_data(
         effective_password = (
             stored.password
             if stored
-            else loaded.base.static_answers.workday_apply_password
+            else static_answers.workday_apply_password
         )
         if effective_password:
-            static_answers = loaded.base.static_answers.model_copy(
+            static_answers = static_answers.model_copy(
                 update={"workday_apply_password": effective_password}
             )
     router = AnswerRouter(

@@ -27,6 +27,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+from tests.chromium_util import SKIP_NO_CHROMIUM, chromium_installed
 from typer.testing import CliRunner
 
 from magicapply.cli.main import app
@@ -56,17 +58,14 @@ def _make_test_docx(path: Path) -> Path:
 
 
 def _chromium_installed() -> bool:
-    return _CHROMIUM_CACHE.exists() and (
-        any(_CHROMIUM_CACHE.glob("chromium-*"))
-        or any(_CHROMIUM_CACHE.glob("chromium_headless_shell-*"))
-    )
+    return chromium_installed()
 
 
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
         not _chromium_installed(),
-        reason="Chromium not installed; run: uv run playwright install chromium",
+        reason=SKIP_NO_CHROMIUM,
     ),
 ]
 
@@ -135,6 +134,8 @@ version: 1
 llm:
   provider: mock
 scoring:
+  # Hermetic fixtures expect mock-LLM scores (not YAKE keyword alignment).
+  mode: llm
   threshold: 70
   prefilter:
     locations: ["Remote"]
@@ -189,8 +190,7 @@ class TestDodAcceptance:
 
         # Discovery surfaced all four cross-ATS postings.
         assert "discovered: 4" in result.stdout
-        # All four passed prefilter + keyword-alignment threshold (fixture
-        # JDs mention bank terms present on the resume).
+        # All four passed prefilter + mock-LLM scoring threshold.
         assert "scored: 4" in result.stdout
 
         # Tailoring produced four TAILORED artifacts on disk with a DOCX

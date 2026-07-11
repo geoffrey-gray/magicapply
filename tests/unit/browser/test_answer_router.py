@@ -103,6 +103,40 @@ class TestIdentityText:
             "static", "United States"
         )
 
+    def test_country_select_dropdown(self) -> None:
+        answers = _default_static().model_copy(update={"country": "United States"})
+        field = FormField(
+            selector="#country",
+            label="Country",
+            kind="select",
+            options=["Canada", "United States", "United Kingdom"],
+        )
+        result = _router(static=answers).resolve(field, _job())
+        assert result == ResolvedAnswer("select", "United States")
+
+    def test_reddit_privacy_consent_checkbox(self) -> None:
+        field = FormField(
+            selector="#consent",
+            label=(
+                'By selecting "I agree," I understand that the information I have '
+                "provided as part of this job application will be processed in "
+                "accordance with Reddit's Candidate Privacy Policy."
+            ),
+            kind="checkbox",
+        )
+        assert _router().resolve(field, _job()) == ResolvedAnswer("check", check=True)
+
+    def test_ethnicity_select_declines_when_unset(self) -> None:
+        field = FormField(
+            selector="#eth",
+            label="Please select up to 2 ethnicities that you most closely identify with.",
+            kind="select",
+            options=["Asian", "White", "Decline to self-identify"],
+        )
+        result = _router().resolve(field, _job())
+        assert result.strategy == "select"
+        assert "decline" in result.value.lower()
+
     def test_current_employer(self) -> None:
         answers = _default_static().model_copy(update={"current_employer": "Intrinsic"})
         field = FormField(

@@ -2,6 +2,7 @@
 # Replace with your real resume YAML (and source_docx_path) for production.
 name: "Example Person"
 email: "example@example.com"
+phone: "555-0100"
 location: "Boston, MA"
 summary: >-
   Staff data scientist with deep experience in Python, distributed systems,

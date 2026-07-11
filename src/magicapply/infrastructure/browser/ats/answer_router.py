@@ -179,6 +179,19 @@ class AnswerRouter:
                         return ResolvedAnswer("unhandled")
                     return ResolvedAnswer("select", option)
 
+            # Identity on select/radio (e.g. Greenhouse Country dropdown).
+            # Text identity runs later; here we map StaticAnswers into options.
+            for rule in self._rules.identity:
+                if not rule.pattern.search(label):
+                    continue
+                identity = _identity_answer(rule.attr, self._answers)
+                if identity.strategy == "unhandled" or not identity.value:
+                    return ResolvedAnswer("unhandled")
+                option = _match_option_by_substring(field.options, identity.value)
+                if option is None:
+                    return ResolvedAnswer("unhandled")
+                return ResolvedAnswer("select", option)
+
         # 3. Checkbox — consent / agreement boxes the operator has pre-approved.
         if field.kind == "checkbox":
             for rule in self._rules.yes_no:

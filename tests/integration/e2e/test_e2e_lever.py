@@ -7,6 +7,8 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+
+from tests.chromium_util import SKIP_NO_CHROMIUM, chromium_installed
 import yaml
 from typer.testing import CliRunner
 
@@ -39,17 +41,14 @@ def _make_test_docx(path: Path) -> Path:
 
 
 def _chromium_installed() -> bool:
-    return _CHROMIUM_CACHE.exists() and (
-        any(_CHROMIUM_CACHE.glob("chromium-*"))
-        or any(_CHROMIUM_CACHE.glob("chromium_headless_shell-*"))
-    )
+    return chromium_installed()
 
 
 pytestmark = [
     pytest.mark.slow,
     pytest.mark.skipif(
         not _chromium_installed(),
-        reason="Chromium not installed; run: uv run playwright install chromium",
+        reason=SKIP_NO_CHROMIUM,
     ),
 ]
 

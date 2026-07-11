@@ -35,6 +35,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.chromium_util import SKIP_NO_CHROMIUM, chromium_installed
+
 from magicapply.infrastructure.browser.ats.factory import ATSHandlerFactory
 from magicapply.infrastructure.corpus.custom_ats import load_manifest
 
@@ -45,10 +47,7 @@ _CHROMIUM_CACHE = Path.home() / ".cache" / "ms-playwright"
 
 
 def _chromium_installed() -> bool:
-    return _CHROMIUM_CACHE.exists() and (
-        any(_CHROMIUM_CACHE.glob("chromium-*"))
-        or any(_CHROMIUM_CACHE.glob("chromium_headless_shell-*"))
-    )
+    return chromium_installed()
 
 
 def _live_rows() -> list[dict]:
@@ -77,7 +76,7 @@ pytestmark = [
     ),
     pytest.mark.skipif(
         not _chromium_installed(),
-        reason="Chromium not installed; run: uv run playwright install chromium",
+        reason=SKIP_NO_CHROMIUM,
     ),
 ]
 
