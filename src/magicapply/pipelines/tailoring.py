@@ -23,18 +23,19 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 import yaml
 
 from magicapply.config.models import KeywordBank
 from magicapply.domain.keywords.alignment import (
     docx_plain_text,
-    score_keyword_alignment,
+    score_jd_keyword_coverage,
     serialize_resume_text,
 )
-from magicapply.domain.keywords.extractor import KeywordExtractor
 from magicapply.domain.keywords.matcher import match_bank
 from magicapply.domain.models.application import ApplicationState
+from magicapply.domain.models.job import Job
 from magicapply.domain.repositories import (
     ApplicationsRepository,
     JobsRepository,
@@ -44,6 +45,10 @@ from magicapply.domain.resumes.tailor import Tailorer
 from magicapply.infrastructure.rendering.docx_inplace import InPlaceDocxTailorer
 
 logger = logging.getLogger(__name__)
+
+
+class JobKeywordExtractor(Protocol):
+    def extract(self, job: Job) -> list[str]: ...
 
 
 @dataclass
@@ -64,7 +69,7 @@ class TailoringPipeline:
         tailorer: Tailorer,
         narrative: NarrativeEngine,
         resume_renderer: InPlaceDocxTailorer,
-        keyword_extractor: KeywordExtractor,
+        keyword_extractor: JobKeywordExtractor,
         keyword_bank: KeywordBank,
         source_docx_path: Path,
         profile_name: str,
@@ -163,7 +168,11 @@ class TailoringPipeline:
                     if docx_path.exists()
                     else serialize_resume_text(tailored)
                 )
-                after = score_keyword_alignment(after_text, job, self._bank)
+                # Same formula as discover: coverage of *extracted* JD terms
+                # on the tailored DOCX (not bank ∩ JD).
+                after = score_jd_keyword_coverage(
+                    after_text, extracted, bank=self._bank
+                )
                 app.score_after_tailor = after.value
                 app.score_after_rationale = after.rationale
                 before_val = app.score if app.score is not None else 0
@@ -178,6 +187,7 @@ class TailoringPipeline:
                             "jd_terms": after.jd_terms,
                             "matched_after": after.matched,
                             "missing_after": after.missing,
+                            "extracted_from_jd": extracted,
                         },
                         indent=2,
                         sort_keys=False,

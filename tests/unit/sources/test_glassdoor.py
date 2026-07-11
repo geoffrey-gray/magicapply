@@ -169,6 +169,23 @@ class TestSearchPageCardExtractor:
             source_name="glassdoor-search",
         ) == []
 
+    def test_card_captures_external_apply_url(self) -> None:
+        html = (
+            '<html><body><ul>'
+            '<li data-test="jobListing" data-jobid="88">'
+            '  <a data-test="job-title" href="/job-listing/x-JV_1.htm">Role</a>'
+            '  <div id="job-employer-88">'
+            '    <span class="EmployerProfile_compactEmployerName__xyz">Acme</span>'
+            "  </div>"
+            '  <a href="https://boards.greenhouse.io/acme/jobs/123">Apply on company site</a>'
+            "</li></ul></body></html>"
+        )
+        jobs = extract_jobs_from_search(html, source_name="glassdoor-search")
+        assert len(jobs) == 1
+        assert jobs[0].apply_url is not None
+        assert "greenhouse.io" in jobs[0].apply_url
+        assert jobs[0].raw.get("apply_resolve") == "serp_card"
+
     def test_company_fallback_strips_rating_suffix(self) -> None:
         """When the compactEmployerName span isn't present, the extractor
         falls back to the `job-employer-<id>` div's full text and strips

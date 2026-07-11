@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
 from magicapply.infrastructure.browser.ats.base import (
@@ -37,6 +38,22 @@ _ASHBY_FORM_SELECTORS = (
 )
 
 
+def ashby_application_url(job_url: str) -> str:
+    """Build the Ashby ``…/application`` URL without breaking query strings.
+
+    LinkedIn and other sources often pass ``?source=…``. Naively appending
+    ``/application`` produces ``…?source=x/application`` (broken). Path-join
+    ``/application`` and preserve query/fragment.
+    """
+    parts = urlsplit(job_url.strip())
+    path = parts.path.rstrip("/") or "/"
+    if not path.endswith("/application"):
+        path = f"{path}/application"
+    return urlunsplit(
+        (parts.scheme, parts.netloc, path, parts.query, parts.fragment)
+    )
+
+
 class AshbyHandler(BaseATSHandler):
     @classmethod
     def matches(cls, url: str) -> bool:
@@ -44,10 +61,7 @@ class AshbyHandler(BaseATSHandler):
         return any(host in u for host in _MATCH_HOSTS)
 
     def _navigate(self, page: PageDriver, data: ApplicationData) -> None:
-        url = data.job_url.rstrip("/")
-        if not url.endswith("/application"):
-            url = f"{url}/application"
-        page.goto(url)
+        page.goto(ashby_application_url(data.job_url))
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers

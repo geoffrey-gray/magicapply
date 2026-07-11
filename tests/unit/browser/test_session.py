@@ -20,13 +20,14 @@ from magicapply.infrastructure.browser.session import (
     DEFAULT_USER_AGENTS,
     DEFAULT_VIEWPORTS,
     PlaywrightSession,
+    default_headed_chromium_args,
+    find_playwright_chromium_cache,
+    playwright_browser_cache_dirs,
 )
-
-_CHROMIUM_CACHE = Path.home() / ".cache" / "ms-playwright"
 
 
 def _chromium_installed() -> bool:
-    return _CHROMIUM_CACHE.exists() and any(_CHROMIUM_CACHE.glob("chromium-*"))
+    return find_playwright_chromium_cache() is not None
 
 
 @pytest.mark.skipif(
@@ -57,6 +58,53 @@ class TestSessionLifecycle:
         # And a fresh session can re-load it without exploding.
         with PlaywrightSession(headless=True, storage_state_path=state_path):
             pass
+
+
+# ---- Platform helpers (no Chromium required) ------------------------------
+
+
+class TestHeadedChromiumArgs:
+    def test_linux_includes_x11_software_gl(self) -> None:
+        args = default_headed_chromium_args(platform="linux")
+        assert "--ozone-platform=x11" in args
+        assert "--use-gl=swiftshader" in args
+        assert "--no-sandbox" in args
+
+    def test_darwin_has_no_x11_flags(self) -> None:
+        args = default_headed_chromium_args(platform="darwin")
+        assert args == []
+        assert "--ozone-platform=x11" not in args
+
+    def test_win32_has_no_x11_flags(self) -> None:
+        assert default_headed_chromium_args(platform="win32") == []
+
+
+class TestPlaywrightCacheDirs:
+    def test_override_first(self, tmp_path: Path) -> None:
+        override = tmp_path / "custom-browsers"
+        dirs = playwright_browser_cache_dirs(
+            home=tmp_path / "home",
+            env={"PLAYWRIGHT_BROWSERS_PATH": str(override)},
+        )
+        assert dirs[0] == override
+
+    def test_mac_and_linux_candidates(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        dirs = playwright_browser_cache_dirs(home=home, env={})
+        assert home / "Library" / "Caches" / "ms-playwright" in dirs
+        assert home / ".cache" / "ms-playwright" in dirs
+
+    def test_find_detects_chromium_under_mac_path(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        cache = home / "Library" / "Caches" / "ms-playwright"
+        (cache / "chromium-1234").mkdir(parents=True)
+        found = find_playwright_chromium_cache(home=home, env={})
+        assert found == cache
+
+    def test_find_none_when_empty(self, tmp_path: Path) -> None:
+        assert (
+            find_playwright_chromium_cache(home=tmp_path / "home", env={}) is None
+        )
 
 
 # ---- Proxy / UA / viewport rotation (no Chromium required) ----------------

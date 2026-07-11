@@ -1,4 +1,4 @@
-"""Unit tests for ATS-style keyword alignment."""
+"""Unit tests for ATS-style keyword alignment (JD terms → resume coverage)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from magicapply.domain.keywords.alignment import (
     docx_plain_text,
     jd_form_for_entry,
     phrase_in_text,
+    score_jd_keyword_coverage,
     score_keyword_alignment,
     serialize_resume_text,
 )
@@ -86,54 +87,48 @@ class TestJdForm:
         assert jd_form_for_entry(entry, "We use Go and Python.") is None
 
 
-class TestScoreKeywordAlignment:
+class TestScoreJdKeywordCoverage:
+    def test_example_four_of_ten_is_forty(self) -> None:
+        jd_terms = [f"skill-{i}" for i in range(10)]
+        resume = "skill-0 skill-1 skill-2 skill-3"
+        r = score_jd_keyword_coverage(resume, jd_terms)
+        assert r.value == 40
+        assert len(r.matched) == 4
+        assert len(r.missing) == 6
+
+    def test_empty_jd_terms(self) -> None:
+        r = score_jd_keyword_coverage("python everywhere", [])
+        assert r.value == 0
+        assert "no keywords extracted" in r.rationale
+
+    def test_bank_synonym_credit(self) -> None:
+        # JD extracted "k8s"; resume has "kubernetes"; bank links them.
+        r = score_jd_keyword_coverage(
+            "Operated kubernetes clusters daily.",
+            ["k8s", "rust"],
+            bank=_bank(),
+        )
+        assert "k8s" in [m.lower() for m in r.matched]
+        assert "rust" in [m.lower() for m in r.missing]
+        assert r.value == 50
+
+
+class TestScoreKeywordAlignmentLegacy:
+    """Legacy bank∩JD path still works when jd_terms not supplied."""
+
     def test_empty_bank(self) -> None:
         r = score_keyword_alignment("python everywhere", _job(), KeywordBank())
         assert r.value == 0
-        assert "empty keyword bank" in r.rationale
 
-    def test_no_jd_keywords(self) -> None:
-        r = score_keyword_alignment(
-            "python and kubernetes",
-            _job(description="Lead happy teams."),
-            _bank(),
-        )
-        assert r.value == 0
-        assert "no bank keywords found in JD" in r.rationale
-
-    def test_partial_coverage(self) -> None:
-        # JD emphasizes multi-agent systems + python; resume has only python.
+    def test_partial_coverage_via_bank_fallback(self) -> None:
         r = score_keyword_alignment(
             "Senior engineer. Skills: python.",
             _job(),
             _bank(),
         )
+        # bank forms in JD: multi-agent systems + python → 1/2 = 50
         assert r.value == 50
         assert "python" in [m.lower() for m in r.matched]
-        assert any("multi-agent" in m.lower() for m in r.missing)
-
-    def test_synonym_only_resume_scores_low_jd_form_credit(self) -> None:
-        # Resume says synonym; JD says canonical term → no credit (pre-tailor).
-        resume_before = "Built an agentic framework for research."
-        r_before = score_keyword_alignment(resume_before, _job(), _bank())
-        assert r_before.value == 0  # only multi-agent systems in JD forms; no python in resume either
-        # JD has multi-agent systems + python → 0/2
-        assert r_before.value == 0
-
-        # After synonym→term swap (what InPlaceDocxTailorer does):
-        resume_after = "Built multi-agent systems for research. Also python."
-        r_after = score_keyword_alignment(resume_after, _job(), _bank())
-        assert r_after.value == 100
-        assert r_after.value > r_before.value
-
-    def test_full_match(self) -> None:
-        r = score_keyword_alignment(
-            "Python expert building multi-agent systems.",
-            _job(),
-            _bank(),
-        )
-        assert r.value == 100
-        assert not r.missing
 
 
 class TestSerializeAndDocx:

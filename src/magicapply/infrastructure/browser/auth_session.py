@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -153,6 +154,39 @@ def clear_auth_state(data_dir: Path, site: str) -> bool:
     return False
 
 
+def needs_unix_display(*, platform: str | None = None) -> bool:
+    """True when headed Chromium requires DISPLAY/WAYLAND_DISPLAY (Linux only).
+
+    macOS and Windows use a native windowing system; Playwright does not need
+    X11-style display env vars there.
+    """
+    plat = platform if platform is not None else sys.platform
+    return plat.startswith("linux")
+
+
+def ensure_headed_display_available(
+    *,
+    platform: str | None = None,
+    env: dict[str, str] | None = None,
+    cookie_env_hint: str = "SITE_SESSION_COOKIES",
+) -> None:
+    """Raise RuntimeError when headed login cannot open a window.
+
+    Only Linux requires DISPLAY/WAYLAND_DISPLAY. Darwin/Windows always pass.
+    """
+    if not needs_unix_display(platform=platform):
+        return
+    environ = env if env is not None else os.environ
+    if environ.get("DISPLAY") or environ.get("WAYLAND_DISPLAY"):
+        return
+    raise RuntimeError(
+        "No DISPLAY/WAYLAND_DISPLAY — cannot open a headed browser on Linux. "
+        "Options: run from a desktop/VNC session, set DISPLAY, use a Mac/"
+        "Windows desktop for `auth login`, or set "
+        f"{cookie_env_hint} in .env from a Cookie header paste instead."
+    )
+
+
 def run_interactive_login(
     site: str,
     *,
@@ -166,7 +200,7 @@ def run_interactive_login(
     """Open a browser for the operator to log in; save Playwright storage_state.
 
     Returns the path written. Raises ``RuntimeError`` on missing display when
-    headed is required, or if Chromium/Playwright fails.
+    headed is required on Linux, or if Chromium/Playwright fails.
 
     When ``auto_save`` is True (or stdin is not a TTY), wait until a cookie
     named ``wait_cookie`` appears (default: site legacy name or any cookie),
@@ -183,12 +217,8 @@ def run_interactive_login(
             f"auth state already exists at {out}; pass --force to overwrite"
         )
 
-    if headed and not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        raise RuntimeError(
-            "No DISPLAY/WAYLAND_DISPLAY — cannot open a headed browser. "
-            "Options: run from a desktop/VNC session, set DISPLAY, or set "
-            f"{spec.cookie_env} in .env from a Cookie header paste instead."
-        )
+    if headed:
+        ensure_headed_display_available(cookie_env_hint=spec.cookie_env)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     # Force: delete existing so the login window does not reload old cookies.

@@ -51,10 +51,49 @@ class TestGreenhouseAdapter:
         job = jobs[0]
         assert job.title.startswith("Senior Staff Machine Learning Engineer")
         assert job.url == "https://job-boards.greenhouse.io/reddit/jobs/7772274"
+        assert job.apply_url == "https://job-boards.greenhouse.io/reddit/jobs/7772274"
+        assert job.raw.get("greenhouse_board") == "reddit"
         assert job.company == "Reddit"
         assert job.location == "Remote - United States"
         assert "ML platform" in job.description
         assert job.source_name == "gh-reddit"
+
+    def test_stripe_style_absolute_url_sets_greenhouse_apply_url(self) -> None:
+        body = json.dumps(
+            {
+                "jobs": [
+                    {
+                        "id": 8044460,
+                        "title": "AI Engineer",
+                        "absolute_url": "https://stripe.com/jobs/search?gh_jid=8044460",
+                        "location": {"name": "Remote"},
+                        "updated_at": "2026-06-17T10:00:00-04:00",
+                        "content": "<p>Build AI systems.</p>",
+                    }
+                ]
+            }
+        )
+        cfg = GreenhouseSource(
+            name="greenhouse-boards",
+            boards=["stripe"],
+            title_keywords=[],
+            rate_limit_per_minute=600,
+        )
+        http = _mock_http(
+            {
+                "https://boards-api.greenhouse.io/v1/boards/stripe/jobs?content=true": (
+                    200,
+                    body,
+                )
+            }
+        )
+        adapter = GreenhouseAdapter.from_config(cfg, http=http)
+        jobs = list(adapter.discover())
+        assert len(jobs) == 1
+        job = jobs[0]
+        assert job.url == "https://stripe.com/jobs/search?gh_jid=8044460"
+        assert job.apply_url == "https://job-boards.greenhouse.io/stripe/jobs/8044460"
+        assert job.raw.get("greenhouse_board") == "stripe"
 
     def test_title_filter_drops_non_matching_roles(self) -> None:
         body = _FIXTURE.read_text(encoding="utf-8")

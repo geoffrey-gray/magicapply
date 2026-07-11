@@ -131,3 +131,162 @@ def test_apply_pipeline_routes_via_apply_url_not_listing(
     assert report.error != "unsupported ATS"
     assert report.final_state is ApplicationState.APPLIED
     assert ("goto", job.apply_url) in page.calls
+
+
+def test_apply_pipeline_skips_indeed_board_listing_without_external(
+    engine: Engine, tmp_path: Path
+) -> None:
+    job = Job.new(
+        source_name="indeed-search",
+        url="https://www.indeed.com/viewjob?jk=abc123",
+        title="Data Scientist",
+        company="Acme",
+    )
+    jobs = SqlJobsRepository(engine)
+    apps = SqlApplicationsRepository(engine)
+    jobs.upsert(job)
+
+    tailored_dir = tmp_path / "tailored" / "board1"
+    tailored_dir.mkdir(parents=True)
+    (tailored_dir / "resume.yaml").write_text(
+        yaml.safe_dump({"base_name": "R", "job_id": job.id, "name": "Test Person"})
+    )
+    (tailored_dir / "resume.docx").write_bytes(b"PK\x03\x04")
+
+    app = Application(job_id=job.id, profile_name="staff-ds", tailored_path=str(tailored_dir))
+    app.transition_to(ApplicationState.SCORED)
+    app.transition_to(ApplicationState.TAILORED)
+    apps.add(app)
+
+    class _Page:
+        url = job.url
+        calls: list[tuple[str, ...]] = []
+
+        def goto(self, url: str) -> None:
+            self.calls.append(("goto", url))
+
+        def fill(self, selector: str, value: str) -> None:
+            pass
+
+        def click(self, selector: str) -> None:
+            pass
+
+        def content(self) -> str:
+            return "<html></html>"
+
+        def set_input_files(self, selector: str, files: str) -> None:
+            pass
+
+        def select_option(self, selector: str, value: str) -> None:
+            pass
+
+        def check(self, selector: str) -> None:
+            pass
+
+    page = _Page()
+    data = ApplicationData(
+        job_url=job.effective_apply_url,
+        static_answers=StaticAnswers(full_name="Test Person", email="t@example.com"),
+        tailored_resume=TailoredResume(base_name="R", job_id=job.id, name="Test Person"),
+        resume_docx_path=tailored_dir / "resume.docx",
+        dry_run=True,
+    )
+
+    pipeline = ApplyPipeline(applications_repo=apps)
+    report = pipeline.apply_one(
+        page=page,
+        application=app,
+        job=job,
+        application_data=data,
+    )
+
+    assert report.final_state is ApplicationState.SKIPPED
+    assert report.error is not None and "board listing" in report.error
+    assert page.calls == []  # never navigated
+    saved = apps.get(app.id)
+    assert saved is not None
+    assert saved.state is ApplicationState.SKIPPED
+
+
+def test_apply_pipeline_resolves_stripe_raw_to_greenhouse(
+    engine: Engine, tmp_path: Path
+) -> None:
+    job = Job.new(
+        source_name="greenhouse-boards",
+        url="https://stripe.com/jobs/search?gh_jid=8044460",
+        title="AI Engineer",
+        company="Stripe",
+        raw={
+            "id": 8044460,
+            "absolute_url": "https://stripe.com/jobs/search?gh_jid=8044460",
+            "greenhouse_board": "stripe",
+        },
+    )
+    jobs = SqlJobsRepository(engine)
+    apps = SqlApplicationsRepository(engine)
+    jobs.upsert(job)
+
+    tailored_dir = tmp_path / "tailored" / "stripe1"
+    tailored_dir.mkdir(parents=True)
+    (tailored_dir / "resume.yaml").write_text(
+        yaml.safe_dump({"base_name": "R", "job_id": job.id, "name": "Test Person"})
+    )
+    (tailored_dir / "resume.docx").write_bytes(b"PK\x03\x04")
+
+    app = Application(job_id=job.id, profile_name="staff-ds", tailored_path=str(tailored_dir))
+    app.transition_to(ApplicationState.SCORED)
+    app.transition_to(ApplicationState.TAILORED)
+    apps.add(app)
+
+    class _Page:
+        url = job.url
+        calls: list[tuple[str, ...]] = []
+
+        def goto(self, url: str) -> None:
+            self.url = url
+            self.calls.append(("goto", url))
+
+        def fill(self, selector: str, value: str) -> None:
+            self.calls.append(("fill", selector, value))
+
+        def click(self, selector: str) -> None:
+            self.calls.append(("click", selector))
+
+        def content(self) -> str:
+            return (
+                "<html><body><form>"
+                "<input id='first_name' /><input id='last_name' />"
+                "<input id='email' /><input type='submit' />"
+                "</form></body></html>"
+            )
+
+        def set_input_files(self, selector: str, files: str) -> None:
+            self.calls.append(("set_input_files", selector, files))
+
+        def select_option(self, selector: str, value: str) -> None:
+            pass
+
+        def check(self, selector: str) -> None:
+            pass
+
+    page = _Page()
+    data = ApplicationData(
+        job_url=job.effective_apply_url,
+        static_answers=StaticAnswers(full_name="Test Person", email="t@example.com"),
+        tailored_resume=TailoredResume(base_name="R", job_id=job.id, name="Test Person"),
+        resume_docx_path=tailored_dir / "resume.docx",
+        dry_run=True,
+    )
+
+    pipeline = ApplyPipeline(applications_repo=apps)
+    report = pipeline.apply_one(
+        page=page,
+        application=app,
+        job=job,
+        application_data=data,
+    )
+
+    expected = "https://job-boards.greenhouse.io/stripe/jobs/8044460"
+    assert isinstance(ATSHandlerFactory.for_url(expected), GreenhouseHandler)
+    assert report.final_state is ApplicationState.APPLIED
+    assert ("goto", expected) in page.calls

@@ -1,31 +1,20 @@
-"""Indeed adapter — Playwright-driven search with Cloudflare-challenge surfacing.
+"""Indeed adapter — SERP first, offsite prefer, capped viewjob fallback.
 
-Per configured query, opens the Indeed search page and reads the full
-result set (title, company, location, snippet, ``jobkey``) directly out
-of the ``window.mosaic.initialData`` hydration blob embedded in the
-HTML. Detail-page fetches are skipped by design — Indeed's second-tier
-"Additional Verification Required" interstitial fires on
-``/viewjob?jk=…`` even when the search page loads cleanly, so parsing
-hydration is both more reliable and 10-25× fewer HTTP round trips.
+Per configured query, opens the Indeed search page and reads title,
+company, location, snippet, ``jobkey``, and ``thirdPartyApplyUrl`` from
+the mosaic hydration blob. Then:
 
-Indeed hides behind Cloudflare. Two escape hatches for the search page,
-in order:
+1. **Offsite** — when ``apply_url`` is external, upgrade short snippets
+   with JD text from the destination careers/ATS page.
+2. **Detail fallback** — if apply URL and/or description still incomplete,
+   visit ``/viewjob?jk=…`` up to ``max_board_detail_fetches`` times per run.
+   Bot-blocked details are soft failures (do not kill the whole query).
 
-1. **Proxy rotation** (when a ``ProxyPool`` is injected) — the adapter
-   requests a fresh proxy per search attempt. On ``looks_like_bot_block``,
-   the current proxy is burned and dropped, then the query is requeued
-   with a bounded retry budget. Distributes load across the pool so a
-   single Cloudflare-flagged IP doesn't sink a whole discover run.
-2. **Log + skip** — with no pool available (or after exhausting the
-   retry budget), the query is logged and dropped. Other queries and
-   other sources are unaffected.
+Indeed hides behind Cloudflare on search and often on detail. Search
+uses proxy rotation / requeue; detail blocks are logged and skipped.
 
 Session cookies (``INDEED_SESSION_COOKIES``) take precedence over proxy
-rotation — an authenticated session mostly bypasses Cloudflare, and
-per-proxy contexts would break auth anyway.
-
-ToS-sensitive: like LinkedIn, requires an explicit acknowledgement
-(``MAGICAPPLY_INDEED_ACK=1``) before making requests.
+rotation. ToS-sensitive: requires ``MAGICAPPLY_INDEED_ACK=1``.
 """
 
 from __future__ import annotations
@@ -43,12 +32,25 @@ from typing import Any
 from lxml import html as lhtml
 
 from magicapply.config.models import IndeedSource
-from magicapply.domain.models.job import Job
+from magicapply.domain.models.job import Job, canonicalize_url
 from magicapply.infrastructure.browser.auth_session import resolve_session_auth
 from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
+from magicapply.infrastructure.sources.apply_url import (
+    BOARD_HOSTS_INDEED,
+    apply_url_from_indeed_detail_html,
+    description_from_indeed_detail_html,
+    is_external_apply_url,
+    sniff_platform,
+)
 from magicapply.infrastructure.sources.base import SourceError, parse_cookie_string
 from magicapply.infrastructure.sources.rate_limit import RateLimiter
+from magicapply.infrastructure.sources.serp_enrich import (
+    DetailBudget,
+    SerpEnrichPolicy,
+    apply_url_if_external,
+    post_serp_enrich,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,11 @@ class IndeedAdapter:
         rate_limit_per_minute: int,
         acknowledged: bool,
         enrich_apply_urls: bool = True,
+        enrich_descriptions: bool = True,
+        board_detail_fallback: bool = True,
+        max_board_detail_fetches: int = 8,
+        require_external_apply: bool = False,
+        max_jobs_per_run: int = 50,
         proxy_pool: ProxyPool | None = None,
         max_query_retries: int = _DEFAULT_MAX_QUERY_RETRIES,
         session_cookies: list[dict] | None = None,
@@ -130,6 +137,11 @@ class IndeedAdapter:
         self._rate = rate_limit_per_minute
         self._ack = acknowledged
         self._enrich_apply_urls = enrich_apply_urls
+        self._enrich_descriptions = enrich_descriptions
+        self._board_detail_fallback = board_detail_fallback
+        self._max_board_detail_fetches = max(0, int(max_board_detail_fetches))
+        self._require_external_apply = require_external_apply
+        self._max_jobs = max(1, int(max_jobs_per_run))
         self._proxy_pool = proxy_pool
         self._max_query_retries = max(1, int(max_query_retries))
         self._session_cookies = session_cookies or None
@@ -137,6 +149,7 @@ class IndeedAdapter:
         self._posted_within_days = posted_within_days
         self._max_pages = max(1, int(max_pages))
         self._data_dir = data_dir
+        self._detail_budget = DetailBudget(self._max_board_detail_fetches)
 
     def _effective_proxy_pool(self) -> ProxyPool | None:
         """Cookies/storage_state win over proxies: when session auth is
@@ -168,6 +181,11 @@ class IndeedAdapter:
             rate_limit_per_minute=config.rate_limit_per_minute,
             acknowledged=os.environ.get("MAGICAPPLY_INDEED_ACK") == "1",
             enrich_apply_urls=config.enrich_apply_urls,
+            enrich_descriptions=config.enrich_descriptions,
+            board_detail_fallback=config.board_detail_fallback,
+            max_board_detail_fetches=config.max_board_detail_fetches,
+            require_external_apply=config.require_external_apply,
+            max_jobs_per_run=config.max_jobs_per_run,
             proxy_pool=proxy_pool,
             session_cookies=session_cookies,
             remote_only=config.remote_only,
@@ -189,6 +207,9 @@ class IndeedAdapter:
         rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
         auth = resolve_session_auth("indeed", self._data_dir)
         effective_pool = self._effective_proxy_pool()
+        # Fresh budget each discover run.
+        self._detail_budget = DetailBudget(self._max_board_detail_fetches)
+        jobs_left = self._max_jobs
         if auth.source != "none" and self._proxy_pool is not None:
             logger.info(
                 "Indeed: auth via %s, skipping proxy pool for this source",
@@ -203,16 +224,24 @@ class IndeedAdapter:
             if cookies:
                 session.add_cookies(cookies)
             queue: deque[tuple[str, int]] = deque((q, 0) for q in self._queries)
-            while queue:
+            while queue and jobs_left > 0:
                 query, attempts = queue.popleft()
-                did_yield, blocked = False, False
-                # We yield inside the loop; capture the intent via flags.
+                blocked = False
                 for job in self._search_one_query(session, query, rate):
                     if isinstance(job, _Blocked):
                         blocked = True
                         break
-                    did_yield = True
-                    yield job
+                    enriched = self._post_serp_enrich(session, job, rate)
+                    if enriched is None:
+                        continue
+                    yield enriched
+                    jobs_left -= 1
+                    if jobs_left <= 0:
+                        logger.info(
+                            "Indeed max_jobs_per_run=%d reached; stopping",
+                            self._max_jobs,
+                        )
+                        return
                 if blocked and attempts + 1 < self._max_query_retries:
                     logger.info(
                         "Indeed requeueing query %r (attempt %d/%d)",
@@ -224,6 +253,82 @@ class IndeedAdapter:
                         "Indeed exhausted retry budget for query %r; skipping",
                         query,
                     )
+
+    def _post_serp_enrich(
+        self,
+        session: PlaywrightSession,
+        job: Job,
+        rate: RateLimiter,
+    ) -> Job | None:
+        policy = SerpEnrichPolicy(
+            enrich_apply_urls=self._enrich_apply_urls,
+            enrich_descriptions=self._enrich_descriptions,
+            board_detail_fallback=self._board_detail_fallback,
+            require_external_apply=self._require_external_apply,
+            board_hosts=BOARD_HOSTS_INDEED,
+            board_label="Indeed",
+        )
+        return post_serp_enrich(
+            session,
+            job,
+            rate,
+            policy=policy,
+            budget=self._detail_budget,
+            board_detail_fn=self._enrich_from_indeed_detail,
+        )
+
+    def _enrich_from_indeed_detail(
+        self,
+        session: PlaywrightSession,
+        job: Job,
+        rate: RateLimiter,
+    ) -> Job:
+        """One ``/viewjob`` visit: resolve external apply + fuller description."""
+        rate.wait()
+        pool = self._effective_proxy_pool()
+        proxy = pool.next() if pool else None
+        content = _fetch(session, job.url, proxy=proxy)
+        if content is None:
+            return job
+        if looks_like_bot_block(content):
+            logger.warning(
+                "Indeed detail blocked for %s; leaving incomplete", job.url
+            )
+            if pool is not None and proxy is not None:
+                pool.burn(proxy, reason="cloudflare-detail")
+                session.drop_proxy_context(proxy)
+            return job
+
+        updates: dict[str, Any] = {"raw": {**job.raw, "indeed_detail": True}}
+        apply_url = apply_url_from_indeed_detail_html(content)
+        if apply_url and is_external_apply_url(
+            apply_url, board_hosts=BOARD_HOSTS_INDEED
+        ):
+            platform = sniff_platform(apply_url)
+            updates["apply_url"] = canonicalize_url(apply_url)
+            updates["raw"] = {
+                **updates["raw"],
+                "listing_url": job.url,
+                "platform": platform,
+                "apply_resolve": "indeed_detail",
+            }
+            logger.info(
+                "Indeed detail apply-url %s → %s (%s)",
+                job.url,
+                apply_url,
+                platform,
+            )
+        desc = description_from_indeed_detail_html(content)
+        if desc and len(desc.strip()) > len((job.description or "").strip()):
+            updates["description"] = desc
+            updates["raw"] = {
+                **updates.get("raw", job.raw),
+                "description_source": "indeed_detail_html",
+            }
+            logger.info(
+                "Indeed detail description for %s (%d chars)", job.url, len(desc)
+            )
+        return job.model_copy(update=updates)
 
     def _search_one_query(
         self,
@@ -390,6 +495,30 @@ def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
         if not (title and company):
             continue
         seen.add(jk)
+        third = record.get("thirdPartyApplyUrl")
+        apply_url = apply_url_if_external(
+            str(third) if third else None,
+            board_hosts=BOARD_HOSTS_INDEED,
+        )
+        # Indeed applystart / Easy Apply links stay on indeed.com — not external ATS.
+        if third and not apply_url:
+            logger.info(
+                "indeed: thirdPartyApplyUrl not external for jk=%s (board-only)",
+                jk,
+            )
+        raw: dict[str, Any] = {
+            "jobkey": jk,
+            "createDate": record.get("createDate"),
+            "pubDate": record.get("pubDate"),
+            "sourceId": record.get("sourceId"),
+            "sponsored": record.get("sponsored"),
+            "indeedApplyable": record.get("indeedApplyable"),
+            "thirdPartyApplyUrl": record.get("thirdPartyApplyUrl"),
+            "source_extraction": "search-page-hydration",
+        }
+        if apply_url:
+            raw["apply_resolve"] = "serp_hydration"
+            raw["platform"] = sniff_platform(apply_url)
         jobs.append(
             Job.new(
                 source_name=source_name,
@@ -400,16 +529,8 @@ def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
                 location=str(record["formattedLocation"])
                 if record.get("formattedLocation")
                 else None,
-                raw={
-                    "jobkey": jk,
-                    "createDate": record.get("createDate"),
-                    "pubDate": record.get("pubDate"),
-                    "sourceId": record.get("sourceId"),
-                    "sponsored": record.get("sponsored"),
-                    "indeedApplyable": record.get("indeedApplyable"),
-                    "thirdPartyApplyUrl": record.get("thirdPartyApplyUrl"),
-                    "source_extraction": "search-page-hydration",
-                },
+                apply_url=apply_url,
+                raw=raw,
             )
         )
     return jobs

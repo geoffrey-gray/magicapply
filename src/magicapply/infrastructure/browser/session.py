@@ -21,7 +21,9 @@ sources (LinkedIn with li_at) keep their cookies.
 
 from __future__ import annotations
 
+import os
 import random
+import sys
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -55,6 +57,77 @@ DEFAULT_VIEWPORTS: tuple[tuple[int, int], ...] = (
     (1536, 864),
     (1680, 1050),
 )
+
+# Linux/Xvfb software-GL flags for headed Chromium. Do NOT pass
+# --disable-software-rasterizer — that blanks the window on Xvfb.
+# Never apply these on macOS/Windows (native windowing, not X11).
+_LINUX_HEADED_CHROMIUM_ARGS: tuple[str, ...] = (
+    "--disable-gpu",
+    "--use-gl=swiftshader",
+    "--enable-unsafe-swiftshader",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--ozone-platform=x11",
+)
+
+
+def default_headed_chromium_args(*, platform: str | None = None) -> list[str]:
+    """Return platform-appropriate Chromium launch args for headed mode.
+
+    Linux/Xvfb needs software GL + X11 ozone. macOS and Windows use the
+    native window system — extra X11 flags break or degrade the window.
+    """
+    plat = platform if platform is not None else sys.platform
+    if plat.startswith("linux"):
+        return list(_LINUX_HEADED_CHROMIUM_ARGS)
+    return []
+
+
+def playwright_browser_cache_dirs(
+    *,
+    home: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> list[Path]:
+    """Candidate Playwright browser install directories (platform-aware).
+
+    Order: ``PLAYWRIGHT_BROWSERS_PATH`` override, then macOS Library cache,
+    then the common ``~/.cache/ms-playwright`` layout used on Linux.
+    """
+    environ = env if env is not None else os.environ
+    home_path = home if home is not None else Path.home()
+    dirs: list[Path] = []
+    override = (environ.get("PLAYWRIGHT_BROWSERS_PATH") or "").strip()
+    if override and override != "0":
+        dirs.append(Path(override).expanduser())
+    # macOS Playwright default
+    dirs.append(home_path / "Library" / "Caches" / "ms-playwright")
+    # Linux / cross-platform common
+    dirs.append(home_path / ".cache" / "ms-playwright")
+    # Deduplicate while preserving order
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for d in dirs:
+        resolved = d
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
+
+
+def find_playwright_chromium_cache(
+    *,
+    home: Path | None = None,
+    env: dict[str, str] | None = None,
+) -> Path | None:
+    """Return the first cache dir that contains a chromium install, or None."""
+    for cache in playwright_browser_cache_dirs(home=home, env=env):
+        if not cache.is_dir():
+            continue
+        if any(cache.glob("chromium-*")) or any(
+            cache.glob("chromium_headless_shell-*")
+        ):
+            return cache
+    return None
 
 
 class PlaywrightSession(AbstractContextManager["PlaywrightSession"]):
@@ -91,18 +164,10 @@ class PlaywrightSession(AbstractContextManager["PlaywrightSession"]):
         self._pw = sync_playwright().start()
         launch_kwargs: dict = {"headless": self._headless}
         args = list(self._chromium_args)
-        # Headed on Xvfb / remote X: need software GL. Do NOT pass
-        # --disable-software-rasterizer — that blanks the window on Xvfb.
-        # --use-gl=swiftshader paints reliably; no-sandbox helps in VMs.
+        # Platform-aware headed flags (Linux/Xvfb only). Caller-supplied
+        # chromium_args always win and are never stripped.
         if not self._headless:
-            for flag in (
-                "--disable-gpu",
-                "--use-gl=swiftshader",
-                "--enable-unsafe-swiftshader",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--ozone-platform=x11",
-            ):
+            for flag in default_headed_chromium_args():
                 if flag not in args:
                     args.append(flag)
         if args:

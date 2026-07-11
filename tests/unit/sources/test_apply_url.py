@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from magicapply.domain.models.job import Job
 from magicapply.infrastructure.sources.apply_url import (
     apply_url_from_linkedin_detail_html,
     decode_linkedin_safety_go,
+    description_from_destination_html,
     is_big_four_platform,
+    is_greenhouse_apply_url,
+    is_job_board_listing_url,
     linkedin_apply_href_from_html,
     resolve_apply_href,
+    resolve_greenhouse_apply_url,
+    resolve_job_apply_destination,
     sniff_platform,
 )
 
@@ -59,6 +65,29 @@ class TestLinkedInDetailHtml:
         assert "utm" not in apply_url
 
 
+class TestDescriptionFromDestination:
+    def test_jsonld_jobposting_description(self) -> None:
+        html = """
+        <html><body>
+        <script type="application/ld+json">
+        {"@type":"JobPosting","title":"Engineer",
+         "description":"<p>We need Python, Kubernetes, and SQL for production systems across distributed services and data platforms at scale.</p>"}
+        </script>
+        </body></html>
+        """
+        desc = description_from_destination_html(html)
+        assert "Python" in desc
+        assert "Kubernetes" in desc
+        assert "<p>" not in desc
+
+    def test_main_content_fallback(self) -> None:
+        body = "x" * 50 + " Looking for a Staff Data Scientist with Spark experience. " + "y" * 50
+        html = f"<html><body><main>{body}</main></body></html>"
+        desc = description_from_destination_html(html)
+        assert "Staff Data Scientist" in desc
+        assert "Spark" in desc
+
+
 class TestSniffPlatform:
     def test_workday(self) -> None:
         assert (
@@ -93,3 +122,68 @@ class TestSniffPlatform:
     def test_big_four_helper(self) -> None:
         assert is_big_four_platform("workday")
         assert not is_big_four_platform("eightfold")
+
+
+class TestGreenhouseApplyResolve:
+    def test_already_greenhouse_absolute_url(self) -> None:
+        url = "https://job-boards.greenhouse.io/reddit/jobs/7772274"
+        assert resolve_greenhouse_apply_url(
+            board_slug="reddit",
+            posting_id=7772274,
+            absolute_url=url,
+        ) == url
+
+    def test_stripe_careers_rewritten_via_board_and_id(self) -> None:
+        got = resolve_greenhouse_apply_url(
+            board_slug="stripe",
+            posting_id=8044460,
+            absolute_url="https://stripe.com/jobs/search?gh_jid=8044460",
+        )
+        assert got == "https://job-boards.greenhouse.io/stripe/jobs/8044460"
+        assert is_greenhouse_apply_url(got)
+
+    def test_gh_jid_query_with_board_slug(self) -> None:
+        got = resolve_greenhouse_apply_url(
+            board_slug="stripe",
+            posting_id=None,
+            absolute_url="https://stripe.com/jobs/search?gh_jid=12345",
+        )
+        assert got == "https://job-boards.greenhouse.io/stripe/jobs/12345"
+
+    def test_missing_slug_and_non_gh_absolute_returns_none(self) -> None:
+        assert (
+            resolve_greenhouse_apply_url(
+                board_slug=None,
+                posting_id=1,
+                absolute_url="https://stripe.com/jobs/search?gh_jid=1",
+            )
+            is None
+        )
+
+
+class TestJobBoardListingAndDestination:
+    def test_indeed_viewjob_is_board_listing(self) -> None:
+        assert is_job_board_listing_url(
+            "https://www.indeed.com/viewjob?jk=5d994596ea5f047b"
+        )
+
+    def test_greenhouse_is_not_board_listing(self) -> None:
+        assert not is_job_board_listing_url(
+            "https://job-boards.greenhouse.io/reddit/jobs/1"
+        )
+
+    def test_resolve_destination_from_raw_greenhouse_board(self) -> None:
+        job = Job.new(
+            source_name="greenhouse-boards",
+            url="https://stripe.com/jobs/search?gh_jid=8044460",
+            title="AI Engineer",
+            company="Stripe",
+            raw={
+                "id": 8044460,
+                "absolute_url": "https://stripe.com/jobs/search?gh_jid=8044460",
+                "greenhouse_board": "stripe",
+            },
+        )
+        dest = resolve_job_apply_destination(job)
+        assert dest == "https://job-boards.greenhouse.io/stripe/jobs/8044460"
+        assert is_greenhouse_apply_url(dest)

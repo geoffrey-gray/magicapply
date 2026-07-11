@@ -1,3 +1,28 @@
-# Placeholder base resume — the real schema arrives in Phase 3 with domain models.
-# For now, config validation just checks this file exists.
+# Placeholder base resume for config validation + local smoke tests.
+# Replace with your real resume YAML (and source_docx_path) for production.
 name: "Example Person"
+email: "example@example.com"
+location: "Boston, MA"
+summary: >-
+  Staff data scientist with deep experience in Python, distributed systems,
+  Kubernetes platforms, and production RAG systems.
+skills:
+  - python
+  - kubernetes
+  - distributed systems
+  - rag
+  - microservices
+experience:
+  - company: "Example Corp"
+    title: "Staff Data Scientist"
+    start: "2020-01"
+    end: null
+    location: "Remote"
+    bullets:
+      - "Led migration of the payments platform to a microservices architecture"
+      - "Operated a multi-tenant Kubernetes platform serving 200+ services"
+      - "Built the first production RAG system; indexed corporate docs"
+education:
+  - school: "Example University"
+    degree: "MS"
+    field: "Computer Science"

@@ -1,9 +1,12 @@
 name: "senior-swe"
 base_resume: "example.yaml"
 
+# Source names must match entries under base_config.yaml::sources.
+# For LinkedIn smoke: enable linkedin-search in base_config and list it here.
 sources:
   - "starred-companies"
   - "watched-jobs"
+  # - "linkedin-search"
 
 apply:
   auto_apply: true

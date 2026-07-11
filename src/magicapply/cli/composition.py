@@ -24,7 +24,6 @@ from magicapply.domain.jobs.scoring import (
     Prefilter,
 )
 from magicapply.domain.keywords.alignment import serialize_resume_text
-from magicapply.domain.keywords.extractor import KeywordExtractor
 from magicapply.domain.models.application import Application
 from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import BaseResume, TailoredResume
@@ -102,11 +101,19 @@ def build_scorer(loaded: LoadedConfig, profile: Profile, scoring: ScoringConfig)
     base = _load_base_resume(loaded, profile)
     prefilter = Prefilter(scoring)
     if scoring.mode == "keyword":
-        # Plain-text resume blob + KeywordBank — deterministic ATS alignment.
+        # YAKE extracts keyphrases from the real JD (no LLM). Score =
+        # fraction of those terms present on the resume. Prefer DOCX body.
+        from magicapply.domain.keywords.alignment import docx_plain_text
+        from magicapply.domain.keywords.yake_extractor import YakeKeywordExtractor
+
+        resume_text = serialize_resume_text(base)
+        if base.source_docx_path is not None and base.source_docx_path.is_file():
+            resume_text = docx_plain_text(base.source_docx_path)
         return JobScorer(
             prefilter=prefilter,
             fit_scorer=KeywordAlignmentScorer(
-                resume_text=serialize_resume_text(base),
+                resume_text=resume_text,
+                extractor=YakeKeywordExtractor(top=20, max_ngram_size=2),
                 bank=loaded.effective_bank(profile),
             ),
         )
@@ -158,17 +165,17 @@ def build_tailoring_pipeline(
             f"original .docx file. Add `source_docx_path: <path>` to the "
             f"resume YAML."
         )
-    extractor = KeywordExtractor(
-        build_client(loaded.base.llm, prompts=loaded.prompts),
-        extraction_prompt=loaded.prompts.keyword_extraction,
-    )
+    # Same YAKE extractor as discover scoring so tailor bank-matching and
+    # post-tailor alignment use real JD keyphrases, not mock LLM cans.
+    from magicapply.domain.keywords.yake_extractor import YakeKeywordExtractor
+
     return TailoringPipeline(
         apps_repo=apps_repo,
         jobs_repo=jobs_repo,
         tailorer=build_tailorer(loaded, profile),
         narrative=build_narrative(loaded, profile),
         resume_renderer=InPlaceDocxTailorer(),
-        keyword_extractor=extractor,
+        keyword_extractor=YakeKeywordExtractor(top=20, max_ngram_size=2),
         keyword_bank=loaded.effective_bank(profile),
         source_docx_path=base.source_docx_path,
         profile_name=profile.name,
@@ -263,7 +270,13 @@ def build_application_data(
     data_dir = loaded.data_dir()
     workday_store = None
     static_answers = loaded.base.static_answers
-    apply_target = job.effective_apply_url
+    from magicapply.infrastructure.sources.apply_url import (
+        job_with_resolved_apply_url,
+        resolve_job_apply_destination,
+    )
+
+    job = job_with_resolved_apply_url(job)
+    apply_target = resolve_job_apply_destination(job)
     if (
         "myworkdayjobs.com" in apply_target.lower()
         or ".myworkday.com" in apply_target.lower()
@@ -324,8 +337,21 @@ def _load_base_resume(loaded: LoadedConfig, profile: Profile) -> BaseResume:
     tailorer / narrative engine (which want the parsed BaseResume). The
     scorer calls yaml.safe_dump on the returned object inline in
     build_scorer — no separate `_load_base_resume_text` sibling.
+
+    Relative ``source_docx_path`` values resolve against ``resumes_dir``
+    (same directory as the resume YAML), so operators can write
+    ``source_docx_path: my_resume.docx`` next to the YAML.
     """
     resume_path = loaded.resumes_dir() / profile.base_resume
     with resume_path.open("r", encoding="utf-8") as fp:
         raw = yaml.safe_load(fp)
-    return BaseResume.model_validate(raw)
+    base = BaseResume.model_validate(raw)
+    if base.source_docx_path is not None and not base.source_docx_path.is_absolute():
+        base = base.model_copy(
+            update={
+                "source_docx_path": (
+                    loaded.resumes_dir() / base.source_docx_path
+                ).resolve()
+            }
+        )
+    return base

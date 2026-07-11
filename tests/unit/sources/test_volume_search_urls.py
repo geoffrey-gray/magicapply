@@ -95,7 +95,9 @@ class TestConfigDefaults:
         assert li.posted_within_days == 7
         assert li.max_pages == 6
         assert li.rate_limit_per_minute == 3
-        assert li.enrich_apply_urls is False
+        assert li.enrich_apply_urls is True
+        assert li.linkedin_description_fallback is True
+        assert li.max_linkedin_detail_fetches == 8
         assert li.max_jobs_per_run == 150
         assert li.stop_on_redirect_error is True
 
@@ -105,6 +107,11 @@ class TestConfigDefaults:
             assert src.posted_within_days == 7
             assert src.max_pages == 5
             assert src.rate_limit_per_minute == 3
+            assert src.enrich_apply_urls is True
+            assert src.enrich_descriptions is True
+            assert src.board_detail_fallback is True
+            assert src.max_board_detail_fetches == 8
+            assert src.max_jobs_per_run == 50
 
 
 class TestLinkedInAuthWall:
@@ -117,7 +124,10 @@ class TestLinkedInAuthWall:
             "<html><body>Sign in to LinkedIn to continue</body></html>"
         )
         assert looks_like_linkedin_auth_wall(
-            "<html><div class='authwall'>join now</div></html>"
+            "<html><div class=\"authwall\">please log in</div></html>"
+        )
+        assert looks_like_linkedin_auth_wall(
+            "<html><form><input name=\"session_key\"/></form></html>"
         )
 
     def test_normal_search_html_not_wall(self) -> None:
@@ -129,3 +139,20 @@ class TestLinkedInAuthWall:
             "<html><body><code>{\"entityUrn\":\"urn:li:fsd_jobPosting:1\"}</code>"
             "Staff Data Scientist Remote</body></html>"
         )
+
+    def test_guest_nav_strings_on_serp_not_wall(self) -> None:
+        """Real SERPs embed 'Join now' / session_redirect / captcha flags."""
+        from magicapply.infrastructure.sources.linkedin import (
+            looks_like_linkedin_auth_wall,
+        )
+
+        html = """
+        <html><body>
+          <a href="/signup/cold-join?session_redirect=%2Fjobs">Join now</a>
+          <div data-recaptcha-v3-integration-lix-value="control"></div>
+          <div class="job-search-card" data-entity-urn="urn:li:jobPosting:1">
+            <h3 class="base-search-card__title">Engineer</h3>
+          </div>
+        </body></html>
+        """
+        assert not looks_like_linkedin_auth_wall(html)

@@ -71,6 +71,46 @@ class TestMatches:
         assert not AshbyHandler.matches("https://jobs.lever.co/acme/abc")
 
 
+class TestApplicationUrl:
+    def test_appends_application_path(self) -> None:
+        from magicapply.infrastructure.browser.ats.ashby import ashby_application_url
+
+        assert (
+            ashby_application_url("https://jobs.ashbyhq.com/acme/xyz")
+            == "https://jobs.ashbyhq.com/acme/xyz/application"
+        )
+
+    def test_preserves_query_string(self) -> None:
+        """Regression: LinkedIn source params must not break /application."""
+        from magicapply.infrastructure.browser.ats.ashby import ashby_application_url
+
+        raw = (
+            "https://jobs.ashbyhq.com/solace/"
+            "94e34d8e-264f-4cd6-a3d8-12492aa3c203?source=oWvqkkkny3"
+        )
+        assert ashby_application_url(raw) == (
+            "https://jobs.ashbyhq.com/solace/"
+            "94e34d8e-264f-4cd6-a3d8-12492aa3c203/application?source=oWvqkkkny3"
+        )
+
+    def test_idempotent_when_already_application(self) -> None:
+        from magicapply.infrastructure.browser.ats.ashby import ashby_application_url
+
+        url = "https://jobs.ashbyhq.com/acme/xyz/application?utm=1"
+        assert ashby_application_url(url) == url
+
+    def test_navigate_uses_fixed_url(self) -> None:
+        page = _RecordingPage()
+        data = _data(
+            "https://jobs.ashbyhq.com/solace/abc?source=linkedin"
+        )
+        AshbyHandler().apply(page, data)
+        gotos = [a[1][0] for a in page.actions if a[0] == "goto"]
+        assert gotos[0] == (
+            "https://jobs.ashbyhq.com/solace/abc/application?source=linkedin"
+        )
+
+
 class TestFactoryDispatch:
     def test_ashby_url_selects_ashby(self) -> None:
         h = ATSHandlerFactory.for_url("https://jobs.ashbyhq.com/acme/xyz")

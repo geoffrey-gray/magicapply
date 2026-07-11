@@ -93,13 +93,10 @@ def doctor(
 
 def _chromium_status() -> str:
     """Report whether Playwright's Chromium is installed, without running install."""
-    cache = Path.home() / ".cache" / "ms-playwright"
-    if not cache.exists():
-        return "MISSING (run: uv run playwright install chromium)"
-    installed = any(cache.glob("chromium-*")) or any(
-        cache.glob("chromium_headless_shell-*")
-    )
-    if installed:
+    from magicapply.infrastructure.browser.session import find_playwright_chromium_cache
+
+    cache = find_playwright_chromium_cache()
+    if cache is not None:
         return f"PRESENT ({cache})"
     return "MISSING (run: uv run playwright install chromium)"
 

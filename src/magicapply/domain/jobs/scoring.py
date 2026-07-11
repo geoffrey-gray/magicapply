@@ -6,8 +6,10 @@ exclude keywords). Filters out anything hopeless before spending LLM tokens
 
 Stage 2: a fit scorer — either:
 
-- `KeywordAlignmentScorer` (Phase 1 default) — ATS-style fraction of
-  KeywordBank terms emphasized by the JD that appear on the resume.
+- `KeywordAlignmentScorer` (Phase 1 default) — extract keywords from the
+  JD via YAKE (no LLM), then score = fraction of those terms present on
+  the resume (e.g. 4 of 10 JD keywords → 40). KeywordBank is optional
+  synonym credit only, not the scoring vocabulary.
 - `LLMScorer` — sends surviving jobs to the LLM, receives a
   `{score: 0-100, rationale: "..."}` JSON payload. The base resume is placed
   in a cacheable SystemBlock so a discovery run of N jobs pays the resume
@@ -25,11 +27,17 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from magicapply.config.models import KeywordBank, ScoringConfig
-from magicapply.domain.keywords.alignment import score_keyword_alignment
+from magicapply.domain.keywords.alignment import score_jd_keyword_coverage
 from magicapply.domain.models.job import Job
 from magicapply.infrastructure.llm.client import LLMClient, LLMMessage, SystemBlock
 
 logger = logging.getLogger(__name__)
+
+
+class JobKeywordExtractor(Protocol):
+    """Pull skill/tool keyphrases from a Job (YAKE, LLM, …)."""
+
+    def extract(self, job: Job) -> list[str]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,8 +77,19 @@ class Prefilter:
                 return PrefilterResult(False, f"missing must-have keyword: {kw!r}")
 
         if self._pre.locations:
-            location = (job.location or "").lower()
-            if not any(loc.lower() in location for loc in self._pre.locations):
+            # Match against location *and* title/description: LinkedIn remote
+            # SERPs often put workplace type in the title ("… | Remote") while
+            # the location field is only a country ("United States").
+            location_haystack = "\n".join(
+                [
+                    job.location or "",
+                    job.title or "",
+                    job.description or "",
+                ]
+            ).lower()
+            if not any(
+                loc.lower() in location_haystack for loc in self._pre.locations
+            ):
                 return PrefilterResult(
                     False,
                     f"location {job.location!r} does not match {self._pre.locations}",
@@ -86,14 +105,29 @@ class Prefilter:
 
 
 class KeywordAlignmentScorer:
-    """Deterministic ATS-style keyword coverage (no LLM)."""
+    """JD-extracted keyword coverage on the resume.
 
-    def __init__(self, *, resume_text: str, bank: KeywordBank) -> None:
+    1. Extractor (default: YAKE) pulls keyphrases from the real JD text.
+    2. Each term is checked against the resume text (bank synonyms optional).
+    3. Score = 100 * matched / total extracted terms.
+    """
+
+    def __init__(
+        self,
+        *,
+        resume_text: str,
+        extractor: JobKeywordExtractor,
+        bank: KeywordBank | None = None,
+    ) -> None:
         self._resume_text = resume_text
+        self._extractor = extractor
         self._bank = bank
 
     def score(self, job: Job) -> Score:
-        result = score_keyword_alignment(self._resume_text, job, self._bank)
+        jd_terms = self._extractor.extract(job)
+        result = score_jd_keyword_coverage(
+            self._resume_text, jd_terms, bank=self._bank
+        )
         return Score(value=result.value, rationale=result.rationale)
 
 
