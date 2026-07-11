@@ -63,6 +63,21 @@ class TestPrefilter:
         assert not r.passed
         assert "location" in r.reason
 
+    def test_location_matches_remote_in_title(self) -> None:
+        """LinkedIn often puts Remote in the title, country in location."""
+        cfg = ScoringConfig(prefilter=ScoringPrefilter(locations=["Remote"]))
+        job = _job(
+            title="Data Scientist | Remote",
+            location="United States",
+            description="",
+        )
+        assert Prefilter(cfg).check(job).passed
+
+    def test_location_matches_annotated_remote_location(self) -> None:
+        cfg = ScoringConfig(prefilter=ScoringPrefilter(locations=["Remote"]))
+        job = _job(title="Data Scientist", location="United States (Remote)")
+        assert Prefilter(cfg).check(job).passed
+
     def test_seniority_in_title(self) -> None:
         cfg = ScoringConfig(prefilter=ScoringPrefilter(seniority=["senior", "staff"]))
         assert Prefilter(cfg).check(_job(title="Senior SWE")).passed
@@ -103,36 +118,33 @@ class TestLLMScorer:
         assert any("RESUME CONTENT" in b.text for b in call.system if b.cacheable)
 
 
+class _FixedExtractor:
+    """Test double: returns a fixed JD keyword list."""
+
+    def __init__(self, terms: list[str]) -> None:
+        self._terms = terms
+
+    def extract(self, job: Job) -> list[str]:  # noqa: ARG002
+        return list(self._terms)
+
+
 class TestKeywordAlignmentScorer:
-    def test_scores_jd_terms_present_on_resume(self) -> None:
-        bank = KeywordBank(
-            keywords=[
-                KeywordEntry(term="python", evidence="years of python"),
-                KeywordEntry(
-                    term="distributed systems",
-                    synonyms=["microservices"],
-                    evidence="built microservices",
-                ),
-            ]
-        )
+    def test_scores_fraction_of_extracted_jd_terms_on_resume(self) -> None:
         scorer = KeywordAlignmentScorer(
             resume_text="Skills: python, kubernetes. Built APIs.",
-            bank=bank,
+            extractor=_FixedExtractor(
+                ["python", "distributed systems", "rust", "golang"]
+            ),
         )
-        # JD mentions python + distributed systems; resume only has python.
-        s = scorer.score(
-            _job(description="We use Python and distributed systems daily.")
-        )
-        assert s.value == 50
-        assert "1/2" in s.rationale
+        s = scorer.score(_job(description="ignored — extractor is fixed"))
+        # Only python is on the resume → 1/4 = 25
+        assert s.value == 25
+        assert "1/4" in s.rationale
 
     def test_full_coverage_is_100(self) -> None:
-        bank = KeywordBank(
-            keywords=[KeywordEntry(term="python", evidence="e")]
-        )
         scorer = KeywordAlignmentScorer(
             resume_text="Primary language: Python.",
-            bank=bank,
+            extractor=_FixedExtractor(["python"]),
         )
         s = scorer.score(_job(description="Must know Python."))
         assert s.value == 100
@@ -162,12 +174,12 @@ class TestJobScorer:
         assert len(llm.calls) == 1
 
     def test_prefilter_pass_calls_keyword_fit(self) -> None:
-        bank = KeywordBank(
-            keywords=[KeywordEntry(term="python", evidence="e")]
-        )
         combined = JobScorer(
             Prefilter(ScoringConfig()),
-            KeywordAlignmentScorer(resume_text="I use Python daily.", bank=bank),
+            KeywordAlignmentScorer(
+                resume_text="I use Python daily.",
+                extractor=_FixedExtractor(["python"]),
+            ),
         )
         s = combined.score(_job(description="Python required."))
         assert s.value == 100

@@ -120,6 +120,7 @@ def _posting_to_job(
     posting: dict[str, Any], *, source_name: str, board: str
 ) -> Job:
     from magicapply.domain.models.job import Job
+    from magicapply.infrastructure.sources.apply_url import resolve_greenhouse_apply_url
 
     title = str(posting["title"]).strip()
     job_url = str(posting["absolute_url"]).strip()
@@ -133,16 +134,29 @@ def _posting_to_job(
     description = _html_to_text(str(content))
     posted_at = _parse_updated_at(posting.get("updated_at"))
     company = board.replace("-", " ").replace("_", " ").title()
+    # Keep listing identity on absolute_url (dedup stable); set apply_url to a
+    # real Greenhouse application host when the company careers page embeds GH
+    # (e.g. stripe.com/jobs/search?gh_jid=…).
+    apply_url = resolve_greenhouse_apply_url(
+        board_slug=board,
+        posting_id=posting.get("id"),
+        absolute_url=job_url or None,
+    )
+    raw = {**posting, "greenhouse_board": board}
+    if apply_url:
+        raw["platform"] = "greenhouse"
+        raw["apply_resolve"] = "boards_api_normalize"
 
     return Job.new(
         source_name=source_name,
         url=job_url,
+        apply_url=apply_url,
         title=title,
         company=company,
         description=description,
         location=location,
         posted_at=posted_at,
-        raw=posting,
+        raw=raw,
     )
 
 

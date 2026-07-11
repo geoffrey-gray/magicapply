@@ -313,6 +313,36 @@ class TestSearchPageHydrationExtractor:
         assert j.source_name == "indeed-search"
         assert j.raw["jobkey"] == "abc123"
         assert j.raw["source_extraction"] == "search-page-hydration"
+        assert j.apply_url is None  # no thirdPartyApplyUrl in this record
+
+    def test_sets_apply_url_from_third_party(self) -> None:
+        html = self._hydrated_html([
+            {
+                "jobkey": "ext1",
+                "title": "Engineer",
+                "company": "Acme",
+                "snippet": "Build things.",
+                "thirdPartyApplyUrl": "https://jobs.ashbyhq.com/acme/abc",
+            }
+        ])
+        jobs = extract_jobs_from_search(html, source_name="indeed-search")
+        assert len(jobs) == 1
+        assert jobs[0].apply_url is not None
+        assert "ashbyhq.com" in jobs[0].apply_url
+        assert jobs[0].raw.get("apply_resolve") == "serp_hydration"
+        assert jobs[0].url.startswith("https://www.indeed.com/viewjob")
+
+    def test_ignores_indeed_hosted_third_party_url(self) -> None:
+        html = self._hydrated_html([
+            {
+                "jobkey": "ia1",
+                "title": "Engineer",
+                "company": "Acme",
+                "thirdPartyApplyUrl": "https://www.indeed.com/applystart?jk=ia1",
+            }
+        ])
+        jobs = extract_jobs_from_search(html, source_name="indeed-search")
+        assert jobs[0].apply_url is None
 
     def test_dedupes_by_jobkey(self) -> None:
         html = self._hydrated_html([

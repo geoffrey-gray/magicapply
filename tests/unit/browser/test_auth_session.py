@@ -9,6 +9,8 @@ import pytest
 from magicapply.infrastructure.browser.auth_session import (
     auth_state_path,
     clear_auth_state,
+    ensure_headed_display_available,
+    needs_unix_display,
     resolve_session_auth,
     site_status,
 )
@@ -91,3 +93,39 @@ class TestClearAndStatus:
         assert rows["glassdoor"]["resolved"] == "storage_state"
         assert clear_auth_state(tmp_path, "glassdoor") is True
         assert clear_auth_state(tmp_path, "glassdoor") is False
+
+
+class TestHeadedDisplayGate:
+    """Mac/Windows headed auth must not require DISPLAY; Linux still does."""
+
+    def test_needs_unix_display_linux_only(self) -> None:
+        assert needs_unix_display(platform="linux") is True
+        assert needs_unix_display(platform="linux2") is True
+        assert needs_unix_display(platform="darwin") is False
+        assert needs_unix_display(platform="win32") is False
+
+    def test_darwin_allows_headed_without_display(self) -> None:
+        ensure_headed_display_available(platform="darwin", env={})
+
+    def test_win32_allows_headed_without_display(self) -> None:
+        ensure_headed_display_available(platform="win32", env={})
+
+    def test_linux_without_display_raises(self) -> None:
+        with pytest.raises(RuntimeError, match="DISPLAY"):
+            ensure_headed_display_available(
+                platform="linux",
+                env={},
+                cookie_env_hint="LINKEDIN_SESSION_COOKIES",
+            )
+
+    def test_linux_with_display_ok(self) -> None:
+        ensure_headed_display_available(
+            platform="linux",
+            env={"DISPLAY": ":0"},
+        )
+
+    def test_linux_with_wayland_ok(self) -> None:
+        ensure_headed_display_available(
+            platform="linux",
+            env={"WAYLAND_DISPLAY": "wayland-0"},
+        )

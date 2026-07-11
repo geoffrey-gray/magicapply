@@ -23,6 +23,9 @@ from magicapply.infrastructure.sources.greenhouse import GreenhouseAdapter
 from magicapply.infrastructure.sources.apply_url import apply_url_from_linkedin_detail_html
 from magicapply.infrastructure.sources.linkedin import (
     LinkedInAdapter,
+    _annotate_remote_location,
+    _is_external_apply_url,
+    description_from_linkedin_detail_html,
     extract_job_urls,
     extract_jobs_from_search,
 )
@@ -86,6 +89,125 @@ class TestSearchJobExtractor:
         assert job.company == "Netflix"
         assert job.location == "United States (Remote)"
         assert job.url == "https://www.linkedin.com/jobs/view/4375938610"
+
+    def test_extracts_dom_job_search_cards(self) -> None:
+        html = """
+        <html><body>
+          <ul class="jobs-search__results-list">
+            <div class="base-card base-search-card job-search-card"
+                 data-entity-urn="urn:li:jobPosting:4425370205">
+              <h3 class="base-search-card__title">Data Scientist, Product Analytics</h3>
+              <h4 class="base-search-card__subtitle">Meta</h4>
+              <span class="job-search-card__location">United States</span>
+            </div>
+            <div class="base-card base-search-card job-search-card"
+                 data-entity-urn="urn:li:jobPosting:4434820548">
+              <h3 class="base-search-card__title">Jr. Data Scientist</h3>
+              <h4 class="base-search-card__subtitle">Why Hiring</h4>
+              <span class="job-search-card__location">Remote</span>
+            </div>
+          </ul>
+        </body></html>
+        """
+        jobs = extract_jobs_from_search(html, source_name="linkedin-search")
+        assert len(jobs) == 2
+        assert jobs[0].title == "Data Scientist, Product Analytics"
+        assert jobs[0].company == "Meta"
+        assert jobs[0].location == "United States"
+        assert jobs[0].url == "https://www.linkedin.com/jobs/view/4425370205"
+        assert jobs[1].title == "Jr. Data Scientist"
+        assert jobs[1].company == "Why Hiring"
+
+    def test_dom_fallback_when_voyager_absent(self) -> None:
+        """Current LinkedIn SERPs ship no Voyager <code> JSON — DOM only."""
+        html = """
+        <html><body>
+          <div class="job-search-card" data-entity-urn="urn:li:jobPosting:99">
+            <span class="base-search-card__title">Staff Engineer</span>
+            <span class="base-search-card__subtitle">Acme</span>
+          </div>
+          <a href="/signup?session_redirect=%2Fjobs">Join now</a>
+        </body></html>
+        """
+        jobs = extract_jobs_from_search(html, source_name="li")
+        assert len(jobs) == 1
+        assert jobs[0].url.endswith("/99")
+        assert jobs[0].company == "Acme"
+
+
+class TestExternalApplyDetection:
+    def test_external_yes(self) -> None:
+        assert _is_external_apply_url("https://jobs.ashbyhq.com/acme/1")
+
+    def test_linkedin_not_external(self) -> None:
+        assert not _is_external_apply_url(
+            "https://www.linkedin.com/jobs/view/123"
+        )
+
+    def test_empty_not_external(self) -> None:
+        assert not _is_external_apply_url(None)
+        assert not _is_external_apply_url("")
+
+
+class TestSerpCardApplyUrl:
+    def test_card_captures_offsite_apply_when_present(self) -> None:
+        html = """
+        <html><body>
+          <div class="job-search-card" data-entity-urn="urn:li:jobPosting:99">
+            <h3 class="base-search-card__title">Engineer</h3>
+            <h4 class="base-search-card__subtitle">Acme</h4>
+            <a href="https://jobs.ashbyhq.com/acme/abc">Apply</a>
+          </div>
+        </body></html>
+        """
+        jobs = extract_jobs_from_search(html, source_name="li")
+        assert len(jobs) == 1
+        assert jobs[0].apply_url is not None
+        assert "ashbyhq.com" in jobs[0].apply_url
+
+
+class TestRemoteAnnotation:
+    def test_appends_remote_when_missing(self) -> None:
+        job = Job.new(
+            source_name="li",
+            url="https://www.linkedin.com/jobs/view/1",
+            title="Data Scientist",
+            company="Acme",
+            description="",
+            location="United States",
+        )
+        out = _annotate_remote_location(job)
+        assert out.location == "United States (Remote)"
+
+    def test_skips_when_remote_already_present(self) -> None:
+        job = Job.new(
+            source_name="li",
+            url="https://www.linkedin.com/jobs/view/1",
+            title="Data Scientist | Remote",
+            company="Acme",
+            description="",
+            location="United States",
+        )
+        out = _annotate_remote_location(job)
+        assert out.location == "United States"
+
+
+class TestDescriptionFromDetail:
+    def test_extracts_description_markup(self) -> None:
+        html = """
+        <html><body>
+          <div class="show-more-less-html__markup">
+            As a Data Scientist at Meta you will use Python and SQL across products.
+            Requirements include statistics and machine learning experience.
+          </div>
+        </body></html>
+        """
+        desc = description_from_linkedin_detail_html(html)
+        assert "Data Scientist at Meta" in desc
+        assert "Python" in desc
+
+    def test_empty_when_no_description(self) -> None:
+        assert description_from_linkedin_detail_html("<html><body>x</body></html>") == ""
 
 
 class TestSearchUrlExtractor:

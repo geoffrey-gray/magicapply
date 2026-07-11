@@ -53,7 +53,8 @@ class ScoringConfig(BaseModel):
     """Job-scoring behavior.
 
     `mode` selects the second-stage fit scorer after prefilter:
-    - ``keyword`` (default) — ATS-style KeywordBank alignment, no LLM.
+    - ``keyword`` (default) — YAKE extracts keyphrases from the JD, then
+      score = fraction of those terms present on the resume (no LLM).
     - ``llm`` — prompt-based 0–100 score via the configured LLM provider.
 
     `threshold` is applied after fit scoring. Prefilter rules eliminate jobs
@@ -184,7 +185,16 @@ class LinkedInSource(_SourceBase):
     enabled: bool = False
     queries: list[str] = Field(default_factory=list)
     rate_limit_per_minute: int = Field(default=3, gt=0)
-    enrich_apply_urls: bool = False
+    # Prefer offsite, fall back to LinkedIn detail conservatively:
+    # 1) SERP cards (title/company/location/LI link + offsite apply if on card)
+    # 2) If external apply → description from destination ATS/career page
+    # 3) Else (or still incomplete) → one LI /jobs/view visit, capped per run
+    enrich_apply_urls: bool = True  # allow LI detail to resolve missing apply_url
+    enrich_descriptions: bool = True  # prefer destination page for JD text
+    linkedin_description_fallback: bool = True  # LI detail when offsite insufficient
+    # Hard cap on /jobs/view visits per discover run (SERP pages don't count).
+    max_linkedin_detail_fetches: int = Field(default=8, ge=0, le=100)
+    require_external_apply: bool = False
     remote_only: bool = True
     posted_within_days: int | None = Field(default=7, ge=0)
     max_pages: int = Field(default=6, ge=1, le=50)
@@ -204,6 +214,9 @@ class IndeedSource(_SourceBase):
     Disabled by default. Indeed's ToS also forbids scraping and their bot
     detection uses Cloudflare — the adapter detects the "Just a moment"
     challenge and logs+skips rather than crashing.
+
+    Discovery posture matches LinkedIn: SERP first, prefer offsite JD/apply,
+    fall back to capped ``/viewjob`` detail visits.
     """
 
     type: Literal["indeed"] = "indeed"
@@ -211,7 +224,12 @@ class IndeedSource(_SourceBase):
     queries: list[str] = Field(default_factory=list)
     location: str | None = None
     rate_limit_per_minute: int = Field(default=3, gt=0)
-    enrich_apply_urls: bool = False
+    enrich_apply_urls: bool = True
+    enrich_descriptions: bool = True
+    board_detail_fallback: bool = True
+    max_board_detail_fetches: int = Field(default=8, ge=0, le=100)
+    require_external_apply: bool = False
+    max_jobs_per_run: int = Field(default=50, ge=1, le=2000)
     remote_only: bool = True
     posted_within_days: int | None = Field(default=7, ge=0)
     max_pages: int = Field(default=5, ge=1, le=50)
@@ -224,13 +242,21 @@ class GlassdoorSource(_SourceBase):
     a session cookie for detail pages; the adapter can pick one up from
     the ``GLASSDOOR_SESSION`` env var but falls back to unauthenticated
     fetching for the public search results.
+
+    Discovery posture matches LinkedIn/Indeed: SERP first, offsite prefer,
+    capped listing-detail fallback.
     """
 
     type: Literal["glassdoor"] = "glassdoor"
     enabled: bool = False
     queries: list[str] = Field(default_factory=list)
     rate_limit_per_minute: int = Field(default=3, gt=0)
-    enrich_apply_urls: bool = False
+    enrich_apply_urls: bool = True
+    enrich_descriptions: bool = True
+    board_detail_fallback: bool = True
+    max_board_detail_fetches: int = Field(default=8, ge=0, le=100)
+    require_external_apply: bool = False
+    max_jobs_per_run: int = Field(default=50, ge=1, le=2000)
     remote_only: bool = True
     posted_within_days: int | None = Field(default=7, ge=0)
     max_pages: int = Field(default=5, ge=1, le=50)

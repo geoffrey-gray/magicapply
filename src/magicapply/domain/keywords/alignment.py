@@ -1,10 +1,15 @@
-"""ATS-style keyword alignment between a resume text blob and a job description.
+"""ATS-style keyword coverage: JD-extracted terms vs resume text.
 
-Uses the operator KeywordBank as the skill vocabulary. For each bank entry
-whose term (or a synonym) appears in the JD, we require the **JD form**
-(the longest matching phrase) to also appear on the resume. That makes
-pre- vs post-tailor scores meaningful: synonym→term DOCX swaps raise the
-score when the resume previously only had a synonym.
+Correct scoring model (operator intent):
+
+1. Extract concrete skill/tool terms **from the job description**.
+2. Count how many of those terms appear on the resume.
+3. Score = ``100 * matched / len(jd_terms)`` (e.g. 4 of 10 → 40).
+
+The KeywordBank is **not** the scoring vocabulary. It is optional here only
+to credit resume synonyms (JD says ``k8s``, resume says ``kubernetes``)
+when a bank entry links the forms. Tailoring still owns bank-driven DOCX
+swaps separately.
 """
 
 from __future__ import annotations
@@ -55,58 +60,155 @@ def jd_form_for_entry(entry: KeywordEntry, jd_text: str) -> str | None:
     return max(present, key=lambda s: (len(s), s.lower()))
 
 
-def score_keyword_alignment(
+def normalize_jd_terms(terms: list[str]) -> list[str]:
+    """Deduplicate extracted JD terms (case-insensitive, preserve first form)."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in terms:
+        term = " ".join(str(raw).split()).strip()
+        if not term:
+            continue
+        key = term.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(term)
+    return out
+
+
+# Common JD↔resume acronym pairs (not a skill bank — just surface-form aliases).
+_ACRONYM_ALIASES: dict[str, tuple[str, ...]] = {
+    "machine learning": ("ml", "machine learning"),
+    "ml": ("ml", "machine learning"),
+    "deep learning": ("dl", "deep learning"),
+    "artificial intelligence": ("ai", "artificial intelligence"),
+    "ai": ("ai", "artificial intelligence"),
+    "natural language processing": ("nlp", "natural language processing"),
+    "nlp": ("nlp", "natural language processing"),
+    "large language models": ("llm", "llms", "large language models"),
+    "large language model": ("llm", "llms", "large language model"),
+    "llm": ("llm", "llms", "large language model", "large language models"),
+    "llms": ("llm", "llms", "large language model", "large language models"),
+    "kubernetes": ("k8s", "kubernetes"),
+    "k8s": ("k8s", "kubernetes"),
+    "amazon web services": ("aws", "amazon web services"),
+    "aws": ("aws", "amazon web services"),
+    "google cloud platform": ("gcp", "google cloud", "google cloud platform"),
+    "gcp": ("gcp", "google cloud", "google cloud platform"),
+    "a/b testing": ("a/b testing", "ab testing", "a-b testing"),
+    "ab testing": ("a/b testing", "ab testing", "a-b testing"),
+}
+
+
+def term_on_resume(
+    term: str,
     resume_text: str,
-    job: Job,
-    bank: KeywordBank,
-) -> AlignmentResult:
-    """Compute ATS-style keyword coverage of JD bank terms on the resume."""
-    jd_text = f"{job.title}\n{job.description}"
-    if not bank.keywords:
-        return AlignmentResult(
-            value=0,
-            rationale="keyword alignment: empty keyword bank",
-        )
-
-    jd_terms: list[str] = []
+    bank: KeywordBank | None = None,
+) -> bool:
+    """True if ``term`` (or a known alias / bank synonym) appears on the resume."""
+    candidates = [term]
+    aliases = _ACRONYM_ALIASES.get(term.lower().strip())
+    if aliases:
+        candidates.extend(aliases)
+    for cand in candidates:
+        if phrase_in_text(cand, resume_text):
+            return True
+    if bank is None or not bank.keywords:
+        return False
+    # Credit bank synonym forms: JD extracted "k8s", resume has "kubernetes".
+    term_l = term.lower()
     for entry in bank.keywords:
-        form = jd_form_for_entry(entry, jd_text)
-        if form is not None:
-            # Deduplicate by lowercase form so overlapping bank rows don't
-            # inflate the denominator.
-            if form.lower() not in {t.lower() for t in jd_terms}:
-                jd_terms.append(form)
+        forms = [entry.term, *entry.synonyms]
+        forms_l = [f.lower() for f in forms if f]
+        if term_l not in forms_l and not any(
+            term_l in f or f in term_l for f in forms_l
+        ):
+            continue
+        if any(phrase_in_text(f, resume_text) for f in forms if f):
+            return True
+    return False
 
-    if not jd_terms:
+
+def score_jd_keyword_coverage(
+    resume_text: str,
+    jd_terms: list[str],
+    *,
+    bank: KeywordBank | None = None,
+) -> AlignmentResult:
+    """Fraction of JD-extracted keywords present on the resume.
+
+    Example: JD yields 10 terms, resume has 4 → score 40.
+    """
+    terms = normalize_jd_terms(jd_terms)
+    if not terms:
         return AlignmentResult(
             value=0,
-            rationale="keyword alignment: no bank keywords found in JD",
+            rationale="keyword alignment: no keywords extracted from JD",
+            jd_terms=[],
+            matched=[],
+            missing=[],
         )
 
     matched: list[str] = []
     missing: list[str] = []
-    for term in jd_terms:
-        if phrase_in_text(term, resume_text):
+    for term in terms:
+        if term_on_resume(term, resume_text, bank):
             matched.append(term)
         else:
             missing.append(term)
 
-    value = int(round(100 * len(matched) / len(jd_terms)))
+    value = int(round(100 * len(matched) / len(terms)))
     value = max(0, min(100, value))
 
     matched_s = ", ".join(matched) if matched else "—"
     missing_s = ", ".join(missing) if missing else "—"
     rationale = (
-        f"keyword alignment: {len(matched)}/{len(jd_terms)} JD terms in resume "
+        f"keyword alignment: {len(matched)}/{len(terms)} JD keywords on resume "
         f"(matched: {matched_s}; missing: {missing_s})"
     )
     return AlignmentResult(
         value=value,
         rationale=rationale,
-        jd_terms=jd_terms,
+        jd_terms=terms,
         matched=matched,
         missing=missing,
     )
+
+
+def score_keyword_alignment(
+    resume_text: str,
+    job: Job,
+    bank: KeywordBank | None = None,
+    *,
+    jd_terms: list[str] | None = None,
+) -> AlignmentResult:
+    """Score JD→resume keyword coverage.
+
+    Prefer explicit ``jd_terms`` from :class:`KeywordExtractor`. When omitted,
+    falls back to bank terms present in the JD (legacy / unit-test helper only
+    — production scoring always passes extracted terms).
+    """
+    if jd_terms is not None:
+        return score_jd_keyword_coverage(resume_text, jd_terms, bank=bank)
+
+    # Legacy path: bank ∩ JD (not the preferred scoring model).
+    if bank is None or not bank.keywords:
+        return AlignmentResult(
+            value=0,
+            rationale="keyword alignment: no JD terms provided and empty bank",
+        )
+
+    jd_text = "\n".join(
+        part
+        for part in (job.title, job.company, job.location or "", job.description)
+        if part
+    )
+    derived: list[str] = []
+    for entry in bank.keywords:
+        form = jd_form_for_entry(entry, jd_text)
+        if form is not None:
+            derived.append(form)
+    return score_jd_keyword_coverage(resume_text, derived, bank=bank)
 
 
 def serialize_resume_text(resume: BaseResume | TailoredResume) -> str:

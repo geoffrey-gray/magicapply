@@ -114,7 +114,36 @@ class ApplyPipeline:
                 "cannot re-apply a real submission; only dry-run rows support --retry"
             )
 
-        apply_target = job.effective_apply_url
+        from magicapply.infrastructure.sources.apply_url import (
+            is_job_board_listing_url,
+            job_with_resolved_apply_url,
+            resolve_job_apply_destination,
+        )
+
+        # Resolve embedded ATS destinations (e.g. Stripe careers → Greenhouse
+        # apply host) before handler selection. Board-only listings without an
+        # external apply URL are SKIPPED — not FAILED via GenericHandler.
+        job = job_with_resolved_apply_url(job)
+        apply_target = resolve_job_apply_destination(job)
+        if application_data.job_url != apply_target:
+            application_data = application_data.model_copy(
+                update={"job_url": apply_target, "job": job}
+            )
+
+        if is_job_board_listing_url(apply_target):
+            reason = "no external ATS apply_url (board listing only)"
+            logger.info(
+                "skip board-only apply application=%s job=%s url=%s",
+                application.id,
+                job.id,
+                apply_target,
+            )
+            application.transition_to(ApplicationState.SKIPPED, reason=reason)
+            application.error = reason
+            application.attempts += 1
+            self._apps.save(application)
+            return ApplyReport(application.id, application.state, reason)
+
         handler = ATSHandlerFactory.for_url(apply_target)
         if handler is None:
             application.transition_to(

@@ -32,6 +32,39 @@ PLATFORM_HOST_MARKERS: dict[str, tuple[str, ...]] = {
 
 BIG_FOUR_PLATFORMS = frozenset({"greenhouse", "workday", "lever", "ashby"})
 
+# Hosts that count as "still on the job board" (not an external ATS apply URL).
+BOARD_HOSTS_LINKEDIN = ("linkedin.com",)
+BOARD_HOSTS_INDEED = ("indeed.com",)
+BOARD_HOSTS_GLASSDOOR = ("glassdoor.com", "glassdoor.co.uk")
+BOARD_HOSTS_ALL = BOARD_HOSTS_LINKEDIN + BOARD_HOSTS_INDEED + BOARD_HOSTS_GLASSDOOR
+
+# Greenhouse application hosts (not company careers pages that embed gh_jid).
+GREENHOUSE_APPLY_HOST_MARKERS = (
+    "job-boards.greenhouse.io",
+    "boards.greenhouse.io",
+)
+
+
+def is_external_apply_url(
+    url: str | None,
+    *,
+    board_hosts: tuple[str, ...] = (),
+) -> bool:
+    """True when ``url`` is an HTTP(S) apply target off the given job board(s)."""
+    if not url or not str(url).strip():
+        return False
+    raw = str(url).strip()
+    if not raw.startswith("http"):
+        return False
+    host = urlparse(raw).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    for board in board_hosts:
+        b = board.lower().lstrip(".")
+        if host == b or host.endswith("." + b):
+            return False
+    return True
+
 
 def decode_linkedin_safety_go(href: str | None) -> str | None:
     """Decode ``linkedin.com/safety/go?url=...`` into the external apply URL."""
@@ -85,6 +118,64 @@ def apply_url_from_linkedin_detail_html(html: str) -> str | None:
     if not resolved:
         return None
     return canonicalize_url(resolved)
+
+
+def description_from_destination_html(html: str) -> str:
+    """Extract plain-text job description from an employer/ATS posting page.
+
+    Prefer schema.org JobPosting JSON-LD (Greenhouse, many career sites), then
+    common content containers (Ashby, Lever, generic). Used so LinkedIn
+    discovery can leave description fetch off linkedin.com.
+    """
+    from magicapply.infrastructure.sources.jsonld import extract_jobposting_dicts
+
+    for posting in extract_jobposting_dicts(html):
+        raw = posting.get("description")
+        if not raw:
+            continue
+        text = _strip_html_to_text(str(raw))
+        if len(text) >= 80:
+            return text
+
+    try:
+        tree = lhtml.fromstring(html)
+    except Exception:  # noqa: BLE001
+        return ""
+
+    xpaths = (
+        # Ashby job description (posting, not form)
+        "//*[contains(@class,'ashby-job-posting-brief')]",
+        "//*[contains(@class,'ashby-job-posting-description')]",
+        "//*[@data-testid='job-description']",
+        # Greenhouse
+        "//div[@id='content']",
+        "//div[contains(@class,'job__description')]",
+        "//div[contains(@class,'content-wrapper')]",
+        # Lever
+        "//div[contains(@class,'posting-page')]",
+        "//div[contains(@class,'section-wrapper')]",
+        # Workday-ish / generic
+        "//*[contains(@class,'job-description')]",
+        "//*[contains(@class,'jobDescription')]",
+        "//article",
+        "//main",
+    )
+    for xp in xpaths:
+        for el in tree.xpath(xp):
+            text = " ".join((el.text_content() or "").split())
+            if len(text) >= 120:
+                return text
+    return ""
+
+
+def _strip_html_to_text(raw: str) -> str:
+    import html as html_lib
+    import re
+
+    text = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", raw)
+    text = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(html_lib.unescape(text).split())
 
 
 def indeed_apply_href_from_html(html: str) -> str | None:
@@ -155,6 +246,48 @@ def apply_url_from_glassdoor_detail_html(html: str) -> str | None:
     return canonicalize_url(href) if href else None
 
 
+def description_from_indeed_detail_html(html: str) -> str:
+    """Extract job description text from an Indeed ``/viewjob`` page."""
+    try:
+        tree = lhtml.fromstring(html)
+    except Exception:  # noqa: BLE001
+        return ""
+    xpaths = (
+        "//div[@id='jobDescriptionText']",
+        "//div[contains(@class,'jobsearch-jobDescriptionText')]",
+        "//div[@data-testid='jobsearch-JobComponent-description']",
+        "//div[contains(@class,'job-description')]",
+    )
+    for xp in xpaths:
+        for el in tree.xpath(xp):
+            text = " ".join((el.text_content() or "").split())
+            if len(text) >= 80:
+                return text
+    # Fall back to generic destination extractors (JSON-LD, main, …).
+    return description_from_destination_html(html)
+
+
+def description_from_glassdoor_detail_html(html: str) -> str:
+    """Extract job description text from a Glassdoor listing page."""
+    try:
+        tree = lhtml.fromstring(html)
+    except Exception:  # noqa: BLE001
+        return ""
+    xpaths = (
+        "//div[@data-test='description']",
+        "//div[contains(@class,'JobDetails_jobDescription')]",
+        "//div[contains(@class,'jobDescriptionContent')]",
+        "//div[@id='JobDescriptionContainer']",
+        "//div[contains(@class,'desc')]",
+    )
+    for xp in xpaths:
+        for el in tree.xpath(xp):
+            text = " ".join((el.text_content() or "").split())
+            if len(text) >= 80:
+                return text
+    return description_from_destination_html(html)
+
+
 def apply_url_from_page_html(html: str, *, page_url: str) -> str | None:
     href = page_apply_href_from_html(html, page_url=page_url)
     return canonicalize_url(href) if href else None
@@ -219,6 +352,119 @@ def _resolve_listing_apply_href(
     if any(marker in host for marker in ("indeed.com", "glassdoor.com", "linkedin.com")):
         return None
     return resolved
+
+
+def _netloc(url: str) -> str:
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        return host[4:]
+    return host
+
+
+def is_greenhouse_apply_url(url: str | None) -> bool:
+    """True when URL is a Greenhouse job-application host (not a careers search page)."""
+    if not url or not str(url).strip():
+        return False
+    host = _netloc(str(url).strip())
+    return any(host == m or host.endswith("." + m) for m in GREENHOUSE_APPLY_HOST_MARKERS)
+
+
+def is_job_board_listing_url(url: str | None) -> bool:
+    """True when URL is still on LinkedIn / Indeed / Glassdoor (no employer ATS)."""
+    if not url or not str(url).strip():
+        return False
+    return not is_external_apply_url(url, board_hosts=BOARD_HOSTS_ALL)
+
+
+def resolve_greenhouse_apply_url(
+    *,
+    board_slug: str | None = None,
+    posting_id: str | int | None = None,
+    absolute_url: str | None = None,
+) -> str | None:
+    """Canonical Greenhouse apply URL for boards-api postings.
+
+    Prefer an ``absolute_url`` that already points at a Greenhouse apply host.
+    Otherwise build ``https://job-boards.greenhouse.io/{slug}/jobs/{id}`` when
+    the board slug and posting id (or ``gh_jid`` query param) are known.
+
+    Company career pages like ``stripe.com/jobs/search?gh_jid=…`` are *not*
+    valid apply destinations — they must be rewritten via board slug + id.
+    """
+    if absolute_url and str(absolute_url).strip():
+        can = canonicalize_url(str(absolute_url).strip())
+        if is_greenhouse_apply_url(can):
+            return can
+        jid = parse_qs(urlparse(can).query).get("gh_jid", [None])[0]
+        if jid and board_slug:
+            slug = str(board_slug).strip().strip("/")
+            if slug:
+                return canonicalize_url(
+                    f"https://job-boards.greenhouse.io/{slug}/jobs/{jid}"
+                )
+
+    if board_slug is not None and posting_id is not None:
+        slug = str(board_slug).strip().strip("/")
+        pid = str(posting_id).strip()
+        if slug and pid:
+            return canonicalize_url(
+                f"https://job-boards.greenhouse.io/{slug}/jobs/{pid}"
+            )
+    return None
+
+
+def resolve_job_apply_destination(job: Job) -> str:
+    """Best URL for ATS handler selection and navigation.
+
+    Order: existing external/ATS ``apply_url`` → embedded Greenhouse resolve
+    from raw boards-api fields → listing ``url``.
+    """
+    if job.apply_url and str(job.apply_url).strip():
+        apply = str(job.apply_url).strip()
+        # Prefer known apply_url unless it is still a job-board listing.
+        if not is_job_board_listing_url(apply):
+            return apply
+
+    raw = job.raw or {}
+    board = raw.get("greenhouse_board")
+    if board is None and isinstance(raw.get("board"), str):
+        board = raw.get("board")
+    posting_id = raw.get("id")
+    absolute = raw.get("absolute_url") or job.url
+    resolved = resolve_greenhouse_apply_url(
+        board_slug=str(board) if board else None,
+        posting_id=posting_id,
+        absolute_url=str(absolute) if absolute else None,
+    )
+    if resolved:
+        return resolved
+
+    if job.apply_url and str(job.apply_url).strip():
+        return str(job.apply_url).strip()
+    return job.url
+
+
+def job_with_resolved_apply_url(job: Job) -> Job:
+    """Return a copy of ``job`` with ``apply_url`` set when resolution improves it."""
+    destination = resolve_job_apply_destination(job)
+    if not destination or destination == (job.apply_url or job.url):
+        if job.apply_url:
+            return job
+        if destination != job.url:
+            return job.model_copy(update={"apply_url": destination})
+        return job
+    if job.apply_url and canonicalize_url(job.apply_url) == canonicalize_url(destination):
+        return job
+    return job.model_copy(
+        update={
+            "apply_url": canonicalize_url(destination),
+            "raw": {
+                **(job.raw or {}),
+                "apply_resolve": "destination_resolve",
+                "platform": sniff_platform(destination),
+            },
+        }
+    )
 
 
 def sniff_platform(url: str) -> str:

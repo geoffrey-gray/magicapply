@@ -2,9 +2,13 @@
 
 Phase 1 workflow for the config-driven job-application pipeline. Read this after skimming [README.md](../README.md). The authoritative verification plan is [final_dod_plan.md](../final_dod_plan.md).
 
-All commands assume the dev VM unless noted:
+**Preferred environment:** a local desktop (macOS or Linux GUI) where you can run `uv run magicapply …` and open headed Chromium for `auth login`. An optional Linux dev VM (`docs/VM_DEV.md`) remains supported for headless discover/tailor/apply after auth is bootstrapped.
 
 ```bash
+# Local (Mac / desktop) — preferred
+cd /path/to/magicapply && uv run magicapply …
+
+# Optional Linux VM only
 ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH UV_LINK_MODE=copy; cd ~/magicapply && …'
 ```
 
@@ -12,17 +16,70 @@ ssh magicapply-dev 'export PATH=$HOME/.local/bin:$PATH UV_LINK_MODE=copy; cd ~/m
 
 ## 1. First-time setup
 
-1. Copy `configs/base_config.example.yaml` → `configs/base_config.yaml` (gitignored).
-2. Copy `configs/profiles/*.yaml` and `configs/keyword_bank.yaml` as needed.
-3. Place your base resume YAML under `resumes/` with `source_docx_path` pointing at your DOCX.
-4. Run `uv run magicapply doctor --root configs` — config must load, Chromium must be present.
-5. Install browsers once: `uv run playwright install chromium`.
+1. Install toolchain: `uv` + Python 3.11+, then `uv sync` and `uv run playwright install chromium`.
+2. Copy `configs/base_config.example.yaml` → `configs/base_config.yaml` (gitignored). Prefer `llm.provider: mock` for Phase 1.
+3. Copy `configs/keyword_bank.example.yaml` → `configs/keyword_bank.yaml`; edit profiles under `configs/profiles/`.
+4. Place your base resume YAML under `resumes/` with `source_docx_path` pointing at your DOCX (needed for tailor/apply; discover can load with a minimal profile).
+5. Copy `.env.example` → `.env`. For LinkedIn set `MAGICAPPLY_LINKEDIN_ACK=1` (do not paste cookies into chat).
+6. Run `uv run magicapply doctor --root configs` — config must load, Chromium must be present.
 
 Phase 1 defaults:
 
 - `llm.provider: mock` — no API key; canned LLM responses.
 - Cover letters **deferred** (`generate_cover_letter=False` in composition).
 - Apply is **dry-run by default** (`--no-submit`).
+
+---
+
+## 1b. Always-on dry-run robot (multi-board)
+
+Operate as a **patient robot**, not a scrape sprint:
+
+- **2–4 dry-run applies/hour** (global throttle `hourly: 4` in operator config)
+- **Rotate boards** in 6h windows so one site is not hit 24/7
+- **Record every try** (FAILED / NEEDS_INTERVENTION are training data)
+- **Do not** chase every job; promote `data/answer_proposals.yaml` → `answer_library.yaml`
+
+**One-time setup**
+
+```bash
+# .env
+MAGICAPPLY_LINKEDIN_ACK=1
+MAGICAPPLY_INDEED_ACK=1
+# Glassdoor deferred (browser "not secure" / login blocked). Re-enable later:
+# MAGICAPPLY_GLASSDOOR_ACK=1
+
+# Headed login on Mac (re-run when a board goes dark)
+uv run magicapply auth login linkedin  --root configs --force --auto-save --timeout 600
+uv run magicapply auth login indeed    --root configs --force --auto-save --timeout 600
+# uv run magicapply auth login glassdoor --root configs --force --auto-save --timeout 600
+uv run magicapply auth status --root configs
+```
+
+**Profiles (rotation)** — Glassdoor source is `enabled: false` in `base_config.yaml` for now.
+
+| Profile | Discovery sources | UTC window (robot) |
+|---------|-------------------|--------------------|
+| `dryrun-li-gh` | LinkedIn + Greenhouse + career pages | 00–06 |
+| `dryrun-indeed` | Indeed + Greenhouse + career pages | 06–12 |
+| `multi-dryrun` | LinkedIn + Indeed + Greenhouse + careers | 12–18 |
+| `dryrun-ats-only` | Greenhouse + career / job_url only | 18–24 |
+| `dryrun-glassdoor` | (legacy; currently Indeed-only fallback) | unused |
+
+**Tick script** (every 15 minutes → ≤4 applies/hour):
+
+```bash
+chmod +x scripts/robot_dryrun_tick.sh
+# cron:
+# */15 * * * * cd /path/to/magicapply && ./scripts/robot_dryrun_tick.sh >> data/robot.log 2>&1
+
+# single tick:
+./scripts/robot_dryrun_tick.sh
+```
+
+Always uses `--no-submit`. Never pass `--yes-submit` until you have ~150–200 dry-runs and a grown answer library.
+
+**Daily human (~10 min):** `magicapply status`, re-auth any `resolved=none` board, promote a few proposals.
 
 ---
 
@@ -178,7 +235,7 @@ uv run pytest tests/unit/browser/test_capture_regression.py -q
 |--------|------------|------------|
 | Greenhouse boards API | none | Check board slug + `title_keywords` |
 | `job_url` / career page | none | Confirm JSON-LD on page |
-| LinkedIn | `LINKEDIN_LI_AT` + `MAGICAPPLY_LINKEDIN_ACK=1` | Refresh cookie; extend `linkedin.py` parser |
+| LinkedIn | `MAGICAPPLY_LINKEDIN_ACK=1` + `auth login` (or `LINKEDIN_SESSION_COOKIES` / `LINKEDIN_LI_AT`) | Re-run `auth login` / refresh cookies; check parser if HTML drifted |
 | Indeed | `MAGICAPPLY_INDEED_ACK=1` | Often bot-blocked; logged and skipped |
 | Glassdoor | `MAGICAPPLY_GLASSDOOR_ACK=1` | Often Cloudflare-blocked; optional `GLASSDOOR_SESSION` |
 
@@ -193,42 +250,43 @@ uv run pytest tests/integration/e2e/test_e2e_captured_live.py -q  # slow; Chromi
 
 ## 8. Auth login (recommended) + env fallbacks
 
-**Preferred:** log in once with Playwright (no DevTools cookie dump):
+### 8.1 Mac / local desktop (preferred)
+
+Log in once with headed Chromium — no DevTools cookie dump, no VM tunnel:
 
 ```bash
-# Needs a display (desktop / VNC). Opens Chromium — log in, then press Enter.
-uv run magicapply auth login linkedin --root configs
-uv run magicapply auth login indeed --root configs
-uv run magicapply auth login glassdoor --root configs
-
-# Non-interactive / agent-friendly: auto-save when session cookie appears
+# Opens Chromium on your desktop — log in (+ 2FA), then press Enter
+# (or use --auto-save to write when the session cookie appears).
 uv run magicapply auth login linkedin --root configs --force --auto-save --timeout 600
+uv run magicapply auth login indeed --root configs    # optional
+uv run magicapply auth login glassdoor --root configs # optional
 
 uv run magicapply auth status --root configs   # no secret values shown
 uv run magicapply auth sites                   # registry of known sites
 uv run magicapply auth clear linkedin --root configs
 ```
 
-**VM → host GUI (libvirt):** the VM has no display. On the **host** (once):
+Expect `linkedin` → `resolved=storage_state`. Sessions save under
+`data/auth/<site>_storage_state.json` (gitignored via `data/`). Discover prefers
+storage_state, then Cookie env, then legacy single cookies.
+
+After auth works, limited discover:
 
 ```bash
-# 1) Tunnel host X (:0) to TCP localhost:6000
-nix-shell -p socat --run \
-  'socat TCP-LISTEN:6000,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:/tmp/.X11-unix/X0' &
-nix-shell -p xhost --run 'xhost +'   # temporary; undo with: xhost -
-
-# 2) Reverse-forward that into the VM as display :10
-ssh -fN -R 6010:127.0.0.1:6000 magicapply-dev
-
-# 3) Login (window should appear on the host desktop)
-ssh magicapply-dev 'export DISPLAY=127.0.0.1:10 PATH=$HOME/.local/bin:$PATH
-  cd ~/magicapply && uv run magicapply auth login linkedin --root configs --force --auto-save'
+# base_config: linkedin source enabled, max_pages: 1–2, rate_limit_per_minute: 3
+uv run magicapply discover <profile> --root configs
 ```
 
-If the Chromium window is **blank white**, the tunnel is up but paint failed — try again after the software-GL flags (shipped in session), or use **virt-manager console / VNC** into the VM and run `auth login` there instead.
+### 8.2 Linux headless / optional VM notes
 
-Sessions save under `data/auth/<site>_storage_state.json` (gitignored via `data/`).
-Discover prefers storage_state, then Cookie env, then legacy single cookies.
+On Linux without a display, headed login raises unless `DISPLAY` /
+`WAYLAND_DISPLAY` is set — use env cookies (§8.3) or run `auth login` on a
+desktop Mac/Linux GUI and copy `data/auth/*_storage_state.json` into the
+headless host’s `data/auth/`.
+
+**Legacy VM → host X tunnel (fragile; prefer Mac login):** see historical notes
+in older handoffs. Do not spend time repairing X11/VNC for auth; cookie env or
+desktop `auth login` is enough.
 
 **Fallback env vars** (paste Cookie header only into `.env`, never into chat):
 
@@ -255,21 +313,29 @@ that adapter — `magicapply auth login <name>` works automatically.
 **Do not** run continuous multi-page scrapes or raise caps aggressively. Goal is
 a **drip**, not 600 jobs in one shot (ban risk).
 
-Per-source fields in `base_config.yaml` (config over code):
+**Shared posture (all three boards):**
+
+1. **SERP first** — title, company, location, listing URL, offsite apply if present  
+2. **Offsite** — full JD from destination ATS/career page when external `apply_url` exists  
+3. **Capped board detail** — visit listing/detail only when apply URL or description is still incomplete  
 
 | Field | Safe default | Meaning |
 |-------|--------------|---------|
 | `remote_only` | `true` | Remote workplace filter |
 | `posted_within_days` | `7` | Past-week style date filter |
-| `max_pages` | `3–6` LinkedIn, `5` Indeed/GD | Hard cap on search pages **per run** |
-| `rate_limit_per_minute` | `3` | Slow serial pacing (+ jitter on LinkedIn) |
-| `enrich_apply_urls` | `false` | Per-job detail enrich multiplies traffic |
-| `max_jobs_per_run` | `80–150` (LinkedIn) | Hard job ceiling even if pages full |
+| `max_pages` | `1–2` for smoke; `3–6` LI / `5` Indeed/GD max | Hard cap on search pages **per run** |
+| `rate_limit_per_minute` | `3` | Slow serial pacing (+ jitter) |
+| `enrich_descriptions` | `true` | Prefer JD from **destination** ATS/career page |
+| `enrich_apply_urls` | `true` | Allow board detail to resolve missing offsite apply |
+| `board_detail_fallback` (Indeed/GD) / `linkedin_description_fallback` (LI) | `true` | Board listing detail when offsite incomplete |
+| `max_board_detail_fetches` (Indeed/GD) / `max_linkedin_detail_fetches` (LI) | `8` | Cap on board detail visits **per discover run** |
+| `require_external_apply` | `false` | Keep board-native-only jobs; apply falls back to listing URL via GenericHandler. Set `true` to drop them. |
+| `max_jobs_per_run` | `30–50` | Hard job ceiling even if pages full |
 | `page_dwell_ms_*` / `pause_*` | LinkedIn only | Human-like dwell + every-N-page pause |
 
 **Cadence:** run `magicapply discover` **1–2× per day**, not in a loop. On
-`ERR_TOO_MANY_REDIRECTS` or auth-wall logs, **stop and refresh `LINKEDIN_LI_AT`**
-— do not bump `max_pages`. Raise caps only after clean multi-page runs.
+auth walls / redirect storms, **stop and refresh session cookies** — do not
+bump `max_pages`. Raise caps only after clean multi-page runs.
 
 Adapters paginate serially until empty page, circuit-break, or caps.
 **Prefilter still runs after discover** — second funnel for fit.

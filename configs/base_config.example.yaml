@@ -82,45 +82,62 @@ sources:
   #     - "principal data scientist"
   #   rate_limit_per_minute: 30
 
-  # W.5a — Indeed (requires MAGICAPPLY_INDEED_ACK=1; often Cloudflare-blocked).
-  # Volume: remote_only + posted_within_days + max_pages paginate search results.
-  # Prefilter still gates which apps become SCORED (scoring.prefilter).
+  # W.5a — Indeed (MAGICAPPLY_INDEED_ACK=1; often Cloudflare-blocked).
+  # Same posture as LinkedIn: SERP first, offsite JD when external apply exists,
+  # capped /viewjob detail fallback. Do NOT set max_pages to 40 (ban-bait).
   # - name: "indeed-search"
   #   type: "indeed"
   #   enabled: true
   #   queries:
   #     - "Staff Data Scientist"
   #   location: "Remote"
-  #   rate_limit_per_minute: 5
+  #   rate_limit_per_minute: 3
   #   remote_only: true
   #   posted_within_days: 7
-  #   max_pages: 40
-  #   enrich_apply_urls: false
+  #   max_pages: 2
+  #   enrich_descriptions: true
+  #   enrich_apply_urls: true
+  #   board_detail_fallback: true
+  #   max_board_detail_fetches: 8
+  #   require_external_apply: false
+  #   max_jobs_per_run: 30
 
-  # W.5b — Glassdoor (requires MAGICAPPLY_GLASSDOOR_ACK=1; optional GLASSDOOR_SESSION).
+  # W.5b — Glassdoor (MAGICAPPLY_GLASSDOOR_ACK=1; optional GLASSDOOR_SESSION).
+  # Same SERP → offsite → capped listing-detail flow as Indeed/LinkedIn.
   # - name: "glassdoor-search"
   #   type: "glassdoor"
   #   enabled: true
   #   queries:
   #     - "Staff Data Scientist"
-  #   rate_limit_per_minute: 5
+  #   rate_limit_per_minute: 3
   #   remote_only: true
   #   posted_within_days: 7
-  #   max_pages: 40
-  #   enrich_apply_urls: false
+  #   max_pages: 2
+  #   enrich_descriptions: true
+  #   enrich_apply_urls: true
+  #   board_detail_fallback: true
+  #   max_board_detail_fetches: 8
+  #   require_external_apply: false
+  #   max_jobs_per_run: 30
 
-  # W.5c — LinkedIn (MAGICAPPLY_LINKEDIN_ACK=1 + LINKEDIN_LI_AT in .env).
-  # enrich_apply_urls: true is expensive at volume (~5s + 1 page per job).
+  # W.5c — LinkedIn (MAGICAPPLY_LINKEDIN_ACK=1 + auth login / cookies).
+  # Prefer: uv run magicapply auth login linkedin --root configs
+  # Prefer offsite, fall back to LI detail (capped). Do NOT set max_pages to 40.
   # - name: "linkedin-search"
   #   type: "linkedin"
-  #   enabled: false
+  #   enabled: true
   #   queries:
   #     - "Staff Data Scientist"
-  #   rate_limit_per_minute: 10
+  #   rate_limit_per_minute: 3
   #   remote_only: true
   #   posted_within_days: 7
-  #   max_pages: 40
-  #   enrich_apply_urls: false
+  #   max_pages: 2
+  #   enrich_descriptions: true              # offsite JD when apply_url is external
+  #   enrich_apply_urls: true                # allow LI detail to resolve missing apply
+  #   linkedin_description_fallback: true    # LI detail when offsite incomplete
+  #   max_linkedin_detail_fetches: 8         # hard cap on /jobs/view visits per run
+  #   require_external_apply: false
+  #   max_jobs_per_run: 30
 
 
 # ---- Proxy rotation (Phase A-C: defeats Cloudflare on Indeed / Glassdoor) ----
@@ -163,11 +180,12 @@ apply_throttle:
   ats_default:
     hourly: 6
     daily: 25
-  ats_overrides:
-    # Example override — Workday tenants are more sensitive to burst apply.
-    # workday:
-    #   hourly: 4
-    #   daily: 20
+  # Use {} when empty — bare `ats_overrides:` is YAML null and fails validation.
+  ats_overrides: {}
+  # Example override — Workday tenants are more sensitive to burst apply:
+  #   workday:
+  #     hourly: 4
+  #     daily: 20
   global_cap:
     hourly: 15
     daily: 60

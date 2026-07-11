@@ -1,25 +1,16 @@
-"""Glassdoor adapter — Playwright-driven search, parses cards from HTML directly.
+"""Glassdoor adapter — SERP first, offsite prefer, capped listing fallback.
 
-Per query, opens the Glassdoor search page and reads the visible job
-cards straight out of the DOM — Glassdoor renders every result as an
-``<li data-test="jobListing" data-jobid="…">`` with title, employer,
-location, salary, and a description snippet already inline. Detail-page
-fetches are skipped by design (as with Indeed): they hit rate-limit
-walls and cost 30× more HTTP round trips for the same data.
+Per query, opens the Glassdoor search page and reads job cards (title,
+employer, location, snippet). Then:
 
-Cloudflare challenges on the search page are detected via the shared
-helper and drive a proxy-rotation retry loop (see `sources/indeed.py`
-for the full pattern — Glassdoor is a sister adapter with the same
-escape hatches).
+1. **Offsite** — when ``apply_url`` is external, upgrade short snippets
+   from the destination careers/ATS page.
+2. **Detail fallback** — if apply URL and/or description still incomplete,
+   visit the listing page up to ``max_board_detail_fetches`` times per run.
+   Cloudflare on detail is a soft failure.
 
-If ``GLASSDOOR_SESSION`` (legacy single-cookie) or
-``GLASSDOOR_SESSION_COOKIES`` (browser Cookie header string) is set in
-env, the adapter injects the cookies into the shared context so the
-authenticated views (which show more jobs) are reachable. When both a
-cookie and a `ProxyPool` are configured, cookies win — per-proxy
-contexts stay anonymous, which would break auth anyway.
-
-ToS-sensitive: requires ``MAGICAPPLY_GLASSDOOR_ACK=1``.
+Search-page Cloudflare still uses proxy burn + requeue. ToS-sensitive:
+requires ``MAGICAPPLY_GLASSDOOR_ACK=1``.
 """
 
 from __future__ import annotations
@@ -30,21 +21,31 @@ import urllib.parse
 from collections import deque
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 from lxml import html as lhtml
 
 from magicapply.config.models import GlassdoorSource
-from magicapply.domain.models.job import Job
+from magicapply.domain.models.job import Job, canonicalize_url
 from magicapply.infrastructure.browser.auth_session import resolve_session_auth
 from magicapply.infrastructure.browser.proxy_pool import ProxyEntry, ProxyPool
 from magicapply.infrastructure.browser.session import PlaywrightSession
+from magicapply.infrastructure.sources.apply_url import (
+    BOARD_HOSTS_GLASSDOOR,
+    apply_url_from_glassdoor_detail_html,
+    description_from_glassdoor_detail_html,
+    is_external_apply_url,
+    resolve_apply_href,
+    sniff_platform,
+)
 from magicapply.infrastructure.sources.base import SourceError, parse_cookie_string
 from magicapply.infrastructure.sources.indeed import _Blocked, looks_like_cloudflare
 from magicapply.infrastructure.sources.rate_limit import RateLimiter
-
-if TYPE_CHECKING:
-    pass
+from magicapply.infrastructure.sources.serp_enrich import (
+    DetailBudget,
+    SerpEnrichPolicy,
+    post_serp_enrich,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,11 @@ class GlassdoorAdapter:
         session_cookie: str | None,
         acknowledged: bool,
         enrich_apply_urls: bool = True,
+        enrich_descriptions: bool = True,
+        board_detail_fallback: bool = True,
+        max_board_detail_fetches: int = 8,
+        require_external_apply: bool = False,
+        max_jobs_per_run: int = 50,
         proxy_pool: ProxyPool | None = None,
         max_query_retries: int = _DEFAULT_MAX_QUERY_RETRIES,
         session_cookies: list[dict] | None = None,
@@ -101,6 +107,11 @@ class GlassdoorAdapter:
         self._session = session_cookie
         self._ack = acknowledged
         self._enrich_apply_urls = enrich_apply_urls
+        self._enrich_descriptions = enrich_descriptions
+        self._board_detail_fallback = board_detail_fallback
+        self._max_board_detail_fetches = max(0, int(max_board_detail_fetches))
+        self._require_external_apply = require_external_apply
+        self._max_jobs = max(1, int(max_jobs_per_run))
         self._proxy_pool = proxy_pool
         self._max_query_retries = max(1, int(max_query_retries))
         # Multi-cookie env var (`GLASSDOOR_SESSION_COOKIES`) alongside the
@@ -111,6 +122,7 @@ class GlassdoorAdapter:
         self._posted_within_days = posted_within_days
         self._max_pages = max(1, int(max_pages))
         self._data_dir = data_dir
+        self._detail_budget = DetailBudget(self._max_board_detail_fetches)
 
     def _effective_proxy_pool(self) -> ProxyPool | None:
         """Auth (storage_state or cookies) wins over proxies."""
@@ -140,6 +152,11 @@ class GlassdoorAdapter:
             session_cookie=os.environ.get("GLASSDOOR_SESSION") or None,
             acknowledged=os.environ.get("MAGICAPPLY_GLASSDOOR_ACK") == "1",
             enrich_apply_urls=config.enrich_apply_urls,
+            enrich_descriptions=config.enrich_descriptions,
+            board_detail_fallback=config.board_detail_fallback,
+            max_board_detail_fetches=config.max_board_detail_fetches,
+            require_external_apply=config.require_external_apply,
+            max_jobs_per_run=config.max_jobs_per_run,
             proxy_pool=proxy_pool,
             session_cookies=session_cookies,
             remote_only=config.remote_only,
@@ -161,6 +178,8 @@ class GlassdoorAdapter:
         rate = RateLimiter(self._rate, jitter_ratio=_DEFAULT_JITTER_RATIO)
         auth = resolve_session_auth("glassdoor", self._data_dir)
         effective_pool = self._effective_proxy_pool()
+        self._detail_budget = DetailBudget(self._max_board_detail_fetches)
+        jobs_left = self._max_jobs
         if auth.source != "none" and self._proxy_pool is not None:
             logger.info(
                 "Glassdoor: auth via %s, skipping proxy pool for this source",
@@ -179,14 +198,24 @@ class GlassdoorAdapter:
             if cookies_to_inject:
                 session.add_cookies(cookies_to_inject)
             queue: deque[tuple[str, int]] = deque((q, 0) for q in self._queries)
-            while queue:
+            while queue and jobs_left > 0:
                 query, attempts = queue.popleft()
                 blocked = False
                 for job in self._search_one_query(session, query, rate):
                     if isinstance(job, _Blocked):
                         blocked = True
                         break
-                    yield job
+                    enriched = self._post_serp_enrich(session, job, rate)
+                    if enriched is None:
+                        continue
+                    yield enriched
+                    jobs_left -= 1
+                    if jobs_left <= 0:
+                        logger.info(
+                            "Glassdoor max_jobs_per_run=%d reached; stopping",
+                            self._max_jobs,
+                        )
+                        return
                 if blocked and attempts + 1 < self._max_query_retries:
                     logger.info(
                         "Glassdoor requeueing query %r (attempt %d/%d)",
@@ -198,6 +227,84 @@ class GlassdoorAdapter:
                         "Glassdoor exhausted retry budget for query %r; skipping",
                         query,
                     )
+
+    def _post_serp_enrich(
+        self,
+        session: PlaywrightSession,
+        job: Job,
+        rate: RateLimiter,
+    ) -> Job | None:
+        policy = SerpEnrichPolicy(
+            enrich_apply_urls=self._enrich_apply_urls,
+            enrich_descriptions=self._enrich_descriptions,
+            board_detail_fallback=self._board_detail_fallback,
+            require_external_apply=self._require_external_apply,
+            board_hosts=BOARD_HOSTS_GLASSDOOR,
+            board_label="Glassdoor",
+        )
+        return post_serp_enrich(
+            session,
+            job,
+            rate,
+            policy=policy,
+            budget=self._detail_budget,
+            board_detail_fn=self._enrich_from_glassdoor_detail,
+        )
+
+    def _enrich_from_glassdoor_detail(
+        self,
+        session: PlaywrightSession,
+        job: Job,
+        rate: RateLimiter,
+    ) -> Job:
+        """One listing-page visit: resolve external apply + fuller description."""
+        rate.wait()
+        pool = self._effective_proxy_pool()
+        proxy = pool.next() if pool else None
+        content = _fetch(session, job.url, proxy=proxy)
+        if content is None:
+            return job
+        if looks_like_cloudflare(content):
+            logger.warning(
+                "Glassdoor detail blocked for %s; leaving incomplete", job.url
+            )
+            if pool is not None and proxy is not None:
+                pool.burn(proxy, reason="cloudflare-detail")
+                session.drop_proxy_context(proxy)
+            return job
+
+        updates: dict[str, Any] = {"raw": {**job.raw, "glassdoor_detail": True}}
+        apply_url = apply_url_from_glassdoor_detail_html(content)
+        if apply_url and is_external_apply_url(
+            apply_url, board_hosts=BOARD_HOSTS_GLASSDOOR
+        ):
+            platform = sniff_platform(apply_url)
+            updates["apply_url"] = canonicalize_url(apply_url)
+            updates["raw"] = {
+                **updates["raw"],
+                "listing_url": job.url,
+                "platform": platform,
+                "apply_resolve": "glassdoor_detail",
+            }
+            logger.info(
+                "Glassdoor detail apply-url %s → %s (%s)",
+                job.url,
+                apply_url,
+                platform,
+            )
+        desc = description_from_glassdoor_detail_html(content)
+        if desc and len(desc.strip()) > len((job.description or "").strip()):
+            updates["description"] = desc
+            updates["raw"] = {
+                **updates.get("raw", job.raw),
+                "description_source": "glassdoor_detail_html",
+            }
+            logger.info(
+                "Glassdoor detail description for %s (%d chars)",
+                job.url,
+                len(desc),
+            )
+        return job.model_copy(update=updates)
 
     def _search_one_query(
         self,
@@ -347,6 +454,16 @@ def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
         job_age = _card_first_text(card, './/*[@data-test="job-age"]')
 
         seen.add(jobid)
+        apply_url = _offsite_apply_from_card(card)
+        raw: dict[str, Any] = {
+            "jobid": jobid,
+            "salary_snippet": salary,
+            "posted_age": job_age,
+            "source_extraction": "search-page-card",
+        }
+        if apply_url:
+            raw["apply_resolve"] = "serp_card"
+            raw["platform"] = sniff_platform(apply_url)
         jobs.append(
             Job.new(
                 source_name=source_name,
@@ -355,15 +472,22 @@ def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
                 company=company,
                 description=snippet or "",
                 location=location or None,
-                raw={
-                    "jobid": jobid,
-                    "salary_snippet": salary,
-                    "posted_age": job_age,
-                    "source_extraction": "search-page-card",
-                },
+                apply_url=apply_url,
+                raw=raw,
             )
         )
     return jobs
+
+
+def _offsite_apply_from_card(card: object) -> str | None:
+    """Best-effort external apply URL from SERP card anchors (often absent)."""
+    for href in card.xpath(".//a[@href]/@href"):  # type: ignore[attr-defined]
+        resolved = resolve_apply_href(href)
+        if resolved and is_external_apply_url(
+            resolved, board_hosts=BOARD_HOSTS_GLASSDOOR
+        ):
+            return canonicalize_url(resolved)
+    return None
 
 
 def _card_company(card: object) -> str | None:
