@@ -51,7 +51,9 @@ class TestGreenhouseAdapter:
         job = jobs[0]
         assert job.title.startswith("Senior Staff Machine Learning Engineer")
         assert job.url == "https://job-boards.greenhouse.io/reddit/jobs/7772274"
-        assert job.apply_url == "https://job-boards.greenhouse.io/reddit/jobs/7772274"
+        assert job.apply_url == (
+            "https://job-boards.greenhouse.io/embed/job_app?for=reddit&token=7772274"
+        )
         assert job.raw.get("greenhouse_board") == "reddit"
         assert job.company == "Reddit"
         assert job.location == "Remote - United States"
@@ -92,7 +94,9 @@ class TestGreenhouseAdapter:
         assert len(jobs) == 1
         job = jobs[0]
         assert job.url == "https://stripe.com/jobs/search?gh_jid=8044460"
-        assert job.apply_url == "https://job-boards.greenhouse.io/stripe/jobs/8044460"
+        assert job.apply_url == (
+            "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=8044460"
+        )
         assert job.raw.get("greenhouse_board") == "stripe"
 
     def test_title_filter_drops_non_matching_roles(self) -> None:

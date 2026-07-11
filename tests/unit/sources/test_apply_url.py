@@ -125,21 +125,23 @@ class TestSniffPlatform:
 
 
 class TestGreenhouseApplyResolve:
-    def test_already_greenhouse_absolute_url(self) -> None:
+    def test_board_job_url_rewritten_to_embed(self) -> None:
         url = "https://job-boards.greenhouse.io/reddit/jobs/7772274"
         assert resolve_greenhouse_apply_url(
             board_slug="reddit",
             posting_id=7772274,
             absolute_url=url,
-        ) == url
+        ) == "https://job-boards.greenhouse.io/embed/job_app?for=reddit&token=7772274"
 
-    def test_stripe_careers_rewritten_via_board_and_id(self) -> None:
+    def test_stripe_careers_rewritten_to_embed(self) -> None:
         got = resolve_greenhouse_apply_url(
             board_slug="stripe",
             posting_id=8044460,
             absolute_url="https://stripe.com/jobs/search?gh_jid=8044460",
         )
-        assert got == "https://job-boards.greenhouse.io/stripe/jobs/8044460"
+        assert got == (
+            "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=8044460"
+        )
         assert is_greenhouse_apply_url(got)
 
     def test_gh_jid_query_with_board_slug(self) -> None:
@@ -148,7 +150,22 @@ class TestGreenhouseApplyResolve:
             posting_id=None,
             absolute_url="https://stripe.com/jobs/search?gh_jid=12345",
         )
-        assert got == "https://job-boards.greenhouse.io/stripe/jobs/12345"
+        assert got == (
+            "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=12345"
+        )
+
+    def test_embed_url_kept(self) -> None:
+        embed = (
+            "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=8044460"
+        )
+        assert (
+            resolve_greenhouse_apply_url(
+                board_slug="stripe",
+                posting_id=8044460,
+                absolute_url=embed,
+            )
+            == embed
+        )
 
     def test_missing_slug_and_non_gh_absolute_returns_none(self) -> None:
         assert (
@@ -185,5 +202,7 @@ class TestJobBoardListingAndDestination:
             },
         )
         dest = resolve_job_apply_destination(job)
-        assert dest == "https://job-boards.greenhouse.io/stripe/jobs/8044460"
+        assert dest == (
+            "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=8044460"
+        )
         assert is_greenhouse_apply_url(dest)

@@ -130,7 +130,11 @@ def test_apply_pipeline_routes_via_apply_url_not_listing(
     )
     assert report.error != "unsupported ATS"
     assert report.final_state is ApplicationState.APPLIED
-    assert ("goto", job.apply_url) in page.calls
+    # Board job URLs are rewritten to the Greenhouse embed form.
+    assert (
+        "goto",
+        "https://job-boards.greenhouse.io/embed/job_app?for=acme&token=42",
+    ) in page.calls
 
 
 def test_apply_pipeline_skips_indeed_board_listing_without_external(
@@ -286,7 +290,9 @@ def test_apply_pipeline_resolves_stripe_raw_to_greenhouse(
         application_data=data,
     )
 
-    expected = "https://job-boards.greenhouse.io/stripe/jobs/8044460"
+    expected = (
+        "https://job-boards.greenhouse.io/embed/job_app?for=stripe&token=8044460"
+    )
     assert isinstance(ATSHandlerFactory.for_url(expected), GreenhouseHandler)
     assert report.final_state is ApplicationState.APPLIED
     assert ("goto", expected) in page.calls

@@ -6,6 +6,7 @@ Pure parsing helpers live here; Playwright fetches stay in per-source adapters.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Literal
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
@@ -376,61 +377,81 @@ def is_job_board_listing_url(url: str | None) -> bool:
     return not is_external_apply_url(url, board_hosts=BOARD_HOSTS_ALL)
 
 
+_GH_BOARD_JOB_PATH = re.compile(
+    r"(?:job-boards\.)?greenhouse\.io/([^/?#]+)/jobs/(\d+)",
+    re.IGNORECASE,
+)
+
+
+def greenhouse_embed_apply_url(*, board_slug: str, posting_id: str | int) -> str:
+    """Direct Greenhouse application form (survives Stripe-style careers redirects).
+
+    Board job URLs like ``job-boards.greenhouse.io/{slug}/jobs/{id}`` often
+    302 to the employer's marketing site (Stripe). The embed endpoint keeps
+    the real ``#application-form`` with ``#first_name`` etc.
+    """
+    slug = str(board_slug).strip().strip("/")
+    pid = str(posting_id).strip()
+    return canonicalize_url(
+        f"https://job-boards.greenhouse.io/embed/job_app?for={slug}&token={pid}"
+    )
+
+
 def resolve_greenhouse_apply_url(
     *,
     board_slug: str | None = None,
     posting_id: str | int | None = None,
     absolute_url: str | None = None,
 ) -> str | None:
-    """Canonical Greenhouse apply URL for boards-api postings.
+    """Canonical Greenhouse **application form** URL for boards-api postings.
 
-    Prefer an ``absolute_url`` that already points at a Greenhouse apply host.
-    Otherwise build ``https://job-boards.greenhouse.io/{slug}/jobs/{id}`` when
-    the board slug and posting id (or ``gh_jid`` query param) are known.
-
-    Company career pages like ``stripe.com/jobs/search?gh_jid=…`` are *not*
-    valid apply destinations — they must be rewritten via board slug + id.
+    Always prefers the Greenhouse embed application endpoint when board slug
+    + job id are known. Company career pages (``stripe.com/jobs/…?gh_jid=``)
+    and board listing URLs that redirect off Greenhouse are rewritten to
+    embed so ``GreenhouseHandler`` sees a real form.
     """
+    slug = (str(board_slug).strip().strip("/") if board_slug else "") or None
+    pid: str | None = str(posting_id).strip() if posting_id is not None else None
+
     if absolute_url and str(absolute_url).strip():
         can = canonicalize_url(str(absolute_url).strip())
-        if is_greenhouse_apply_url(can):
+        # Already on the embed form — keep it.
+        if "/embed/job_app" in can and is_greenhouse_apply_url(can):
             return can
+        # Parse board job path: greenhouse.io/{slug}/jobs/{id}
+        path_match = _GH_BOARD_JOB_PATH.search(can)
+        if path_match:
+            slug = slug or path_match.group(1)
+            pid = pid or path_match.group(2)
+        # Careers embed: ?gh_jid=
         jid = parse_qs(urlparse(can).query).get("gh_jid", [None])[0]
-        if jid and board_slug:
-            slug = str(board_slug).strip().strip("/")
-            if slug:
-                return canonicalize_url(
-                    f"https://job-boards.greenhouse.io/{slug}/jobs/{jid}"
-                )
+        if jid:
+            pid = pid or str(jid).strip()
+        # embed already has for= & token=
+        qs = parse_qs(urlparse(can).query)
+        if qs.get("for") and qs.get("token"):
+            slug = slug or qs["for"][0]
+            pid = pid or qs["token"][0]
 
-    if board_slug is not None and posting_id is not None:
-        slug = str(board_slug).strip().strip("/")
-        pid = str(posting_id).strip()
-        if slug and pid:
-            return canonicalize_url(
-                f"https://job-boards.greenhouse.io/{slug}/jobs/{pid}"
-            )
+    if slug and pid:
+        return greenhouse_embed_apply_url(board_slug=slug, posting_id=pid)
     return None
 
 
 def resolve_job_apply_destination(job: Job) -> str:
     """Best URL for ATS handler selection and navigation.
 
-    Order: existing external/ATS ``apply_url`` → embedded Greenhouse resolve
-    from raw boards-api fields → listing ``url``.
+    Order: Greenhouse embed resolve (raw / existing apply_url) → existing
+    external ``apply_url`` → listing ``url``.
     """
-    if job.apply_url and str(job.apply_url).strip():
-        apply = str(job.apply_url).strip()
-        # Prefer known apply_url unless it is still a job-board listing.
-        if not is_job_board_listing_url(apply):
-            return apply
-
     raw = job.raw or {}
     board = raw.get("greenhouse_board")
     if board is None and isinstance(raw.get("board"), str):
         board = raw.get("board")
     posting_id = raw.get("id")
-    absolute = raw.get("absolute_url") or job.url
+    # Prefer absolute_url / listing for slug+id extraction; also re-resolve
+    # stale board job URLs (…/jobs/{id}) into embed form URLs.
+    absolute = raw.get("absolute_url") or job.apply_url or job.url
     resolved = resolve_greenhouse_apply_url(
         board_slug=str(board) if board else None,
         posting_id=posting_id,
@@ -440,7 +461,14 @@ def resolve_job_apply_destination(job: Job) -> str:
         return resolved
 
     if job.apply_url and str(job.apply_url).strip():
-        return str(job.apply_url).strip()
+        apply = str(job.apply_url).strip()
+        if not is_job_board_listing_url(apply):
+            # Last chance: rewrite GH /jobs/ paths even without raw board id.
+            gh = resolve_greenhouse_apply_url(absolute_url=apply)
+            if gh:
+                return gh
+            return apply
+
     return job.url
 
 
