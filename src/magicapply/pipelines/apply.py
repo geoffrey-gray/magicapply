@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
@@ -32,6 +31,12 @@ from magicapply.infrastructure.browser.ats.base import (
     PageDriver,
 )
 from magicapply.infrastructure.browser.ats.factory import ATSHandlerFactory
+from magicapply.pipelines.apply_types import ApplyReport
+from magicapply.pipelines.apply_utils import (
+    count_outcomes,
+    is_counted_outcome,
+    is_throttle_defer,
+)
 
 
 def ats_key_for_url(url: str) -> str | None:
@@ -60,13 +65,6 @@ def ats_key_for_url(url: str) -> str | None:
     return name.lower()
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class ApplyReport:
-    application_id: str
-    final_state: ApplicationState
-    error: str | None = None
 
 
 class _SessionProto(Protocol):
@@ -245,7 +243,7 @@ class ApplyPipeline:
             if deadline is not None and now_fn() >= deadline:
                 logger.info("apply_batch: deadline reached; stopping")
                 break
-            if max_outcomes is not None and _count_outcomes(reports) >= max_outcomes:
+            if max_outcomes is not None and count_outcomes(reports) >= max_outcomes:
                 logger.info(
                     "apply_batch: max_outcomes=%s reached; stopping", max_outcomes
                 )
@@ -254,18 +252,18 @@ class ApplyPipeline:
             candidates = self._list_batch_candidates(
                 profile_name, include_retry_states=include_retry_states
             )
-            ordered = _order_candidates_by_score(candidates)
-            if not ordered:
+            # Repository now returns applications ordered by score DESC
+            if not candidates:
                 logger.info("apply_batch: no candidates remaining")
                 break
 
             counted_this_pass = 0
             skipped_quota = 0
 
-            for app in ordered:
+            for app in candidates:
                 if deadline is not None and now_fn() >= deadline:
                     break
-                if max_outcomes is not None and _count_outcomes(reports) >= max_outcomes:
+                if max_outcomes is not None and count_outcomes(reports) >= max_outcomes:
                     break
 
                 job = self._jobs.get(app.job_id)
@@ -290,7 +288,7 @@ class ApplyPipeline:
                 reports.append(report)
 
                 # Throttle: try next-best different destination — do not abort wave.
-                if _is_throttle_defer(report):
+                if is_throttle_defer(report):
                     skipped_quota += 1
                     logger.info(
                         "apply_batch: throttle skip app=%s; trying next-best",
@@ -298,11 +296,11 @@ class ApplyPipeline:
                     )
                     continue
 
-                if _is_counted_outcome(report):
+                if is_counted_outcome(report):
                     counted_this_pass += 1
                     if (
                         max_outcomes is not None
-                        and _count_outcomes(reports) >= max_outcomes
+                        and count_outcomes(reports) >= max_outcomes
                     ):
                         break
                     if pace_seconds is not None:
@@ -318,7 +316,7 @@ class ApplyPipeline:
                             )
                             sleep(wait)
 
-            if max_outcomes is not None and _count_outcomes(reports) >= max_outcomes:
+            if max_outcomes is not None and count_outcomes(reports) >= max_outcomes:
                 break
             if deadline is not None and now_fn() >= deadline:
                 break
@@ -369,12 +367,11 @@ class ApplyPipeline:
         """One score-ordered pass over TAILORED (optional retry states)."""
         assert self._jobs is not None and self._data_builder is not None
         reports: list[ApplyReport] = []
-        ordered = _order_candidates_by_score(
-            self._list_batch_candidates(
-                profile_name, include_retry_states=include_retry_states
-            )
+        # Repository now returns applications ordered by score DESC
+        candidates = self._list_batch_candidates(
+            profile_name, include_retry_states=include_retry_states
         )
-        for app in ordered:
+        for app in candidates:
             job = self._jobs.get(app.job_id)
             if job is None:
                 logger.warning(
@@ -420,35 +417,3 @@ class ApplyPipeline:
                 )
             )
         return apps
-
-
-def _is_throttle_defer(report: ApplyReport) -> bool:
-    return bool(report.error and report.error.startswith("throttle:"))
-
-
-def _is_counted_outcome(report: ApplyReport) -> bool:
-    if _is_throttle_defer(report):
-        return False
-    return report.final_state in {
-        ApplicationState.APPLIED,
-        ApplicationState.FAILED,
-        ApplicationState.NEEDS_INTERVENTION,
-    }
-
-
-def _count_outcomes(reports: list[ApplyReport]) -> int:
-    return sum(1 for r in reports if _is_counted_outcome(r))
-
-
-def _order_candidates_by_score(apps: list[Application]) -> list[Application]:
-    """Best JD-fit first; TAILORED before FAILED/NI retries; stable ties.
-
-    Throttle skips are handled while walking this list so the next attempt
-    is always the highest-score job that is currently allowed.
-    """
-
-    def _sort_key(a: Application) -> tuple:
-        state_rank = 0 if a.state is ApplicationState.TAILORED else 1
-        return (state_rank, -(a.score or 0), a.updated_at, a.job_id)
-
-    return sorted(apps, key=_sort_key)

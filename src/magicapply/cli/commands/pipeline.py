@@ -30,7 +30,8 @@ from magicapply.config import ConfigError, LoadedConfig, load_config
 from magicapply.config.paths import default_config_root
 from magicapply.domain.models.application import ApplicationState
 from magicapply.infrastructure.browser.session import PlaywrightSession
-from magicapply.pipelines.apply import ApplyReport, _count_outcomes
+from magicapply.pipelines.apply_types import ApplyReport
+from magicapply.pipelines.apply_utils import count_outcomes
 from magicapply.pipelines.discovery import DiscoveryPipeline
 
 logger = logging.getLogger(__name__)
@@ -233,7 +234,7 @@ def run(
         if deadline is not None and datetime.now(UTC) >= deadline:
             console.print("[yellow]duration deadline reached[/yellow]")
             break
-        counted = _count_outcomes(all_reports)
+        counted = count_outcomes(all_reports)
         if max_applies is not None and counted >= max_applies:
             console.print(f"[green]max applies reached:[/green] {counted}")
             break
@@ -246,7 +247,7 @@ def run(
 
         remaining = None
         if max_applies is not None:
-            remaining = max(0, max_applies - _count_outcomes(all_reports))
+            remaining = max(0, max_applies - count_outcomes(all_reports))
             if remaining == 0:
                 break
 
@@ -303,11 +304,11 @@ def run(
         all_reports.extend(wave_reports)
         _render_apply(wave_reports, dry_run=no_submit)
         console.print(
-            f"[dim]campaign outcomes so far: {_count_outcomes(all_reports)}"
+            f"[dim]campaign outcomes so far: {count_outcomes(all_reports)}"
             f"{f'/{max_applies}' if max_applies is not None else ''}[/dim]"
         )
 
-        if max_applies is not None and _count_outcomes(all_reports) >= max_applies:
+        if max_applies is not None and count_outcomes(all_reports) >= max_applies:
             break
         if deadline is not None and datetime.now(UTC) >= deadline:
             break
@@ -317,7 +318,7 @@ def run(
 
     _render_apply(all_reports, dry_run=no_submit)
     console.print(
-        f"[bold]paced run finished[/bold] counted_outcomes={_count_outcomes(all_reports)}"
+        f"[bold]paced run finished[/bold] counted_outcomes={count_outcomes(all_reports)}"
     )
 
 

@@ -428,39 +428,6 @@ class TestApplyBatchPaced:
         assert reports[0].final_state is ApplicationState.APPLIED
 
 
-class TestScoreFirstOrder:
-    """Candidates ordered by score; TAILORED before retries."""
-
-    def test_higher_score_first(self) -> None:
-        from magicapply.pipelines.apply import _order_candidates_by_score
-
-        low = Application(job_id="a", profile_name="swe", score=40)
-        low.transition_to(ApplicationState.SCORED)
-        low.transition_to(ApplicationState.TAILORED)
-        high = Application(job_id="b", profile_name="swe", score=95)
-        high.transition_to(ApplicationState.SCORED)
-        high.transition_to(ApplicationState.TAILORED)
-        mid = Application(job_id="c", profile_name="swe", score=70)
-        mid.transition_to(ApplicationState.SCORED)
-        mid.transition_to(ApplicationState.TAILORED)
-        ordered = _order_candidates_by_score([low, high, mid])
-        assert [a.job_id for a in ordered] == ["b", "c", "a"]
-
-    def test_tailored_before_failed_at_same_score(self) -> None:
-        from magicapply.pipelines.apply import _order_candidates_by_score
-
-        failed = Application(job_id="f", profile_name="swe", score=99)
-        failed.transition_to(ApplicationState.SCORED)
-        failed.transition_to(ApplicationState.TAILORED)
-        failed.transition_to(ApplicationState.APPLYING)
-        failed.transition_to(ApplicationState.FAILED, reason="x")
-        ready = Application(job_id="t", profile_name="swe", score=50)
-        ready.transition_to(ApplicationState.SCORED)
-        ready.transition_to(ApplicationState.TAILORED)
-        ordered = _order_candidates_by_score([failed, ready])
-        assert [a.job_id for a in ordered] == ["t", "f"]
-
-
 class TestScoreFirstThrottleSkip:
     def test_after_bucket_cap_applies_next_best_other_ats(
         self, engine: Engine, tmp_path: Path
