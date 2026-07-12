@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,6 +26,13 @@ from magicapply.infrastructure.browser.captcha import (
     detect_blocking_captcha,
     detect_captcha,
 )
+
+if TYPE_CHECKING:
+    from magicapply.config.models import ATSTimeoutsConfig
+    from magicapply.domain.models.job import Job
+    from magicapply.infrastructure.browser.ats.answer_router import AnswerRouter
+    from magicapply.infrastructure.browser.ats.workday_accounts import WorkdayAccountStore
+    from magicapply.infrastructure.browser.forms.composer import FormComposer
 
 
 class PageDriver(Protocol):
@@ -75,13 +82,12 @@ class ApplicationData(BaseModel):
     resume_docx_path: Path
     cover_letter: str | None = None
     dry_run: bool = False
-    # AnswerRouter is intentionally not typed here to avoid a circular
-    # import at module load; the handler does the isinstance check.
-    answer_router: object | None = None
+    # Phase L: answer router for dynamic field discovery
+    answer_router: "AnswerRouter | None" = None
     # Optional per-application Job — the answer router needs it to hand
     # screening questions to NarrativeEngine.answer. Kept optional so
     # simpler tests don't have to construct one.
-    job: object | None = None
+    job: "Job | None" = None
     # W.3: mutable list handlers append to as they resolve form fields.
     # BaseATSHandler.apply persists the full observation in one shot
     # after _fill_dynamic — Template-Method extension of a cross-cutting
@@ -92,9 +98,11 @@ class ApplicationData(BaseModel):
     # data dir).
     data_dir: Path | None = None
     # W.4b: per-tenant Workday apply credentials (data/workday_accounts.yaml).
-    workday_account_store: object | None = None
+    workday_account_store: "WorkdayAccountStore | None" = None
     # CF.1: composable form orchestrator (FormComposer); optional opaque slot.
-    form_composer: object | None = None
+    form_composer: "FormComposer | None" = None
+    # CF.2: configurable timeouts per ATS (workday, greenhouse, etc.)
+    ats_timeouts: "ATSTimeoutsConfig | None" = None
 
 
 class ApplicationResult(BaseModel):

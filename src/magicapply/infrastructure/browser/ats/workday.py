@@ -192,9 +192,13 @@ class WorkdayHandler(BaseATSHandler):
         raise RuntimeError("Workday: no submit button found")
 
 
-_CANDIDATE_TIMEOUT_MS = 500
-_WIZARD_CLICK_TIMEOUT_MS = 8_000
-_AUTH_FILL_TIMEOUT_MS = 8_000
+def _get_timeouts(data: ApplicationData) -> "ATSTimeoutsConfig":
+    """Extract timeout config from ApplicationData, with fallback defaults."""
+    if data.ats_timeouts is not None:
+        return data.ats_timeouts
+    # Fallback for tests or old code paths
+    from magicapply.config.models import ATSTimeoutsConfig
+    return ATSTimeoutsConfig()
 
 
 def _ensure_authenticated(page: PageDriver, data: ApplicationData) -> None:

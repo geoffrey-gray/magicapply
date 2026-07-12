@@ -309,6 +309,11 @@ def build_application_data(
         answer_library=loaded.answer_library,
         router_rules=loaded.router_rules,
     )
+    # Determine ATS for timeout config
+    from magicapply.pipelines.apply import ats_key_for_url
+    ats = ats_key_for_url(apply_target) or "unknown"
+    timeouts = loaded.base.ats_timeouts.get_for_ats(ats)
+
     data = ApplicationData(
         job_url=apply_target,
         static_answers=static_answers,
@@ -320,6 +325,7 @@ def build_application_data(
         job=job,
         data_dir=data_dir,
         workday_account_store=workday_store,
+        ats_timeouts=timeouts,
     )
     from magicapply.infrastructure.browser.forms.composer import composer_from_registry
     from magicapply.infrastructure.browser.forms.registry import build_driver_registry

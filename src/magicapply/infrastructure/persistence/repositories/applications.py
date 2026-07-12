@@ -89,12 +89,19 @@ class SqlApplicationsRepository:
             return [_row_to_domain(r) for r in rows]
 
     def count_applied_all_in_window(self, since: datetime) -> int:
-        """Count APPLIED rows updated after `since`. Used by the global
-        throttle. Cheap — indexed state + timestamp scan, no join."""
+        """Count APPLIED + APPLYING rows updated after `since`. Used by the
+        global throttle. Cheap — indexed state + timestamp scan, no join.
+
+        APPLYING is counted to prevent check-then-act race: the throttle check
+        fires before TAILORED → APPLYING, so in-flight applications must count
+        against the cap or concurrent batches can breach it."""
         with Session(self._engine) as session:
             rows = session.exec(
                 select(ApplicationRow.id)
-                .where(ApplicationRow.state == ApplicationState.APPLIED.value)
+                .where(ApplicationRow.state.in_([
+                    ApplicationState.APPLIED.value,
+                    ApplicationState.APPLYING.value,
+                ]))
                 .where(ApplicationRow.updated_at > since)
             ).all()
             return len(rows)
@@ -104,15 +111,20 @@ class SqlApplicationsRepository:
         source_name: str,
         since: datetime,
     ) -> int:
-        """Count APPLIED rows updated after `since` whose linked Job's
+        """Count APPLIED + APPLYING rows updated after `since` whose linked Job's
         `source_name` matches. Used by the load-balanced dedup scorer in
         `DiscoveryPipeline` so future apply attempts distribute across
-        LinkedIn / Indeed / Glassdoor / etc."""
+        LinkedIn / Indeed / Glassdoor / etc.
+
+        APPLYING counted to prevent throttle race condition."""
         with Session(self._engine) as session:
             rows = session.exec(
                 select(ApplicationRow.id)
                 .join(JobRow, JobRow.id == ApplicationRow.job_id)
-                .where(ApplicationRow.state == ApplicationState.APPLIED.value)
+                .where(ApplicationRow.state.in_([
+                    ApplicationState.APPLIED.value,
+                    ApplicationState.APPLYING.value,
+                ]))
                 .where(ApplicationRow.updated_at > since)
                 .where(JobRow.source_name == source_name)
             ).all()
@@ -124,7 +136,7 @@ class SqlApplicationsRepository:
         ats: str,
         since: datetime,
     ) -> int:
-        """Count APPLIED rows updated after `since` whose linked Job's
+        """Count APPLIED + APPLYING rows updated after `since` whose linked Job's
         `ats_key_fn(url)` equals `ats`.
 
         The ATS is not stored on `ApplicationRow` — it's derived at query
@@ -134,12 +146,17 @@ class SqlApplicationsRepository:
         shadowed as a denormalised column.
 
         Scans in Python because SQLite doesn't carry the ATS regex
-        knowledge. Small scale (< N/hour typical) makes this fine."""
+        knowledge. Small scale (< N/hour typical) makes this fine.
+
+        APPLYING counted to prevent throttle race condition."""
         with Session(self._engine) as session:
             rows = session.exec(
                 select(ApplicationRow, JobRow)
                 .join(JobRow, JobRow.id == ApplicationRow.job_id)
-                .where(ApplicationRow.state == ApplicationState.APPLIED.value)
+                .where(ApplicationRow.state.in_([
+                    ApplicationState.APPLIED.value,
+                    ApplicationState.APPLYING.value,
+                ]))
                 .where(ApplicationRow.updated_at > since)
             ).all()
         count = 0

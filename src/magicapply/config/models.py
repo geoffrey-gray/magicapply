@@ -314,6 +314,41 @@ class FormDriversConfig(BaseModel):
     fields: list[FormDriverFieldOverride] = Field(default_factory=list)
 
 
+class ATSTimeoutsConfig(BaseModel):
+    """Configurable timeout values for ATS form interactions (milliseconds).
+
+    Different employers have different page load times, form rendering speeds,
+    and auth flows. These defaults work for most Workday tenants; operators
+    can override per-ATS via the `ats_overrides` dict.
+
+    Example override for slow tenants:
+        ats_timeouts:
+          ats_overrides:
+            workday:
+              wizard_click_timeout_ms: 15000
+              auth_fill_timeout_ms: 12000
+    """
+
+    model_config = _Strict
+
+    # Default values used when no ATS-specific override exists
+    candidate_timeout_ms: int = Field(default=500, ge=100, le=10_000)
+    wizard_click_timeout_ms: int = Field(default=8_000, ge=1_000, le=30_000)
+    auth_fill_timeout_ms: int = Field(default=8_000, ge=1_000, le=30_000)
+    page_load_wait_ms: int = Field(default=3_000, ge=500, le=15_000)
+    step_transition_wait_ms: int = Field(default=2_500, ge=500, le=10_000)
+    brief_wait_ms: int = Field(default=1_500, ge=500, le=5_000)
+
+    # Per-ATS overrides (key = ats name like "workday", "greenhouse")
+    ats_overrides: dict[str, dict[str, int]] = Field(default_factory=dict)
+
+    def get_for_ats(self, ats: str) -> "ATSTimeoutsConfig":
+        """Return a config with ATS-specific overrides applied."""
+        if ats not in self.ats_overrides:
+            return self
+        return self.model_copy(update=self.ats_overrides[ats])
+
+
 class ProxyProviderConfig(BaseModel):
     """One entry in the `proxies.providers` list.
 
@@ -392,6 +427,7 @@ class BaseConfig(BaseModel):
     form_drivers: FormDriversConfig = Field(default_factory=FormDriversConfig)
     proxies: ProxyPoolConfig = Field(default_factory=ProxyPoolConfig)
     apply_throttle: ApplyThrottleConfig = Field(default_factory=ApplyThrottleConfig)
+    ats_timeouts: ATSTimeoutsConfig = Field(default_factory=ATSTimeoutsConfig)
 
     def source_names(self) -> set[str]:
         return {s.name for s in self.sources}
