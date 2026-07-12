@@ -224,23 +224,26 @@ class ApplyPipeline:
                 "supply them to ApplyPipeline.__init__"
             )
 
-        now_fn = clock or (lambda: datetime.now(UTC))
+        _clock = clock or (lambda: datetime.now(UTC))
+        reports: list[ApplyReport] = []
+        stalled_passes = 0
+
+        # Simple mode vs paced mode detection
         paced = any(
             v is not None for v in (max_outcomes, deadline, pace_seconds)
         ) or include_retry_states
 
-        if not paced:
-            return self._apply_batch_once(
-                session=session,
-                profile_name=profile_name,
-                dry_run=dry_run,
-                include_retry_states=False,
-            )
-
-        reports: list[ApplyReport] = []
-        stalled_passes = 0
+        # Natural progression loop
         while True:
-            if deadline is not None and now_fn() >= deadline:
+            # Re-list candidates (TAILORED + optional retry states, score-ordered)
+            candidates = self._list_batch_candidates(
+                profile_name, include_retry_states=include_retry_states
+            )
+            if not candidates:
+                break
+
+            # Check exit conditions BEFORE processing
+            if deadline is not None and _clock() >= deadline:
                 logger.info("apply_batch: deadline reached; stopping")
                 break
             if max_outcomes is not None and count_outcomes(reports) >= max_outcomes:
@@ -249,19 +252,13 @@ class ApplyPipeline:
                 )
                 break
 
-            candidates = self._list_batch_candidates(
-                profile_name, include_retry_states=include_retry_states
-            )
-            # Repository now returns applications ordered by score DESC
-            if not candidates:
-                logger.info("apply_batch: no candidates remaining")
-                break
-
+            # Process this batch
             counted_this_pass = 0
             skipped_quota = 0
 
             for app in candidates:
-                if deadline is not None and now_fn() >= deadline:
+                # Check limits mid-batch
+                if deadline is not None and _clock() >= deadline:
                     break
                 if max_outcomes is not None and count_outcomes(reports) >= max_outcomes:
                     break
@@ -287,7 +284,7 @@ class ApplyPipeline:
                 )
                 reports.append(report)
 
-                # Throttle: try next-best different destination — do not abort wave.
+                # Throttle deny: app stayed TAILORED, will re-list
                 if is_throttle_defer(report):
                     skipped_quota += 1
                     logger.info(
@@ -296,6 +293,7 @@ class ApplyPipeline:
                     )
                     continue
 
+                # Counted outcome: sleep if pacing
                 if is_counted_outcome(report):
                     counted_this_pass += 1
                     if (
@@ -306,7 +304,7 @@ class ApplyPipeline:
                     if pace_seconds is not None:
                         wait = pace_seconds
                         if deadline is not None:
-                            remaining = (deadline - now_fn()).total_seconds()
+                            remaining = (deadline - _clock()).total_seconds()
                             wait = max(0.0, min(wait, remaining))
                         if wait > 0:
                             logger.info(
@@ -316,16 +314,20 @@ class ApplyPipeline:
                             )
                             sleep(wait)
 
-            if max_outcomes is not None and count_outcomes(reports) >= max_outcomes:
-                break
-            if deadline is not None and now_fn() >= deadline:
+            # Simple mode: one pass only
+            if not paced:
                 break
 
-            # No counted applies this pass: only quota skips left, or nothing
-            # workable. Sleep once then re-list; if still blocked, return so
-            # outer ``run`` can rediscover later.
+            # Exit on limits
+            if max_outcomes is not None and count_outcomes(reports) >= max_outcomes:
+                break
+            if deadline is not None and _clock() >= deadline:
+                break
+
+            # Stall detection: no progress made
             if counted_this_pass == 0:
                 if skipped_quota > 0:
+                    # All candidates throttled - wait once, retry once more
                     stalled_passes += 1
                     if stalled_passes >= 2:
                         logger.info(
@@ -336,7 +338,7 @@ class ApplyPipeline:
                         break
                     wait = pace_seconds if pace_seconds is not None else 900.0
                     if deadline is not None:
-                        remaining = (deadline - now_fn()).total_seconds()
+                        remaining = (deadline - _clock()).total_seconds()
                         wait = max(0.0, min(wait, remaining))
                     if wait <= 0:
                         break
@@ -347,51 +349,14 @@ class ApplyPipeline:
                         wait,
                     )
                     sleep(wait)
-                    continue
+                    continue  # Re-list after sleep
+                # No progress and not throttle-related (e.g., all jobs missing).
+                # Signal to stop - this won't resolve by re-listing.
                 break
 
+            # Progress made - reset stall counter and continue
             stalled_passes = 0
-            # Had progress — re-list remaining TAILORED by score (no rediscover).
-            continue
 
-        return reports
-
-    def _apply_batch_once(
-        self,
-        *,
-        session: _SessionProto,
-        profile_name: str,
-        dry_run: bool,
-        include_retry_states: bool,
-    ) -> list[ApplyReport]:
-        """One score-ordered pass over TAILORED (optional retry states)."""
-        assert self._jobs is not None and self._data_builder is not None
-        reports: list[ApplyReport] = []
-        # Repository now returns applications ordered by score DESC
-        candidates = self._list_batch_candidates(
-            profile_name, include_retry_states=include_retry_states
-        )
-        for app in candidates:
-            job = self._jobs.get(app.job_id)
-            if job is None:
-                logger.warning(
-                    "apply_batch: no job for application %s (job_id=%s); skipping",
-                    app.id,
-                    app.job_id,
-                )
-                continue
-            retry = app.state is not ApplicationState.TAILORED
-            data = self._data_builder(app, job, dry_run=dry_run)  # type: ignore[call-arg]
-            page = session.new_page()
-            reports.append(
-                self.apply_one(
-                    page=page,
-                    application=app,
-                    job=job,
-                    application_data=data,
-                    retry=retry,
-                )
-            )
         return reports
 
     def _list_batch_candidates(
