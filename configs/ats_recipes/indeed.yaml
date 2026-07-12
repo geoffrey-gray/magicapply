@@ -1,0 +1,27 @@
+# Indeed Easy Apply / applystart — used by IndeedHandler.
+platform: indeed
+match_hosts:
+  - indeed.com
+form_selectors:
+  - form#ia-container
+  - form.ia-BasePage-card
+  - "div[data-testid='ia-BaseForm'] form"
+  - form
+  - main form
+submit_selectors:
+  - "button:has-text('Submit your application')"
+  - "button:has-text('Submit application')"
+  - "button:has-text('Submit')"
+  - button[type='submit']
+  - input[type='submit']
+resume_selectors:
+  - input[type='file'][name*='resume']
+  - input[type='file'][id*='resume']
+  - input[type='file']
+pre_steps: []
+wizard:
+  next_selectors:
+    - "button:has-text('Continue')"
+    - "button:has-text('Next')"
+    - "button[aria-label='Continue']"
+  max_steps: 4

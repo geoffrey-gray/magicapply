@@ -213,7 +213,7 @@ class BaseATSHandler:
 
             self._submit(page, data)
             return self._verify(page, data)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - Template Method catches all handler exceptions
             error_msg = f"{type(exc).__name__}: {exc}"
             _logger.error(
                 "ATS handler failed for %s: %s",

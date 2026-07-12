@@ -69,9 +69,12 @@ class SqlApplicationsRepository:
             return _row_to_domain(row) if row else None
 
     def list_by_state(self, state: ApplicationState) -> list[Application]:
+        """List applications by state, ordered by score descending (best first)."""
         with Session(self._engine) as session:
             rows = session.exec(
-                select(ApplicationRow).where(ApplicationRow.state == state.value)
+                select(ApplicationRow)
+                .where(ApplicationRow.state == state.value)
+                .order_by(ApplicationRow.score.desc().nulls_last())
             ).all()
             return [_row_to_domain(r) for r in rows]
 
@@ -80,11 +83,13 @@ class SqlApplicationsRepository:
         state: ApplicationState,
         profile_name: str,
     ) -> list[Application]:
+        """List applications by state and profile, ordered by score descending (best first)."""
         with Session(self._engine) as session:
             rows = session.exec(
                 select(ApplicationRow)
                 .where(ApplicationRow.state == state.value)
                 .where(ApplicationRow.profile_name == profile_name)
+                .order_by(ApplicationRow.score.desc().nulls_last())
             ).all()
             return [_row_to_domain(r) for r in rows]
 

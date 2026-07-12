@@ -12,6 +12,16 @@ from magicapply.config.ats_recipes import (
 )
 
 
+def test_loads_indeed_and_linkedin_board_recipes() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    assert "indeed" in recipes
+    assert "linkedin" in recipes
+    assert recipes["indeed"].platform == "indeed"
+    assert recipes["linkedin"].platform == "linkedin"
+    assert recipes["indeed"].wizard is not None
+    assert recipes["linkedin"].wizard is not None
+
+
 def test_loads_eightfold_recipe_from_bundled_configs() -> None:
     recipes = load_ats_recipes(bundled_recipes_dir().parent)
     assert "eightfold" in recipes

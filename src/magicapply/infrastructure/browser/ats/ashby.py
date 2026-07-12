@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
@@ -20,6 +21,9 @@ from magicapply.infrastructure.browser.ats.base import (
     BaseATSHandler,
     PageDriver,
 )
+
+if TYPE_CHECKING:
+    from magicapply.config.models import ATSTimeoutsConfig
 logger = logging.getLogger(__name__)
 
 _MATCH_HOSTS = ("jobs.ashbyhq.com", "ashbyhq.com")
@@ -61,26 +65,48 @@ class AshbyHandler(BaseATSHandler):
         return any(host in u for host in _MATCH_HOSTS)
 
     def _navigate(self, page: PageDriver, data: ApplicationData) -> None:
-        page.goto(ashby_application_url(data.job_url))
+        from magicapply.infrastructure.browser.navigate import safe_goto
+
+        url = ashby_application_url(data.job_url)
+        safe_goto(page, url)
+        # Ashby is a React SPA; the first HTML response has no <form>.
+        wait = getattr(page, "wait_for_selector", None)
+        if not callable(wait):
+            return
+        for selector in (
+            "input[name='_systemfield_name']",
+            "input[type='email']",
+            "form",
+            "[data-testid='application-form']",
+        ):
+            try:
+                wait(selector, timeout=15_000)
+                return
+            except Exception:  # noqa: BLE001
+                continue
+        logger.warning("Ashby: form did not hydrate after navigate to %s", url)
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers
+        timeouts = _get_timeouts(data)
+        timeout_ms = timeouts.candidate_timeout_ms
+
         # Fast-fail — Ashby's system-field selectors don't match every
         # tenant's DOM (e.g. TRM Labs uses UUID-scoped input names). The
         # default Playwright 30 s wait per miss piled up to ~120 s of dead
         # time in this method; the composer's scan-fill loop covers the
         # same identity fields on the second pass anyway.
         _fill = _fast_fill
-        _fill(page, "input[name='_systemfield_name']", answers.full_name)
-        _fill(page, "input[name='_systemfield_email']", answers.email)
+        _fill(page, "input[name='_systemfield_name']", answers.full_name, timeout_ms)
+        _fill(page, "input[name='_systemfield_email']", answers.email, timeout_ms)
         if answers.phone:
-            _fill(page, "input[name='_systemfield_phone']", answers.phone)
+            _fill(page, "input[name='_systemfield_phone']", answers.phone, timeout_ms)
         if answers.linkedin_url:
-            _fill(page, "input[name='_systemfield_linkedin']", answers.linkedin_url)
+            _fill(page, "input[name='_systemfield_linkedin']", answers.linkedin_url, timeout_ms)
         if answers.portfolio_url:
-            _fill(page, "input[name='_systemfield_website']", answers.portfolio_url)
+            _fill(page, "input[name='_systemfield_website']", answers.portfolio_url, timeout_ms)
         if answers.location:
-            _fill(page, "input[name='_systemfield_location']", answers.location)
+            _fill(page, "input[name='_systemfield_location']", answers.location, timeout_ms)
 
     def _fill_dynamic(self, page: PageDriver, data: ApplicationData) -> None:
         # Resume upload. Ashby's real file input is hidden behind a
@@ -107,18 +133,24 @@ class AshbyHandler(BaseATSHandler):
         page.click("button[type='submit']")
 
 
-_FAST_FILL_TIMEOUT_MS = 500
+def _get_timeouts(data: ApplicationData) -> "ATSTimeoutsConfig":
+    """Extract timeout config from ApplicationData."""
+    if data.ats_timeouts is not None:
+        return data.ats_timeouts.get_for_ats("ashby")
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    return ATSTimeoutsConfig()
 
 
-def _fast_fill(page: PageDriver, selector: str, value: str) -> None:
-    """`page.fill(...)` with a 500 ms cap so a missing selector doesn't
-    burn Playwright's 30 s default. Silences the miss like the old
-    `contextlib.suppress(Exception)` did — the composer's scan-fill loop
-    will still handle any identity field with a different DOM name. Falls
-    back to a positional call when the page stub rejects the timeout
-    kwarg (test-only path)."""
+def _fast_fill(page: PageDriver, selector: str, value: str, timeout_ms: int = 500) -> None:
+    """`page.fill(...)` with configurable timeout (default 500ms) so a missing
+    selector doesn't burn Playwright's 30 s default. Silences the miss like the
+    old `contextlib.suppress(Exception)` did — the composer's scan-fill loop
+    will still handle any identity field with a different DOM name. Falls back
+    to a positional call when the page stub rejects the timeout kwarg
+    (test-only path)."""
     try:
-        page.fill(selector, value, timeout=_FAST_FILL_TIMEOUT_MS)  # type: ignore[call-arg]
+        page.fill(selector, value, timeout=timeout_ms)  # type: ignore[call-arg]
     except TypeError:
         with contextlib.suppress(Exception):
             page.fill(selector, value)

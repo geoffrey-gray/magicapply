@@ -184,15 +184,10 @@ def test_click_radio_returns_false_when_selector_never_matches() -> None:
 
 
 def test_click_radio_uses_fast_fail_timeout() -> None:
-    """The one click attempt must use the 500ms budget; longer timeouts
+    """The one click attempt must use the 500ms default budget; longer timeouts
     stalled Chromium into an EPIPE subprocess crash on the pre-fix
     TRM Ashby run."""
-    from magicapply.infrastructure.browser.forms.drivers.rules import (
-        _RADIO_CLICK_TIMEOUT_MS,
-        _click_radio,
-    )
-
-    assert _RADIO_CLICK_TIMEOUT_MS == 500
+    from magicapply.infrastructure.browser.forms.drivers.rules import _click_radio
 
     click_timeouts: list[int] = []
 
@@ -211,6 +206,7 @@ def test_click_radio_uses_fast_fail_timeout() -> None:
         def locator(self, _selector: str) -> _TimeoutCapturingLocator:
             return _TimeoutCapturingLocator()
 
+    # Call with default timeout (should be 500ms)
     _click_radio(_Page(), name="X", value="Y")
     assert click_timeouts == [500]
 

@@ -174,15 +174,19 @@ class _FakeSession:
 
 @pytest.fixture
 def patched_session(monkeypatch: pytest.MonkeyPatch) -> _FakePage:
-    """Replace PlaywrightSession in the pipeline command with a fake."""
+    """Replace open_apply_session in the pipeline command with a fake."""
     page = _FakePage()
 
     def _factory(*args: object, **kwargs: object) -> _FakeSession:
         return _FakeSession(page)
 
     monkeypatch.setattr(
-        "magicapply.cli.commands.pipeline.PlaywrightSession",
+        "magicapply.cli.commands.pipeline.open_apply_session",
         _factory,
+    )
+    monkeypatch.setattr(
+        "magicapply.cli.commands.pipeline.apply_pending_auth_cookies",
+        lambda session: None,
     )
     return page
 

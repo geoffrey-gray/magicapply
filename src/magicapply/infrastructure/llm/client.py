@@ -1,42 +1,23 @@
-"""LLM Protocol and shared types.
+"""LLM result types — infrastructure-layer return shapes.
 
-The `system` field takes a list of `SystemBlock`s rather than a single string so
-callers can mark reusable prefixes as `cacheable=True`. The AnthropicProvider
-then attaches `cache_control` on those blocks — critical for MagicApply where a
-base resume + prompt is reused across every job in a discovery run.
+The LLMClient Protocol and domain-used types (SystemBlock, LLMMessage) have been
+moved to domain/llm.py to enforce the layering rule: domain MUST NOT import from
+infrastructure.
 
-Prompt caching design (see docs/GOF_PATTERNS.md and CLAUDE.md):
+This file retains LLMResult, which is infrastructure-only — domain code extracts
+the .text field but doesn't need to construct or inspect token metrics.
 
-- Put stable content first (base resume, static instructions) — `cacheable=True`
-- Put volatile content last (the specific job description) — `cacheable=False`
-
-Cache reads are ~10% of base input cost; misses are ~1.25x. Anthropic's
-minimum cacheable prefix is model-dependent (~2K tokens for sonnet-4-6).
+For prompt caching design notes, see domain/llm.py.
 """
 
 from __future__ import annotations
 
-from typing import Literal, Protocol
-
 from pydantic import BaseModel, ConfigDict, Field
 
+# Import domain types that define the Protocol contract
+from magicapply.domain.llm import LLMClient, LLMMessage, SystemBlock
 
-class SystemBlock(BaseModel):
-    """One system-prompt block, optionally cache-controlled."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    text: str
-    cacheable: bool = False
-
-
-class LLMMessage(BaseModel):
-    """One turn in the conversation. First message must be role=user."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    role: Literal["user", "assistant"]
-    content: str
+__all__ = ["LLMClient", "LLMMessage", "LLMResult", "SystemBlock"]
 
 
 class LLMResult(BaseModel):
@@ -44,6 +25,10 @@ class LLMResult(BaseModel):
 
     Cache-token fields default to 0 so non-Anthropic providers don't have to
     populate them.
+
+    This class lives in infrastructure (not domain) because domain code only
+    extracts the .text field. Infrastructure providers and factories construct
+    and track token metrics.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -59,20 +44,3 @@ class LLMResult(BaseModel):
         """Cache-read tokens / total prompt tokens. 0.0 if no prompt tokens."""
         total = self.input_tokens + self.cache_read_tokens + self.cache_creation_tokens
         return self.cache_read_tokens / total if total else 0.0
-
-
-class LLMClient(Protocol):
-    """One-shot completion. Non-streaming by design for the MVP.
-
-    Concrete implementations live under `providers/`. Downstream domain code
-    depends on this Protocol, not on a concrete class.
-    """
-
-    def complete(
-        self,
-        *,
-        system: list[SystemBlock] | None,
-        messages: list[LLMMessage],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-    ) -> LLMResult: ...

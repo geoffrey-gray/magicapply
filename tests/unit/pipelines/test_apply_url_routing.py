@@ -19,6 +19,8 @@ from magicapply.infrastructure.browser.ats.base import ApplicationData
 from magicapply.infrastructure.browser.ats.factory import ATSHandlerFactory
 from magicapply.infrastructure.browser.ats.generic import GenericHandler
 from magicapply.infrastructure.browser.ats.greenhouse import GreenhouseHandler
+from magicapply.infrastructure.browser.ats.indeed import IndeedHandler
+from magicapply.infrastructure.browser.ats.linkedin import LinkedInHandler
 from magicapply.infrastructure.browser.ats.workday import WorkdayHandler
 from magicapply.infrastructure.persistence.repositories.applications import (
     SqlApplicationsRepository,
@@ -45,7 +47,7 @@ def test_effective_apply_url_selects_workday_handler() -> None:
         title="Data Science Manager",
         company="The Home Depot",
     )
-    assert isinstance(ATSHandlerFactory.for_url(job.url), GenericHandler)
+    assert isinstance(ATSHandlerFactory.for_url(job.url), LinkedInHandler)
     handler = ATSHandlerFactory.for_url(job.effective_apply_url)
     assert isinstance(handler, WorkdayHandler)
 
@@ -124,7 +126,7 @@ def test_apply_pipeline_routes_via_apply_url_not_listing(
         application_data=data,
     )
 
-    assert isinstance(ATSHandlerFactory.for_url(job.url), GenericHandler)
+    assert isinstance(ATSHandlerFactory.for_url(job.url), LinkedInHandler)
     assert isinstance(
         ATSHandlerFactory.for_url(job.effective_apply_url), GreenhouseHandler
     )
@@ -137,12 +139,12 @@ def test_apply_pipeline_routes_via_apply_url_not_listing(
     ) in page.calls
 
 
-def test_apply_pipeline_attempts_indeed_listing_via_generic(
+def test_apply_pipeline_attempts_indeed_listing_via_indeed_handler(
     engine: Engine, tmp_path: Path
 ) -> None:
-    """Indeed/LinkedIn listing URLs apply via Generic (fallback), not skipped.
+    """Indeed listing URLs apply via IndeedHandler (not skipped).
 
-    Rate is controlled by apply throttle (bucket indeed/linkedin) — not by
+    Rate is controlled by apply throttle (bucket indeed) — not by
     refusing board hosts.
     """
     job = Job.new(
@@ -150,6 +152,9 @@ def test_apply_pipeline_attempts_indeed_listing_via_generic(
         url="https://www.indeed.com/viewjob?jk=abc123",
         title="Data Scientist",
         company="Acme",
+        # Already resolved once so apply_one does not re-open the listing
+        # before the handler (keeps this unit test hermetic).
+        raw={"board_resolve": "done", "indeedApplyable": True},
     )
     jobs = SqlJobsRepository(engine)
     apps = SqlApplicationsRepository(engine)
@@ -182,7 +187,6 @@ def test_apply_pipeline_attempts_indeed_listing_via_generic(
             pass
 
         def content(self) -> str:
-            # Minimal form so GenericHandler can dry-run rather than hard-fail.
             return (
                 "<html><body><form>"
                 "<input id='first_name' /><input type='submit' />"
@@ -207,7 +211,7 @@ def test_apply_pipeline_attempts_indeed_listing_via_generic(
         dry_run=True,
     )
 
-    pipeline = ApplyPipeline(applications_repo=apps)
+    pipeline = ApplyPipeline(applications_repo=apps, jobs_repo=jobs)
     report = pipeline.apply_one(
         page=page,
         application=app,
@@ -215,7 +219,7 @@ def test_apply_pipeline_attempts_indeed_listing_via_generic(
         application_data=data,
     )
 
-    assert isinstance(ATSHandlerFactory.for_url(job.url), GenericHandler)
+    assert isinstance(ATSHandlerFactory.for_url(job.url), IndeedHandler)
     assert ("goto", job.url) in page.calls
     assert report.final_state is not ApplicationState.SKIPPED
     saved = apps.get(app.id)

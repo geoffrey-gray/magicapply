@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 import logging
 
+from magicapply.domain.llm import LLMClient, LLMMessage, SystemBlock
 from magicapply.domain.models.job import Job
-from magicapply.infrastructure.llm.client import LLMClient, LLMMessage, SystemBlock
 
 logger = logging.getLogger(__name__)
 

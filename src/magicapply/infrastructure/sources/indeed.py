@@ -509,16 +509,18 @@ def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
             continue
         seen.add(jk)
         third = record.get("thirdPartyApplyUrl")
+        # applystart / Indeed-hosted URLs are NOT external ATS destinations —
+        # store them in raw for IndeedHandler; only off-Indeed third-party
+        # URLs become Job.apply_url.
         apply_url = apply_url_if_external(
             str(third) if third else None,
             board_hosts=BOARD_HOSTS_INDEED,
         )
-        # Indeed applystart / Easy Apply links stay on indeed.com — not external ATS.
+        indeed_apply_url: str | None = None
         if third and not apply_url:
-            logger.info(
-                "indeed: thirdPartyApplyUrl not external for jk=%s (board-only)",
-                jk,
-            )
+            candidate = str(third).strip()
+            if candidate.startswith("http") and "indeed.com" in candidate.lower():
+                indeed_apply_url = canonicalize_url(candidate)
         raw: dict[str, Any] = {
             "jobkey": jk,
             "createDate": record.get("createDate"),
@@ -529,6 +531,8 @@ def extract_jobs_from_search(html: str, *, source_name: str) -> list[Job]:
             "thirdPartyApplyUrl": record.get("thirdPartyApplyUrl"),
             "source_extraction": "search-page-hydration",
         }
+        if indeed_apply_url:
+            raw["indeed_apply_url"] = indeed_apply_url
         if apply_url:
             raw["apply_resolve"] = "serp_hydration"
             raw["platform"] = sniff_platform(apply_url)

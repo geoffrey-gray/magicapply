@@ -86,11 +86,13 @@ class ApplyPipeline:
         jobs_repo: JobsRepository | None = None,
         data_builder: DataBuilder | None = None,
         throttle: ApplyThrottle | None = None,
+        retailor: Callable[[Application, Job], Application] | None = None,
     ) -> None:
         self._apps = applications_repo
         self._jobs = jobs_repo
         self._data_builder = data_builder
         self._throttle = throttle
+        self._retailor = retailor
 
     def apply_one(
         self,
@@ -125,14 +127,44 @@ class ApplyPipeline:
                 "cannot re-apply a real submission; only dry-run rows support --retry"
             )
 
+        from magicapply.infrastructure.browser.board_resolve import (
+            resolve_board_destination,
+        )
         from magicapply.infrastructure.sources.apply_url import (
+            description_looks_thin,
             job_with_resolved_apply_url,
+            needs_board_destination_resolve,
             resolve_job_apply_destination,
         )
 
+        # Lazy board resolve: prefer external ATS; stamp Easy Apply meta when
+        # the listing has no offsite URL. Persist so retries skip re-fetch.
+        prev_desc_len = len(job.description or "")
+        if needs_board_destination_resolve(job) or (
+            job.apply_url
+            and description_looks_thin(job.description)
+        ):
+            job, _changed = resolve_board_destination(page, job)
+            if self._jobs is not None:
+                job = self._jobs.save(job)
+            # JD upgraded after a prior tailor → re-tailor once.
+            if (
+                self._retailor is not None
+                and len(job.description or "") > prev_desc_len + 80
+                and application.state is ApplicationState.TAILORED
+            ):
+                logger.info(
+                    "apply_one: JD upgraded for job %s; re-tailoring", job.id
+                )
+                application = self._retailor(application, job)
+                if self._data_builder is not None:
+                    application_data = self._data_builder(  # type: ignore[call-arg]
+                        application, job, dry_run=application_data.dry_run
+                    )
+
         # Prefer external/embed apply URLs when known. If the destination is
-        # still an Indeed/LinkedIn listing, apply via GenericHandler (fallback)
-        # under per-board throttle — do NOT skip board applies.
+        # still an Indeed/LinkedIn listing, apply via board handler under
+        # per-board throttle — do NOT skip board applies.
         job = job_with_resolved_apply_url(job)
         apply_target = resolve_job_apply_destination(job)
         if application_data.job_url != apply_target:
@@ -175,6 +207,14 @@ class ApplyPipeline:
         self._apps.save(application)
 
         result = handler.apply(page, application_data)
+
+        # If a board handler redirected off-site and persisted apply_url on
+        # the in-memory job via handler side effects, keep DB in sync when
+        # application_data.job was mutated.
+        if self._jobs is not None and isinstance(application_data.job, Job):
+            maybe = application_data.job
+            if maybe.apply_url and maybe.apply_url != job.apply_url:
+                self._jobs.save(maybe)
 
         target = {
             "applied": ApplicationState.APPLIED,
@@ -275,6 +315,11 @@ class ApplyPipeline:
                 retry = app.state is not ApplicationState.TAILORED
                 data = self._data_builder(app, job, dry_run=dry_run)  # type: ignore[call-arg]
                 page = session.new_page()
+                from magicapply.infrastructure.browser.apply_session import (
+                    configure_apply_page,
+                )
+
+                configure_apply_page(page)
                 report = self.apply_one(
                     page=page,
                     application=app,

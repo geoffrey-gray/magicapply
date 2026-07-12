@@ -28,8 +28,8 @@ from typing import Protocol
 
 from magicapply.config.models import KeywordBank, ScoringConfig
 from magicapply.domain.keywords.alignment import score_jd_keyword_coverage
+from magicapply.domain.llm import LLMClient, LLMMessage, SystemBlock
 from magicapply.domain.models.job import Job
-from magicapply.infrastructure.llm.client import LLMClient, LLMMessage, SystemBlock
 
 logger = logging.getLogger(__name__)
 

@@ -29,7 +29,13 @@ from magicapply.cli.composition import (
 from magicapply.config import ConfigError, LoadedConfig, load_config
 from magicapply.config.paths import default_config_root
 from magicapply.domain.models.application import ApplicationState
-from magicapply.infrastructure.browser.session import PlaywrightSession
+from magicapply.infrastructure.browser.apply_session import (
+    apply_pending_auth_cookies,
+    configure_apply_page,
+    open_apply_session,
+)
+from magicapply.infrastructure.browser.board_resolve import resolve_board_destination
+from magicapply.infrastructure.sources.apply_url import needs_board_destination_resolve
 from magicapply.pipelines.apply_types import ApplyReport
 from magicapply.pipelines.apply_utils import count_outcomes
 from magicapply.pipelines.discovery import DiscoveryPipeline
@@ -166,14 +172,25 @@ def run(
             "(and as throttle backoff). Defaults to 1080 when --max-applies is set.",
         ),
     ] = None,
+    skip_discover: Annotated[
+        bool,
+        typer.Option(
+            "--skip-discover/--discover",
+            help="Skip discovery and use the existing SQLite corpus "
+            "(resolve → tailor → apply only). Default rediscovers.",
+        ),
+    ] = False,
 ) -> None:
-    """Full cycle: discover → tailor → apply, in one command.
+    """Full cycle: discover → resolve → tailor → apply, in one command.
 
     Sequences DiscoveryPipeline, TailoringPipeline, and ApplyPipeline.apply_batch
     for a profile. Default is a one-shot pass. With ``--max-applies`` /
     ``--duration-hours``, the process stays alive and re-discovers / re-tailors /
     re-batches under domain throttle + optional pace sleeps — one MagicApply
     process owns the loop (no external shell apply loop).
+
+    Pass ``--skip-discover`` when inventory already exists and you want a
+    continual apply campaign without re-SERPing Indeed/LinkedIn.
     """
     loaded = _load(root)
     profile_cfg = loaded.profile(profile)
@@ -189,24 +206,94 @@ def run(
     sources = build_sources_for_profile(loaded, profile_cfg)
     scoring = profile_cfg.scoring or loaded.base.scoring
     scorer = build_scorer(loaded, profile_cfg, scoring)
-    pipeline = build_apply_pipeline(loaded, apps_repo, jobs_repo)
+    pipeline = build_apply_pipeline(
+        loaded, apps_repo, jobs_repo, profile=profile_cfg
+    )
     all_reports: list[ApplyReport] = []
 
+    def _resolve_scored_board_jobs() -> None:
+        """Before tailor: open listings once for SCORED jobs missing apply_url."""
+        scored = apps_repo.list_by_state_and_profile(
+            ApplicationState.SCORED, profile_cfg.name
+        )
+        needing = []
+        for app in scored:
+            job = jobs_repo.get(app.job_id)
+            if job is not None and needs_board_destination_resolve(job):
+                needing.append(job)
+        if not needing:
+            return
+        console.print(
+            f"[dim]resolving board destinations for {len(needing)} SCORED job(s)[/dim]"
+        )
+        # Prefer Indeed auth when any Indeed listing needs resolve.
+        prefer = None
+        for job in needing:
+            if "indeed.com" in job.url.lower():
+                prefer = "indeed"
+                break
+            if "linkedin.com" in job.url.lower():
+                prefer = "linkedin"
+        session = open_apply_session(
+            headless=headless,
+            data_dir=loaded.data_dir(),
+            prefer_site=prefer,
+        )
+        with session:
+            apply_pending_auth_cookies(session)
+            page = session.new_page()
+            configure_apply_page(page)
+            for job in needing:
+                updated, changed = resolve_board_destination(page, job)
+                if changed:
+                    jobs_repo.save(updated)
+                    console.print(
+                        f"[dim]resolved[/dim] {job.id[:8]} → "
+                        f"{updated.apply_url or 'board-only'}"
+                    )
+
     def _discover_and_tailor() -> None:
-        discover_report = DiscoveryPipeline(
-            sources=sources,
-            jobs_repo=jobs_repo,
-            applications_repo=apps_repo,
-            scorer=scorer,
-            profile_name=profile_cfg.name,
-            score_threshold=scoring.threshold,
-            source_scorer=build_source_scorer(apps_repo),
-        ).run()
-        _render_discover(discover_report)
+        if not skip_discover:
+            discover_report = DiscoveryPipeline(
+                sources=sources,
+                jobs_repo=jobs_repo,
+                applications_repo=apps_repo,
+                scorer=scorer,
+                profile_name=profile_cfg.name,
+                score_threshold=scoring.threshold,
+                source_scorer=build_source_scorer(apps_repo),
+            ).run()
+            _render_discover(discover_report)
+        else:
+            console.print("[dim]skip-discover: using existing corpus[/dim]")
+        _resolve_scored_board_jobs()
         tailor_report = build_tailoring_pipeline(
             loaded, profile_cfg, apps_repo, jobs_repo
         ).run()
         _render_tailor(tailor_report)
+
+    def _open_apply_session_for_batch():
+        # Load Indeed/LinkedIn auth when any TAILORED job may need board apply.
+        tailored = apps_repo.list_by_state_and_profile(
+            ApplicationState.TAILORED, profile_cfg.name
+        )
+        prefer = None
+        for app in tailored:
+            job = jobs_repo.get(app.job_id)
+            if job is None:
+                continue
+            url = (job.apply_url or job.url).lower()
+            if "indeed.com" in url:
+                prefer = "indeed"
+                break
+            if "linkedin.com" in url and prefer is None:
+                prefer = "linkedin"
+        session = open_apply_session(
+            headless=headless,
+            data_dir=loaded.data_dir(),
+            prefer_site=prefer,
+        )
+        return session
 
     if not paced:
         _discover_and_tailor()
@@ -216,7 +303,9 @@ def run(
         if not tailored_ready:
             console.print("[dim]no TAILORED applications; skipping apply phase[/dim]")
             return
-        with PlaywrightSession(headless=headless) as session:
+        session = _open_apply_session_for_batch()
+        with session:
+            apply_pending_auth_cookies(session)
             apply_reports = pipeline.apply_batch(
                 session=session,
                 profile_name=profile_cfg.name,
@@ -227,7 +316,8 @@ def run(
 
     console.print(
         f"[cyan]paced run[/cyan] max_applies={max_applies} "
-        f"duration_hours={duration_hours} pace_seconds={pace_seconds}"
+        f"duration_hours={duration_hours} pace_seconds={pace_seconds} "
+        f"skip_discover={skip_discover}"
     )
     empty_waves = 0
     while True:
@@ -284,7 +374,9 @@ def run(
 
         empty_waves = 0
         try:
-            with PlaywrightSession(headless=headless) as session:
+            session = _open_apply_session_for_batch()
+            with session:
+                apply_pending_auth_cookies(session)
                 wave_reports = pipeline.apply_batch(
                     session=session,
                     profile_name=profile_cfg.name,
@@ -445,12 +537,23 @@ def apply(
 
     console.print(f"[dim]job:[/dim] {job.title} @ {job.company}")
     console.print(f"[dim]url:[/dim] {job.url}")
+    if job.apply_url:
+        console.print(f"[dim]apply_url:[/dim] {job.apply_url}")
     console.print(f"[dim]profile:[/dim] {application.profile_name}")
 
     data = build_application_data(loaded, application, job, dry_run=no_submit)
-    pipeline = build_apply_pipeline(loaded, apps_repo, jobs_repo)
+    profile_cfg = loaded.profile(application.profile_name)
+    pipeline = build_apply_pipeline(
+        loaded, apps_repo, jobs_repo, profile=profile_cfg
+    )
 
-    with PlaywrightSession(headless=headless) as session:
+    session = open_apply_session(
+        headless=headless,
+        data_dir=loaded.data_dir(),
+        job=job,
+    )
+    with session:
+        apply_pending_auth_cookies(session)
         page = session.new_page()
         report = pipeline.apply_one(
             page=page,

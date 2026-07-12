@@ -51,3 +51,9 @@ resumes/*.docx
 data/observed_forms/
 data/answer_proposals.yaml
 data/screenshots/
+
+# Claude code plans
+plans/
+
+# Local CLI / DoD run logs
+logs/

@@ -25,14 +25,14 @@ from __future__ import annotations
 import logging
 import re
 import time
+from typing import TYPE_CHECKING
 
 from magicapply.infrastructure.browser.ats.base import PageDriver
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from magicapply.config.models import ATSTimeoutsConfig
 
-_CLICK_TIMEOUT_MS = 8_000
-_OPEN_WAIT_MS = 3_000
-_SELECT_WAIT_MS = 2_000
+logger = logging.getLogger(__name__)
 
 _PROMPT_OPTION = "div[data-automation-id='promptOption'][data-automation-label='{label}']"
 _MULTI_CONTAINER = "[data-automation-id='multiSelectContainer']"
@@ -45,28 +45,35 @@ def fill_multiselect(
     *,
     parent_label: str | None = None,
     search: str | None = None,
+    timeouts: ATSTimeoutsConfig | None = None,
 ) -> bool:
     """Select ``label`` in a Workday multiselect (raghuboosetty pattern)."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     del search  # community script opens via container click only
     if not label:
         return False
     scope = f"[data-fkit-id='{fkit_id}']"
-    if not _open_multiselect(page, scope, fkit_id):
+    if not _open_multiselect(page, scope, fkit_id, t.wizard_click_timeout_ms):
         return False
-    _wait_brief(page, _OPEN_WAIT_MS)
+    _wait_brief(page, t.page_load_wait_ms)
     if parent_label:
-        if not click_prompt_option(page, parent_label):
+        if not click_prompt_option(page, parent_label, timeouts):
             logger.warning("Workday multiselect: parent option %r not found", parent_label)
             return False
-        _wait_brief(page, _OPEN_WAIT_MS)
-    if not click_prompt_option(page, label):
+        _wait_brief(page, t.page_load_wait_ms)
+    if not click_prompt_option(page, label, timeouts):
         return False
-    _wait_brief(page, _SELECT_WAIT_MS)
-    return _selection_committed(page, scope, label)
+    _wait_brief(page, t.step_transition_wait_ms)
+    return _selection_committed(page, scope, label, t.wizard_click_timeout_ms)
 
 
-def click_prompt_option(page: PageDriver, label: str) -> bool:
+def click_prompt_option(page: PageDriver, label: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Click one ``promptOption`` by exact ``data-automation-label``."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     if not label:
         return False
     escaped = _css_attr(label)
@@ -82,53 +89,56 @@ def click_prompt_option(page: PageDriver, label: str) -> bool:
                 opt = locator(sel)
                 if opt.count() == 0:
                     continue
-                opt.first.click(timeout=_CLICK_TIMEOUT_MS)
+                opt.first.click(timeout=t.wizard_click_timeout_ms)
                 return True
             except Exception:  # noqa: BLE001
                 continue
         try:
             locator.get_by_role("option", name=f"{label} not checked", exact=True).click(
-                timeout=_CLICK_TIMEOUT_MS
+                timeout=t.wizard_click_timeout_ms
             )
             return True
         except Exception:  # noqa: BLE001
             pass
-    return _try_click(page, _PROMPT_OPTION.format(label=escaped), timeout_ms=_CLICK_TIMEOUT_MS)
+    return _try_click(page, _PROMPT_OPTION.format(label=escaped), timeout_ms=t.wizard_click_timeout_ms)
 
 
-def _open_multiselect(page: PageDriver, scope: str, fkit_id: str) -> bool:
+def _open_multiselect(page: PageDriver, scope: str, fkit_id: str, timeout_ms: int = 8000) -> bool:
     """Open dropdown via scoped ``multiSelectContainer`` (raghuboosetty step 1)."""
     container = f"{scope} {_MULTI_CONTAINER}"
     if _is_visible(page, container):
-        return _try_click(page, container, timeout_ms=_CLICK_TIMEOUT_MS)
+        return _try_click(page, container, timeout_ms=timeout_ms)
     if _is_visible(page, f"#{fkit_id}"):
-        return _try_click(page, f"#{fkit_id}", timeout_ms=_CLICK_TIMEOUT_MS)
+        return _try_click(page, f"#{fkit_id}", timeout_ms=timeout_ms)
     return False
 
 
-def _selection_committed(page: PageDriver, scope: str, label: str) -> bool:
+def _selection_committed(page: PageDriver, scope: str, label: str, timeout_ms: int = 8000) -> bool:
     locator = getattr(page, "locator", None)
     if not callable(locator):
         return True
     try:
-        text = locator(scope).inner_text(timeout=2_000)
+        text = locator(scope).inner_text(timeout=timeout_ms)
     except Exception:  # noqa: BLE001
         return False
     return "1 item selected" in text or label in text
 
 
-def select_listbox_by_index(page: PageDriver, index: int, label: str) -> bool:
+def select_listbox_by_index(page: PageDriver, index: int, label: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Open the *n*th non-Settings ``aria-haspopup=listbox`` button and pick ``label``."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     locator = getattr(page, "locator", None)
     if not callable(locator):
         return False
     buttons = locator("button[aria-haspopup='listbox']")
     try:
-        buttons.nth(index).click(timeout=_CLICK_TIMEOUT_MS)
+        buttons.nth(index).click(timeout=t.wizard_click_timeout_ms)
     except Exception:  # noqa: BLE001
         return False
-    _wait_brief(page, _OPEN_WAIT_MS)
-    return _click_listbox_option(page, label)
+    _wait_brief(page, t.page_load_wait_ms)
+    return _click_listbox_option(page, label, t.wizard_click_timeout_ms)
 
 
 def fill_questionnaire_fieldsets(
@@ -137,8 +147,12 @@ def fill_questionnaire_fieldsets(
     rules: list[tuple[re.Pattern[str], bool | None]],
     *,
     default_false: bool = True,
+    timeouts: ATSTimeoutsConfig | None = None,
 ) -> None:
     """Fill every ``Select One`` listbox under ``scope`` using fieldset label rules."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     locator = getattr(page, "locator", None)
     if not callable(locator):
         return
@@ -150,14 +164,14 @@ def fill_questionnaire_fieldsets(
     for i in range(count):
         fs = fieldsets.nth(i)
         try:
-            text = fs.inner_text(timeout=2_000)
+            text = fs.inner_text(timeout=t.step_transition_wait_ms)
         except Exception:  # noqa: BLE001
             continue
         btn = fs.locator("button[aria-haspopup='listbox']")
         try:
             if btn.count() == 0:
                 continue
-            current = btn.first.inner_text(timeout=1_000).strip().lower()
+            current = btn.first.inner_text(timeout=t.brief_wait_ms).strip().lower()
         except Exception:  # noqa: BLE001
             continue
         if current and current not in ("select one", ""):
@@ -173,15 +187,18 @@ def fill_questionnaire_fieldsets(
             continue
         pick = "Yes" if value else "No"
         try:
-            btn.first.click(timeout=_CLICK_TIMEOUT_MS)
+            btn.first.click(timeout=t.wizard_click_timeout_ms)
         except Exception:  # noqa: BLE001
             continue
-        _wait_brief(page, _OPEN_WAIT_MS)
-        _click_listbox_option(page, pick)
+        _wait_brief(page, t.page_load_wait_ms)
+        _click_listbox_option(page, pick, t.wizard_click_timeout_ms)
 
 
-def select_question_listbox(page: PageDriver, question_substring: str, label: str) -> bool:
+def select_question_listbox(page: PageDriver, question_substring: str, label: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Pick ``label`` in the listbox beside a questionnaire row (Pluralsight step 3)."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     locator = getattr(page, "locator", None)
     if not callable(locator):
         return False
@@ -198,12 +215,12 @@ def select_question_listbox(page: PageDriver, question_substring: str, label: st
             if row.count() == 0:
                 continue
             row.first.locator("button[aria-haspopup='listbox']").click(
-                timeout=_CLICK_TIMEOUT_MS
+                timeout=t.wizard_click_timeout_ms
             )
         except Exception:  # noqa: BLE001
             continue
-        _wait_brief(page, _OPEN_WAIT_MS)
-        if _click_listbox_option(page, label):
+        _wait_brief(page, t.page_load_wait_ms)
+        if _click_listbox_option(page, label, t.wizard_click_timeout_ms):
             return True
     return False
 
@@ -229,20 +246,23 @@ def _non_settings_listbox_indices(page: PageDriver) -> list[int]:
     return indices
 
 
-def select_formfield_listbox(page: PageDriver, form_field_id: str, label: str) -> bool:
+def select_formfield_listbox(page: PageDriver, form_field_id: str, label: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Open a listbox inside ``[data-automation-id='formField-…']`` and pick ``label``."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     trigger = f"[data-automation-id='{form_field_id}'] button"
     locator = getattr(page, "locator", None)
     if not callable(locator):
-        return _try_click(page, trigger, timeout_ms=_CLICK_TIMEOUT_MS) and _click_listbox_option(
-            page, label
+        return _try_click(page, trigger, timeout_ms=t.wizard_click_timeout_ms) and _click_listbox_option(
+            page, label, t.wizard_click_timeout_ms
         )
     try:
-        locator(trigger).first.click(timeout=_CLICK_TIMEOUT_MS)
+        locator(trigger).first.click(timeout=t.wizard_click_timeout_ms)
     except Exception:  # noqa: BLE001
         return False
-    _wait_brief(page, _OPEN_WAIT_MS)
-    return _click_listbox_option(page, label)
+    _wait_brief(page, t.page_load_wait_ms)
+    return _click_listbox_option(page, label, t.wizard_click_timeout_ms)
 
 
 _LISTBOX_PLACEHOLDER = frozenset({"", "select one"})
@@ -264,47 +284,59 @@ _VETERAN_DECLINE_LABELS = (
 )
 
 
-def listbox_committed(page: PageDriver, button_id: str) -> bool:
+def listbox_committed(page: PageDriver, button_id: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """True when a listbox trigger shows a committed value (not placeholder)."""
-    if not _is_visible(page, f"#{button_id}", timeout_ms=500):
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
+    if not _is_visible(page, f"#{button_id}", timeout_ms=t.candidate_timeout_ms):
         return False
     current = _listbox_button_label(page, button_id).lower()
     return current not in _LISTBOX_PLACEHOLDER
 
 
-def date_spin_filled(page: PageDriver, selector: str) -> bool:
+def date_spin_filled(page: PageDriver, selector: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """True when a date spinbutton input already holds a non-empty value."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     locator = getattr(page, "locator", None)
     if not callable(locator):
         return False
     try:
-        value = locator(selector).first.input_value(timeout=1_000)
+        value = locator(selector).first.input_value(timeout=t.brief_wait_ms)
     except Exception:  # noqa: BLE001
         return False
     return bool(value.strip())
 
 
-def fill_date_spin_input(page: PageDriver, selector: str, value: str) -> bool:
+def fill_date_spin_input(page: PageDriver, selector: str, value: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Fill one MM/DD/YYYY spinbutton and blur so Workday commits the value."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     if not value:
         return False
-    if date_spin_filled(page, selector):
+    if date_spin_filled(page, selector, timeouts):
         return True
     locator = getattr(page, "locator", None)
     if not callable(locator):
-        return _try_fill(page, selector, value, timeout_ms=_CLICK_TIMEOUT_MS)
+        return _try_fill(page, selector, value, timeout_ms=t.wizard_click_timeout_ms)
     try:
         field = locator(selector).first
-        field.click(timeout=_CLICK_TIMEOUT_MS)
-        field.fill(value, timeout=_CLICK_TIMEOUT_MS)
+        field.click(timeout=t.wizard_click_timeout_ms)
+        field.fill(value, timeout=t.wizard_click_timeout_ms)
         field.blur()
         return True
     except Exception:  # noqa: BLE001
-        return _try_fill(page, selector, value, timeout_ms=_CLICK_TIMEOUT_MS)
+        return _try_fill(page, selector, value, timeout_ms=t.wizard_click_timeout_ms)
 
 
-def click_disability_option(page: PageDriver, label: str, *, fallback: str = "") -> bool:
+def click_disability_option(page: PageDriver, label: str, *, fallback: str = "", timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Click a disability self-identify control by visible label text (radio or checkbox)."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     locator = getattr(page, "locator", None)
     if not callable(locator):
         return False
@@ -313,13 +345,13 @@ def click_disability_option(page: PageDriver, label: str, *, fallback: str = "")
             continue
         try:
             loc = locator("label").filter(has_text=text).first
-            loc.scroll_into_view_if_needed(timeout=3_000)
+            loc.scroll_into_view_if_needed(timeout=t.page_load_wait_ms)
             for control_sel in ("input[type='checkbox']", "input[type='radio']"):
                 control = loc.locator(control_sel)
                 if control.count() > 0:
-                    control.first.click(timeout=_CLICK_TIMEOUT_MS, force=True)
+                    control.first.click(timeout=t.wizard_click_timeout_ms, force=True)
                     return True
-            loc.click(timeout=_CLICK_TIMEOUT_MS, force=True)
+            loc.click(timeout=t.wizard_click_timeout_ms, force=True)
             return True
         except Exception:  # noqa: BLE001
             continue
@@ -355,63 +387,69 @@ def _listbox_button_label(page: PageDriver, button_id: str) -> str:
         return ""
 
 
-def select_listbox_first_match(page: PageDriver, button_id: str, *labels: str) -> bool:
+def select_listbox_first_match(page: PageDriver, button_id: str, *labels: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Open a listbox button and pick the first matching ``labels`` or decline option."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     if not _is_visible(page, f"#{button_id}"):
         return False
     current = _listbox_button_label(page, button_id).lower()
     if current not in _LISTBOX_PLACEHOLDER:
         return True
-    _try_click(page, f"#{button_id}", timeout_ms=_CLICK_TIMEOUT_MS)
-    _wait_brief(page, _OPEN_WAIT_MS)
+    _try_click(page, f"#{button_id}", timeout_ms=t.wizard_click_timeout_ms)
+    _wait_brief(page, t.page_load_wait_ms)
     for label in labels:
-        if label and _click_listbox_option(page, label):
+        if label and _click_listbox_option(page, label, t.wizard_click_timeout_ms):
             return True
-    return _click_listbox_decline_option(page)
+    return _click_listbox_decline_option(page, t.wizard_click_timeout_ms)
 
 
-def select_veteran_status_listbox(page: PageDriver, value: str | None) -> bool:
+def select_veteran_status_listbox(page: PageDriver, value: str | None, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Pick veteran status — Circle uses uppercase decline labels, not DEI wording."""
     labels = (value,) if value else _VETERAN_DECLINE_LABELS
-    return select_listbox_first_match(page, _VETERAN_STATUS_BUTTON, *labels)
+    return select_listbox_first_match(page, _VETERAN_STATUS_BUTTON, *labels, timeouts=timeouts)
 
 
-def _click_listbox_decline_option(page: PageDriver) -> bool:
+def _click_listbox_decline_option(page: PageDriver, timeout_ms: int = 8000) -> bool:
     locator = getattr(page, "locator", None)
     if not callable(locator):
         return False
     try:
         options = locator("[role='listbox'] [role='option']")
         for i in range(options.count()):
-            text = options.nth(i).inner_text(timeout=1_000)
+            text = options.nth(i).inner_text(timeout=1000)
             lo = text.strip().lower()
             if lo in _LISTBOX_PLACEHOLDER:
                 continue
             if any(marker in lo for marker in _DECLINE_OPTION_MARKERS):
-                options.nth(i).click(timeout=_CLICK_TIMEOUT_MS)
+                options.nth(i).click(timeout=timeout_ms)
                 return True
     except Exception:  # noqa: BLE001
         pass
     return False
 
 
-def select_listbox_button(page: PageDriver, button_id: str, label: str) -> bool:
+def select_listbox_button(page: PageDriver, button_id: str, label: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Open a Workday listbox button and pick ``label`` (raghuboosetty pattern)."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     if not label:
         return False
     trigger = f"#{button_id}"
     if not _is_visible(page, trigger):
         return False
-    _try_click(page, trigger, timeout_ms=_CLICK_TIMEOUT_MS)
-    _wait_brief(page, _OPEN_WAIT_MS)
-    return _click_listbox_option(page, label)
+    _try_click(page, trigger, timeout_ms=t.wizard_click_timeout_ms)
+    _wait_brief(page, t.page_load_wait_ms)
+    return _click_listbox_option(page, label, t.wizard_click_timeout_ms)
 
 
-def _click_listbox_option(page: PageDriver, label: str) -> bool:
+def _click_listbox_option(page: PageDriver, label: str, timeout_ms: int = 8000) -> bool:
     get_by_role = getattr(page, "get_by_role", None)
     if callable(get_by_role):
         try:
-            get_by_role("option", name=label, exact=True).click(timeout=_CLICK_TIMEOUT_MS)
+            get_by_role("option", name=label, exact=True).click(timeout=timeout_ms)
             return True
         except Exception:  # noqa: BLE001
             pass
@@ -424,21 +462,21 @@ def _click_listbox_option(page: PageDriver, label: str) -> bool:
             try:
                 opt = locator(candidate)
                 if opt.count() > 0:
-                    opt.first.click(timeout=_CLICK_TIMEOUT_MS)
+                    opt.first.click(timeout=timeout_ms)
                     return True
             except Exception:  # noqa: BLE001
                 continue
         try:
             locator("[role='listbox'] [role='option']").filter(
                 has_text=label
-            ).first.click(timeout=_CLICK_TIMEOUT_MS)
+            ).first.click(timeout=timeout_ms)
             return True
         except Exception:  # noqa: BLE001
             pass
     return _try_click(
         page,
         f"[role='listbox'] [role='option']:has-text('{label}')",
-        timeout_ms=_CLICK_TIMEOUT_MS,
+        timeout_ms=timeout_ms,
     )
 
 
@@ -448,8 +486,12 @@ def fill_search_multiselect(
     search: str,
     *,
     option_label: str | None = None,
+    timeouts: ATSTimeoutsConfig | None = None,
 ) -> bool:
     """Searchable multiselect (Circle education school): type, Enter, pick option."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     if not search:
         return False
     pick = option_label or search
@@ -458,8 +500,8 @@ def fill_search_multiselect(
         return False
     try:
         field = locator(input_selector).first
-        field.click(timeout=_CLICK_TIMEOUT_MS)
-        field.fill(search, timeout=_CLICK_TIMEOUT_MS)
+        field.click(timeout=t.wizard_click_timeout_ms)
+        field.fill(search, timeout=t.wizard_click_timeout_ms)
     except Exception:  # noqa: BLE001
         return False
     keyboard = getattr(page, "keyboard", None)
@@ -470,32 +512,35 @@ def fill_search_multiselect(
                 press("Enter")
             except Exception:  # noqa: BLE001
                 pass
-    _wait_brief(page, _OPEN_WAIT_MS)
-    if click_prompt_option(page, pick):
+    _wait_brief(page, t.page_load_wait_ms)
+    if click_prompt_option(page, pick, timeouts):
         return True
     # Tenant labels sometimes differ slightly from the search string.
     try:
         locator("[data-automation-id='promptOption']").filter(has_text=search).first.click(
-            timeout=_CLICK_TIMEOUT_MS
+            timeout=t.wizard_click_timeout_ms
         )
         return True
     except Exception:  # noqa: BLE001
         return False
 
 
-def click_automation_checkbox(page: PageDriver, automation_id: str) -> bool:
+def click_automation_checkbox(page: PageDriver, automation_id: str, timeouts: ATSTimeoutsConfig | None = None) -> bool:
     """Click a Workday custom checkbox identified by ``data-automation-id``."""
+    from magicapply.config.models import ATSTimeoutsConfig
+
+    t = timeouts or ATSTimeoutsConfig()
     selector = f"[data-automation-id='{_css_attr(automation_id)}']"
     locator = getattr(page, "locator", None)
     if callable(locator):
         try:
             loc = locator(selector)
-            if loc.is_visible(timeout=2_000):
-                loc.click(timeout=_CLICK_TIMEOUT_MS, force=True)
+            if loc.is_visible(timeout=t.step_transition_wait_ms):
+                loc.click(timeout=t.wizard_click_timeout_ms, force=True)
                 return True
         except Exception:  # noqa: BLE001
             pass
-    return _try_click(page, selector, timeout_ms=_CLICK_TIMEOUT_MS)
+    return _try_click(page, selector, timeout_ms=t.wizard_click_timeout_ms)
 
 
 def _css_attr(value: str) -> str:

@@ -438,6 +438,76 @@ def resolve_greenhouse_apply_url(
     return None
 
 
+def is_indeed_applystart_url(url: str | None) -> bool:
+    """True when URL is Indeed's hosted applystart entry point."""
+    if not url or not str(url).strip():
+        return False
+    parsed = urlparse(str(url).strip())
+    host = parsed.netloc.lower()
+    if "indeed.com" not in host:
+        return False
+    return "applystart" in parsed.path.lower()
+
+
+def indeed_apply_entry_url(job: Job) -> str | None:
+    """Indeed-hosted apply entry (applystart) from raw metadata, if any."""
+    raw = job.raw or {}
+    for key in ("indeed_apply_url", "thirdPartyApplyUrl"):
+        val = raw.get(key)
+        if val and is_indeed_applystart_url(str(val)):
+            return normalize_indeed_applystart_url(str(val))
+    return None
+
+
+def normalize_indeed_applystart_url(url: str) -> str:
+    """Strip tracking params; keep ``jk`` for a stable applystart entry."""
+    from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+    parsed = urlparse(str(url).strip())
+    jk = parse_qs(parsed.query).get("jk", [None])[0]
+    host = parsed.netloc.lower() or "www.indeed.com"
+    if "indeed.com" not in host:
+        host = "www.indeed.com"
+    path = "/applystart"
+    if jk:
+        query = urlencode({"jk": jk})
+        return urlunparse(("https", host, path, "", query, ""))
+    return canonicalize_url(f"https://{host}{path}")
+
+
+def description_looks_thin(description: str | None, *, min_chars: int = 200) -> bool:
+    """True when JD text is missing or only a SERP-length snippet."""
+    text = (description or "").strip()
+    return len(text) < min_chars
+
+
+def needs_board_destination_resolve(job: Job) -> bool:
+    """True when apply should open the board listing to find an external URL.
+
+    Skip when we already have a usable off-board ``apply_url`` and a
+    non-thin description (or Easy Apply meta is already recorded).
+    """
+    if job.apply_url and not is_job_board_listing_url(job.apply_url):
+        if not description_looks_thin(job.description):
+            return False
+        # External URL known but JD still thin — still worth offsite JD fetch
+        # without re-opening the board if we can fetch the destination.
+        return False
+    raw = job.raw or {}
+    if raw.get("board_resolve") == "done":
+        # Already attempted resolve; do not re-hit the board.
+        return False
+    if is_job_board_listing_url(job.url):
+        return True
+    return False
+
+
+def mark_board_resolve_done(job: Job, **extra: object) -> Job:
+    """Stamp raw so we do not re-resolve the same listing."""
+    raw = {**(job.raw or {}), "board_resolve": "done", **extra}
+    return job.model_copy(update={"raw": raw})
+
+
 def resolve_job_apply_destination(job: Job) -> str:
     """Best URL for ATS handler selection and navigation.
 

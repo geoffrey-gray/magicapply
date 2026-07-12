@@ -21,6 +21,8 @@ _HANDLER_TO_ATS = {
     "Lever": "lever",
     "Ashby": "ashby",
     "Generic": "generic",
+    "Indeed": "indeed",
+    "LinkedIn": "linkedin",
 }
 
 
@@ -71,7 +73,11 @@ def fill_composable_scanned(
         # with no apply form — fail so dry-run does not false-positive APPLIED.
         # Big-4 handlers still fill via _fill_static selectors when the scan
         # finds nothing (fixture tests, partial pages).
-        if ats == "generic" or handler_label == "Generic":
+        if ats in {"generic", "indeed", "linkedin"} or handler_label in {
+            "Generic",
+            "Indeed",
+            "LinkedIn",
+        }:
             raise RuntimeError(msg)
         return
 

@@ -43,6 +43,26 @@ class SqlJobsRepository:
             session.refresh(row)
             return _row_to_domain(row), True
 
+    def save(self, job: Job) -> Job:
+        """Overwrite enrichment fields on an existing row (apply-time resolve)."""
+        with Session(self._engine) as session:
+            existing = session.get(JobRow, job.id)
+            if existing is None:
+                row = _domain_to_row(job)
+                session.add(row)
+                session.commit()
+                session.refresh(row)
+                return _row_to_domain(row)
+            existing.apply_url = job.apply_url
+            existing.description = job.description
+            existing.raw_json = json.dumps(job.raw or {})
+            if job.location is not None:
+                existing.location = job.location
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            return _row_to_domain(existing)
+
     # ------- read path -------
 
     def get(self, job_id: str) -> Job | None:

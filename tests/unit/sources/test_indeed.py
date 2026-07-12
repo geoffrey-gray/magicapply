@@ -343,6 +343,9 @@ class TestSearchPageHydrationExtractor:
         ])
         jobs = extract_jobs_from_search(html, source_name="indeed-search")
         assert jobs[0].apply_url is None
+        assert jobs[0].raw.get("indeed_apply_url") == (
+            "https://www.indeed.com/applystart?jk=ia1"
+        )
 
     def test_dedupes_by_jobkey(self) -> None:
         html = self._hydrated_html([

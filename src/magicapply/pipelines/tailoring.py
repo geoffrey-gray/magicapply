@@ -208,3 +208,61 @@ class TailoringPipeline:
             report.tailored += 1
 
         return report
+
+    def force_tailor(self, app, job: Job):
+        """Re-tailor an already-TAILORED application after a JD upgrade.
+
+        Rewrites artifacts under the existing ``tailored_path`` (or a fresh
+        dir) and keeps the application in ``TAILORED``.
+        """
+        from magicapply.domain.models.application import Application
+
+        if not isinstance(app, Application):
+            raise TypeError("force_tailor expects an Application")
+
+        tailored_root = self._data_dir / "tailored"
+        extracted = self._extractor.extract(job)
+        matched = match_bank(extracted, self._bank)
+        tailored = self._tailorer.tailor_for(job, matched_bank=matched)
+        cover = (
+            self._narrative.cover_letter(job)
+            if self._generate_cover_letter
+            else None
+        )
+
+        app_dir = Path(app.tailored_path) if app.tailored_path else tailored_root / app.id
+        app_dir.mkdir(parents=True, exist_ok=True)
+        (app_dir / "resume.yaml").write_text(
+            yaml.safe_dump(
+                tailored.model_dump(mode="json"),
+                sort_keys=False,
+                allow_unicode=True,
+            )
+        )
+        if cover is not None:
+            (app_dir / "cover_letter.md").write_text(cover)
+
+        docx_path = app_dir / "resume.docx"
+        self._renderer.render(
+            source_docx=self._source_docx,
+            matched_bank=matched,
+            jd_terms=extracted,
+            out_path=docx_path,
+        )
+        try:
+            after_text = (
+                docx_plain_text(docx_path)
+                if docx_path.exists()
+                else serialize_resume_text(tailored)
+            )
+            after = score_jd_keyword_coverage(
+                after_text, extracted, bank=self._bank
+            )
+            app.score_after_tailor = after.value
+            app.score_after_rationale = after.rationale
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("force_tailor alignment failed for %s: %s", app.id, exc)
+
+        app.tailored_path = str(app_dir)
+        self._apps.save(app)
+        return app

@@ -1,0 +1,23 @@
+# LinkedIn Easy Apply — used by LinkedInHandler.
+platform: linkedin
+match_hosts:
+  - linkedin.com
+form_selectors:
+  - form.jobs-easy-apply-form
+  - div.jobs-easy-apply-content form
+  - form
+  - main form
+submit_selectors:
+  - "button:has-text('Submit application')"
+  - "button:has-text('Submit')"
+  - button[aria-label*='Submit']
+  - button[type='submit']
+resume_selectors:
+  - input[type='file']
+pre_steps: []
+wizard:
+  next_selectors:
+    - "button:has-text('Next')"
+    - "button:has-text('Continue')"
+    - "button[aria-label='Continue to next step']"
+  max_steps: 10

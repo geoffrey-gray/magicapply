@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from typing import TYPE_CHECKING
 
 from magicapply.domain.models.job import Job
 from magicapply.infrastructure.browser.ats import workday_widgets
 from magicapply.infrastructure.browser.ats.answer_router import AnswerRouter, ResolvedAnswer
 from magicapply.infrastructure.browser.ats.base import PageDriver
 from magicapply.infrastructure.browser.forms.fields import FormField
+
+if TYPE_CHECKING:
+    from magicapply.config.models import ATSTimeoutsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +25,14 @@ _WORKDAY_VARIANTS = frozenset(
 class RulesBasedDriver:
     """Resolve via ``AnswerRouter``; execute native field kinds via Playwright."""
 
-    def __init__(self, router: AnswerRouter) -> None:
+    def __init__(self, router: AnswerRouter, timeouts: ATSTimeoutsConfig | None = None) -> None:
         self._router = router
+        if timeouts is not None:
+            self._timeouts = timeouts
+        else:
+            from magicapply.config.models import ATSTimeoutsConfig
+
+            self._timeouts = ATSTimeoutsConfig()
 
     def resolve(self, field: FormField, job: Job) -> ResolvedAnswer:
         return self._router.resolve(field, job)
@@ -50,12 +60,12 @@ class RulesBasedDriver:
                     page, field.selector, answer.value
                 ):
                     return True
-            return _try_fill(page, field.selector, answer.value)
+            return self._try_fill(page, field.selector, answer.value)
         if strategy == "select":
-            return _try_select(page, field, answer.value)
+            return self._try_select(page, field, answer.value)
         if strategy == "check":
             if answer.check:
-                return _try_check(page, field.selector)
+                return self._try_check(page, field.selector)
             return True
         if strategy == "file":
             if not answer.value or not field.selector:
@@ -66,15 +76,52 @@ class RulesBasedDriver:
             return False
         return False
 
+    def _try_fill(self, page: PageDriver, selector: str, value: str) -> bool:
+        """Fill with configurable timeout from ATSTimeoutsConfig."""
+        return _call_soft(page.fill, selector, value, timeout=self._timeouts.candidate_timeout_ms)
 
-# Fast-fail budget for every page.* op in this driver. Playwright's default
-# 30 s waits are the difference between "skips a missing selector cleanly"
-# and "burns 30 s per absent field" — Ashby's TRM form has ~5 identity
-# selectors that don't match its DOM, so the 30 s default piled up to ~120 s
-# of dead time in _fill_static alone (observed via [trace] breadcrumbs).
-_DRIVER_TIMEOUT_MS = 500
+    def _try_check(self, page: PageDriver, selector: str) -> bool:
+        """Check checkbox with configurable timeout from ATSTimeoutsConfig."""
+        return _call_soft(page.check, selector, timeout=self._timeouts.candidate_timeout_ms)
+
+    def _try_select(self, page: PageDriver, field: FormField, value: str) -> bool:
+        """Select option with configurable timeout from ATSTimeoutsConfig."""
+        if field.kind == "radio" and field.name:
+            return self._click_radio(page, name=field.name, value=value)
+        return _call_soft(
+            page.select_option, field.selector, value, timeout=self._timeouts.candidate_timeout_ms
+        )
+
+    def _click_radio(self, page: PageDriver, *, name: str, value: str) -> bool:
+        """Click a radio button by group name + option value.
+
+        Uses only the value-attribute selector with a configurable timeout.
+        Returns True on a matched-and-clicked radio, False otherwise. Never raises.
+        """
+        selector = f"input[type='radio'][name='{name}'][value='{value}']"
+        locator = getattr(page, "locator", None)
+        if not callable(locator):
+            # Minimal PageDriver stub without locator() — test-only path.
+            with contextlib.suppress(Exception):
+                page.click(selector)  # type: ignore[call-arg]
+                return True
+            return False
+
+        with contextlib.suppress(Exception):
+            radio = locator(selector).first
+            radio.click(timeout=self._timeouts.candidate_timeout_ms)
+            with contextlib.suppress(Exception):
+                if radio.is_checked():
+                    return True
+            # click() succeeded but is_checked reports False — assume the click
+            # landed and the DOM just hasn't caught up. Reporting True keeps
+            # the observation log honest for the common Greenhouse case.
+            return True
+
+        return False
 
 
+# _call_soft helper - used by instance methods for soft-fail page operations
 def _call_soft(fn: object, *args: object, **kwargs: object) -> bool:
     """Call `fn(*args, **kwargs)`; on TypeError (kwargs rejected by a test
     stub), retry positionally. Any other exception is suppressed and treated
@@ -92,19 +139,26 @@ def _call_soft(fn: object, *args: object, **kwargs: object) -> bool:
         return False
 
 
-def _try_fill(page: PageDriver, selector: str, value: str) -> bool:
-    return _call_soft(page.fill, selector, value, timeout=_DRIVER_TIMEOUT_MS)
+def _try_fill(page: PageDriver, selector: str, value: str, timeout_ms: int = 500) -> bool:
+    """Module-level fill helper with configurable timeout (default 500ms).
+
+    Used by workday.py for static field fills. New code should use
+    RulesBasedDriver instance methods instead.
+    """
+    return _call_soft(page.fill, selector, value, timeout=timeout_ms)
 
 
-def _try_check(page: PageDriver, selector: str) -> bool:
-    return _call_soft(page.check, selector, timeout=_DRIVER_TIMEOUT_MS)
+def _try_check(page: PageDriver, selector: str, timeout_ms: int = 500) -> bool:
+    """Module-level check helper with configurable timeout (default 500ms)."""
+    return _call_soft(page.check, selector, timeout=timeout_ms)
 
 
-def _try_select(page: PageDriver, field: FormField, value: str) -> bool:
+def _try_select(page: PageDriver, field: FormField, value: str, timeout_ms: int = 500) -> bool:
+    """Module-level select helper with configurable timeout (default 500ms)."""
     if field.kind == "radio" and field.name:
-        return _click_radio(page, name=field.name, value=value)
+        return _click_radio(page, name=field.name, value=value, timeout_ms=timeout_ms)
     return _call_soft(
-        page.select_option, field.selector, value, timeout=_DRIVER_TIMEOUT_MS
+        page.select_option, field.selector, value, timeout=timeout_ms
     )
 
 
@@ -155,13 +209,10 @@ def _listbox_labels(field: FormField, answer: ResolvedAnswer) -> tuple[str, ...]
     return ()
 
 
-_RADIO_CLICK_TIMEOUT_MS = 500
-
-
-def _click_radio(page: PageDriver, *, name: str, value: str) -> bool:
+def _click_radio(page: PageDriver, *, name: str, value: str, timeout_ms: int = 500) -> bool:
     """Click a radio button by group name + option value.
 
-    Uses only the value-attribute selector with a fast-fail 500 ms timeout.
+    Uses only the value-attribute selector with a configurable timeout (default 500ms).
     Longer / multi-attempt fallbacks were investigated (wrapper-div, plus a
     Playwright accessibility-tree fallback via ``get_by_role``) but on real
     Ashby forms — where the ``<input>`` has no ``value`` attribute at all
@@ -186,7 +237,7 @@ def _click_radio(page: PageDriver, *, name: str, value: str) -> bool:
 
     with contextlib.suppress(Exception):
         radio = locator(selector).first
-        radio.click(timeout=_RADIO_CLICK_TIMEOUT_MS)
+        radio.click(timeout=timeout_ms)
         with contextlib.suppress(Exception):
             if radio.is_checked():
                 return True

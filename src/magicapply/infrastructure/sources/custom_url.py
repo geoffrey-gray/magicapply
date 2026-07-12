@@ -12,12 +12,15 @@ They differ only in what `urls` means:
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 import httpx
 
 from magicapply.config.models import CareerPageSource, JobUrlSource
+from magicapply.domain.models.job import Job
 from magicapply.infrastructure.sources.base import SourceError
 from magicapply.infrastructure.sources.apply_url import enrich_job_from_detail_html
 from magicapply.infrastructure.sources.jsonld import (
@@ -27,7 +30,14 @@ from magicapply.infrastructure.sources.jsonld import (
 from magicapply.infrastructure.sources.rate_limit import RateLimiter
 
 if TYPE_CHECKING:
-    from magicapply.domain.models.job import Job
+    pass
+
+# SPA boards (Ashby) often omit JSON-LD from the initial HTTP response.
+_ATS_FALLBACK_HOST = re.compile(
+    r"(?:jobs\.ashbyhq\.com|jobs\.lever\.co|myworkdayjobs\.com|"
+    r"boards\.greenhouse\.io|job-boards\.greenhouse\.io)",
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +84,12 @@ class _JsonLdHttpAdapter:
 
             postings = extract_jobposting_dicts(response.text)
             if not postings:
-                logger.info("no JSON-LD JobPosting on %s", url)
+                job = _job_from_ats_url_fallback(url, source_name=self.name)
+                if job is None:
+                    logger.info("no JSON-LD JobPosting on %s", url)
+                    continue
+                if job.id not in known:
+                    yield job
                 continue
 
             for posting in postings:
@@ -93,6 +108,26 @@ class _JsonLdHttpAdapter:
                     yield job
                 except (KeyError, TypeError, ValueError) as exc:
                     logger.warning("skip malformed JSON-LD from %s: %s", url, exc)
+
+
+def _job_from_ats_url_fallback(url: str, *, source_name: str) -> Job | None:
+    """Synthesize a Job when a known ATS posting has no JSON-LD in HTML."""
+    if not _ATS_FALLBACK_HOST.search(url):
+        return None
+    parsed = urlparse(url)
+    parts = [p for p in parsed.path.split("/") if p]
+    company = parts[0] if parts else parsed.netloc
+    title = parts[-1].replace("-", " ") if len(parts) > 1 else "(untitled)"
+    logger.info("JobUrlAdapter: JSON-LD missing; using ATS URL fallback for %s", url)
+    return Job.new(
+        source_name=source_name,
+        url=url,
+        apply_url=url,
+        title=title.title(),
+        company=company.replace("-", " ").title(),
+        description="",
+        raw={"url_fallback": True, "page_url": url},
+    )
 
 
 class CareerPageAdapter(_JsonLdHttpAdapter):

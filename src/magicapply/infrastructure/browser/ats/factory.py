@@ -8,7 +8,9 @@ from magicapply.infrastructure.browser.ats.ashby import AshbyHandler
 from magicapply.infrastructure.browser.ats.base import ATSHandler
 from magicapply.infrastructure.browser.ats.generic import GenericHandler
 from magicapply.infrastructure.browser.ats.greenhouse import GreenhouseHandler
+from magicapply.infrastructure.browser.ats.indeed import IndeedHandler
 from magicapply.infrastructure.browser.ats.lever import LeverHandler
+from magicapply.infrastructure.browser.ats.linkedin import LinkedInHandler
 from magicapply.infrastructure.browser.ats.workday import WorkdayHandler
 
 
@@ -25,7 +27,9 @@ class ATSHandlerFactory:
         WorkdayHandler,
         LeverHandler,
         AshbyHandler,
-        GenericHandler,
+        IndeedHandler,
+        LinkedInHandler,
+        GenericHandler,  # last — matches any URL
     ]
 
     @classmethod

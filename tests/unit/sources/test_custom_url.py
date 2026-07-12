@@ -111,3 +111,13 @@ class TestJobUrlAdapter:
         assert jobs[0].url == listing
         assert jobs[0].apply_url == external
         assert jobs[0].raw["platform"] == "greenhouse"
+
+    def test_ats_url_fallback_when_jsonld_missing(self) -> None:
+        url = "https://jobs.ashbyhq.com/trm-labs/abc-123"
+        cfg = JobUrlSource(name="watched", urls=[url])
+        http = _mock_http({url: (200, "<html><body>SPA shell</body></html>")})
+        jobs = list(JobUrlAdapter.from_config(cfg, http=http).discover())
+        assert len(jobs) == 1
+        assert jobs[0].url == url
+        assert jobs[0].apply_url == url
+        assert jobs[0].raw.get("url_fallback") is True

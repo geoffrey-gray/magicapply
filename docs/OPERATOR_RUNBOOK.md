@@ -368,10 +368,37 @@ Candidates are ordered by **score (JD fit) high → low**, not by board brand.
 still has quota (e.g. LinkedIn cap hit → try Greenhouse). Pace sleep runs
 only after a counted outcome (applied / failed / needs_intervention).
 
-**Board fallback:** If there is no external `apply_url`, apply still targets
-the Indeed/LinkedIn listing via **GenericHandler**. Throttle buckets are
-`indeed` / `linkedin` (not a single generic pile). Prefer offsite ATS when
-enrich finds it; board apply is the throttled fallback, not skipped.
+**Board fallback:** If there is no external `apply_url`, apply targets the
+Indeed/LinkedIn listing via **`IndeedHandler` / `LinkedInHandler`** (Easy
+Apply). Throttle buckets are `indeed` / `linkedin` (tight overrides in
+`base_config.example.yaml`). Prefer offsite ATS when enrich/resolve finds
+it; board apply is the throttled fallback, not skipped.
+
+Lazy resolve runs **before tailor** for SCORED board jobs (and again in
+`apply_one` for stale TAILORED rows): open the listing once, persist
+`apply_url` / Easy Apply meta, upgrade thin JDs from the destination.
+
+### Continual apply without rediscover
+
+```bash
+magicapply run <profile> --root configs --skip-discover \
+  --max-applies 60 --duration-hours 12 --pace-seconds 1080
+```
+
+### DoD checklist (dry-run)
+
+1. **Indeed → external:** `status --source <indeed-source>` → pick a row with
+   `dest=external` → `tailor <profile> <job-id>` → `apply <job-id> --no-submit`
+   (browser lands on Greenhouse/Workday/Lever/Ashby, not Indeed form).
+2. **Indeed → Easy Apply:** pick `dest=board` Indeed row → same tailor/apply;
+   `IndeedHandler` fills through last step; submit skipped.
+3. **LinkedIn → external:** same as (1) for a LinkedIn-sourced external row.
+4. **LinkedIn → Easy Apply:** `dest=board` LinkedIn row → `LinkedInHandler`.
+5. **Big-four ATS:** dry-run apply one TAILORED job each for greenhouse /
+   workday / lever / ashby destinations.
+
+Auth: `magicapply auth login indeed` (and `linkedin`) before board paths.
+Apply sessions load `data/auth/*_storage_state.json` automatically.
 
 ---
 

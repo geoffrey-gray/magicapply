@@ -19,15 +19,19 @@ from __future__ import annotations
 import logging
 import re
 import time
+from typing import TYPE_CHECKING
 
-from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
+from magicapply.infrastructure.browser.ats import workday_widgets
 from magicapply.infrastructure.browser.ats.base import (
     ApplicationData,
     BaseATSHandler,
     PageDriver,
 )
+from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
 from magicapply.infrastructure.browser.ats.workday_accounts import WorkdayAccountStore
-from magicapply.infrastructure.browser.ats import workday_widgets
+
+if TYPE_CHECKING:
+    from magicapply.config.models import ATSTimeoutsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -195,7 +199,7 @@ class WorkdayHandler(BaseATSHandler):
         raise RuntimeError("Workday: no submit button found")
 
 
-def _get_timeouts(data: ApplicationData) -> "ATSTimeoutsConfig":
+def _get_timeouts(data: ApplicationData) -> ATSTimeoutsConfig:
     """Extract timeout config from ApplicationData, with fallback defaults."""
     if data.ats_timeouts is not None:
         return data.ats_timeouts
@@ -309,7 +313,7 @@ def _workday_create_account(
     return clicked
 
 
-def _advance_past_auth_landing(page: PageDriver, timeouts: "ATSTimeoutsConfig") -> None:
+def _advance_past_auth_landing(page: PageDriver, timeouts: ATSTimeoutsConfig) -> None:
     """After sign-in Workday often lands on applyManually before step 2."""
     _workday_force_en_us_url(page)
     _wait_for_any(
@@ -474,9 +478,9 @@ def _try_click(
         return False
 
 
-def _try_check(page: PageDriver, selector: str) -> bool:
+def _try_check(page: PageDriver, selector: str, timeout_ms: int = 500) -> bool:
     try:
-        page.check(selector, timeout=timeouts.auth_fill_timeout_ms)  # type: ignore[call-arg]
+        page.check(selector, timeout=timeout_ms)  # type: ignore[call-arg]
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -605,9 +609,10 @@ def _fill_workday_widgets(page: PageDriver, data: ApplicationData) -> None:
     """Workday listbox / multiselect widgets (raghuboosetty/workday patterns)."""
     if not _selector_visible(page, "[data-fkit-id='source--source']", timeout_ms=1_000):
         return
+    timeouts = _get_timeouts(data)
     answers = data.static_answers
-    workday_widgets.select_listbox_button(page, "address--countryRegion", answers.state or "")
-    workday_widgets.select_listbox_button(page, "phoneNumber--phoneType", answers.phone_device_type or "")
+    workday_widgets.select_listbox_button(page, "address--countryRegion", answers.state or "", timeouts)
+    workday_widgets.select_listbox_button(page, "phoneNumber--phoneType", answers.phone_device_type or "", timeouts)
     if answers.country_phone_code:
         phone_search = answers.country_phone_code.split("(")[0].strip()
         workday_widgets.fill_multiselect(
@@ -615,13 +620,14 @@ def _fill_workday_widgets(page: PageDriver, data: ApplicationData) -> None:
             "phoneNumber--countryPhoneCode",
             answers.country_phone_code,
             search=phone_search or answers.country,
+            timeouts=timeouts,
         )
     if answers.how_did_you_hear:
         # Listbox tenants (Circle) must be tried first — multiselect open
         # clicks the same trigger and leaves the dropdown closed for the
         # listbox fallback.
         heard = workday_widgets.select_listbox_button(
-            page, "source--source", answers.how_did_you_hear
+            page, "source--source", answers.how_did_you_hear, timeouts
         )
         if not heard:
             workday_widgets.fill_multiselect(
@@ -629,11 +635,12 @@ def _fill_workday_widgets(page: PageDriver, data: ApplicationData) -> None:
                 "source--source",
                 answers.how_did_you_hear,
                 parent_label=answers.how_did_you_hear_parent,
+                timeouts=timeouts,
             )
     if answers.city:
         _try_fill(page, ("#address--city",), answers.city)
     if answers.workday_sms_opt_in:
-        workday_widgets.click_automation_checkbox(page, "phone-sms-opt-in")
+        workday_widgets.click_automation_checkbox(page, "phone-sms-opt-in", timeouts)
 
 
 _MY_EXP_PAGE = "[data-automation-id='applyFlowMyExpPage']"
@@ -692,7 +699,7 @@ def _fill_workday_experience(page: PageDriver, data: ApplicationData) -> None:
             _wait_brief(page, timeouts.brief_wait_ms)
         if edu.degree:
             for label in _degree_option_labels(edu.degree):
-                if workday_widgets.select_formfield_listbox(page, "formField-degree", label):
+                if workday_widgets.select_formfield_listbox(page, "formField-degree", label, timeouts):
                     break
             _wait_brief(page, timeouts.brief_wait_ms)
         if edu.field:
@@ -703,10 +710,10 @@ def _fill_workday_experience(page: PageDriver, data: ApplicationData) -> None:
             )
 
 
-def _fill_education_school(page: PageDriver, school: str, timeouts: "ATSTimeoutsConfig") -> bool:
+def _fill_education_school(page: PageDriver, school: str, timeouts: ATSTimeoutsConfig) -> bool:
     """Circle uses ``#education-N--school``; Pluralsight uses ``--schoolName``."""
     for selector in _SCHOOL_INPUTS:
-        if workday_widgets.fill_search_multiselect(page, selector, school):
+        if workday_widgets.fill_search_multiselect(page, selector, school, timeouts=timeouts):
             return True
     for selector in _SCHOOL_INPUTS:
         if _try_fill(page, (selector,), school):
@@ -810,6 +817,7 @@ def _fill_workday_application_questions(page: PageDriver, data: ApplicationData)
     )
     if not on_page:
         return
+    timeouts = _get_timeouts(data)
     answers = data.static_answers
     rules: list[tuple[re.Pattern[str], bool | None]] = [
         (re.compile(r"authori[sz]ed\s+to\s+work", re.IGNORECASE), answers.authorized_to_work_us),
@@ -825,7 +833,7 @@ def _fill_workday_application_questions(page: PageDriver, data: ApplicationData)
         (re.compile(r"government agency", re.IGNORECASE), False),
     ]
     workday_widgets.fill_questionnaire_fieldsets(
-        page, _PRIMARY_QUESTIONS_PAGE, rules, default_false=True
+        page, _PRIMARY_QUESTIONS_PAGE, rules, default_false=True, timeouts=timeouts
     )
 
 

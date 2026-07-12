@@ -19,13 +19,13 @@ import logging
 from typing import Self
 
 from magicapply.config.models import KeywordEntry
+from magicapply.domain.llm import LLMClient, LLMMessage, SystemBlock
 from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import (
     BaseResume,
     ExperienceEntry,
     TailoredResume,
 )
-from magicapply.infrastructure.llm.client import LLMClient, LLMMessage, SystemBlock
 
 logger = logging.getLogger(__name__)
 

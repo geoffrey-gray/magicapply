@@ -20,6 +20,9 @@ class JobsRepository(Protocol):
     def upsert(self, job: Job) -> tuple[Job, bool]:
         """Insert if new (by id) or return existing. Returns (job, was_new)."""
 
+    def save(self, job: Job) -> Job:
+        """Persist enrichment mutations on an existing Job (apply_url, description, raw)."""
+
     def get(self, job_id: str) -> Job | None: ...
 
     def get_by_dedup_key(self, dedup_key: str) -> Job | None:

@@ -103,6 +103,23 @@ def _try_click(page: PageDriver, selector: str, *, timeout_ms: int) -> bool:
         return False
 
 
+def _try_fill(
+    page: PageDriver, selector: str, value: str, *, timeout_ms: int
+) -> bool:
+    locator = getattr(page, "locator", None)
+    if callable(locator):
+        try:
+            locator(selector).first.fill(value, timeout=timeout_ms)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+    try:
+        page.fill(selector, value)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _wait_brief(page: PageDriver, ms: int) -> None:
     wait_fn = getattr(page, "wait_for_timeout", None)
     if callable(wait_fn):

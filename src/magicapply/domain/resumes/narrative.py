@@ -10,10 +10,10 @@ from __future__ import annotations
 
 from typing import Literal
 
+from magicapply.domain.llm import LLMClient, LLMMessage, SystemBlock
 from magicapply.domain.models.job import Job
 from magicapply.domain.models.resume import BaseResume
 from magicapply.domain.resumes.tailor import _serialize_resume
-from magicapply.infrastructure.llm.client import LLMClient, LLMMessage, SystemBlock
 
 NarrativeStyle = Literal["concise", "detailed"]
 

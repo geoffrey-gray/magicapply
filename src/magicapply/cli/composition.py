@@ -12,10 +12,14 @@ import logging
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from magicapply.config import LoadedConfig, Profile
+
+if TYPE_CHECKING:
+    from magicapply.domain.apply.throttle import ApplyThrottle
 from magicapply.config.models import ScoringConfig
 from magicapply.domain.jobs.scoring import (
     JobScorer,
@@ -190,6 +194,8 @@ def build_apply_pipeline(
     loaded: LoadedConfig,
     apps_repo: SqlApplicationsRepository,
     jobs_repo: SqlJobsRepository,
+    *,
+    profile: Profile | None = None,
 ) -> ApplyPipeline:
     """Build an ApplyPipeline wired for both single-job and batch use.
 
@@ -199,18 +205,28 @@ def build_apply_pipeline(
     the operator's config.
     """
     throttle = _build_apply_throttle(loaded, apps_repo)
+    retailor = None
+    if profile is not None:
+        # Lazy: only construct TailoringPipeline when a JD upgrade forces
+        # re-tailor (apply tests / dry-runs without source_docx stay cheap).
+        def retailor(app: Application, job: Job) -> Application:
+            return build_tailoring_pipeline(
+                loaded, profile, apps_repo, jobs_repo
+            ).force_tailor(app, job)
+
     return ApplyPipeline(
         applications_repo=apps_repo,
         jobs_repo=jobs_repo,
         data_builder=partial(build_application_data, loaded),
         throttle=throttle,
+        retailor=retailor,
     )
 
 
 def _build_apply_throttle(
     loaded: LoadedConfig,
     apps_repo: SqlApplicationsRepository,
-) -> "ApplyThrottle":
+) -> ApplyThrottle:
     from magicapply.domain.apply.throttle import ApplyThrottle
     from magicapply.pipelines.apply import ats_key_for_url
 
@@ -336,6 +352,7 @@ def build_application_data(
         router,
         narrative,
         loaded.base.form_drivers,
+        timeouts,
     )
     return data.model_copy(
         update={"form_composer": composer_from_registry(registry, data)}

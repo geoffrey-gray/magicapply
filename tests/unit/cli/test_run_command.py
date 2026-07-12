@@ -86,8 +86,12 @@ class _NoOpSession:
 def patched_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """Guard against the run command opening a real browser."""
     monkeypatch.setattr(
-        "magicapply.cli.commands.pipeline.PlaywrightSession",
+        "magicapply.cli.commands.pipeline.open_apply_session",
         lambda *args, **kwargs: _NoOpSession(),
+    )
+    monkeypatch.setattr(
+        "magicapply.cli.commands.pipeline.apply_pending_auth_cookies",
+        lambda session: None,
     )
 
 
