@@ -104,29 +104,30 @@ class WorkdayHandler(BaseATSHandler):
         return any(host in u for host in _MATCH_HOSTS)
 
     def _navigate(self, page: PageDriver, data: ApplicationData) -> None:
+        timeouts = _get_timeouts(data)
         _workday_goto(page, data.job_url)
-        _wait_brief(page, 3000)
-        _accept_legal_notice(page)
-        _ensure_english_locale(page, data.job_url)
+        _wait_brief(page, timeouts.page_load_wait_ms)
+        _accept_legal_notice(page, timeouts)
+        _ensure_english_locale(page, data.job_url, timeouts)
         _click_any(
             page,
             (
                 "a[data-automation-id='adventureButton']",
                 "[data-automation-id='adventureButton']",
             ),
-            timeout_ms=_WIZARD_CLICK_TIMEOUT_MS,
+            timeout_ms=timeouts.wizard_click_timeout_ms,
         )
-        _wait_brief(page, 2000)
+        _wait_brief(page, timeouts.step_transition_wait_ms)
         _click_any(
             page,
             (
                 "[data-automation-id='applyManually']",
                 "[data-automation-id='autofillWithResume']",
             ),
-            timeout_ms=_WIZARD_CLICK_TIMEOUT_MS,
+            timeout_ms=timeouts.wizard_click_timeout_ms,
         )
-        _wait_brief(page, 2000)
-        _ensure_english_locale(page, data.job_url)
+        _wait_brief(page, timeouts.step_transition_wait_ms)
+        _ensure_english_locale(page, data.job_url, timeouts)
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers
@@ -137,18 +138,19 @@ class WorkdayHandler(BaseATSHandler):
             _try_fill(page, _PHONE_SELECTORS, answers.phone)
 
     def _fill_dynamic(self, page: PageDriver, data: ApplicationData) -> None:
+        timeouts = _get_timeouts(data)
         _wait_for_any(page, _WIZARD_LANDMARKS, timeout_ms=15_000)
         _ensure_authenticated(page, data)
-        _ensure_english_locale(page, data.job_url)
+        _ensure_english_locale(page, data.job_url, timeouts)
 
         for _ in range(_MAX_STEPS):
-            _ensure_english_locale(page, data.job_url)
+            _ensure_english_locale(page, data.job_url, timeouts)
             if _already_applied(page):
                 logger.info("Workday: job already applied — stopping wizard")
                 break
             if _on_login_page(page):
                 _workday_sign_in(page, data)
-                _ensure_english_locale(page, data.job_url)
+                _ensure_english_locale(page, data.job_url, timeouts)
                 if _on_login_page(page):
                     break
             if _at_review_step(page):
@@ -166,7 +168,7 @@ class WorkdayHandler(BaseATSHandler):
                     handler_label="Workday",
                 )
                 break
-            _wait_brief(page, 1500)
+            _wait_brief(page, timeouts.brief_wait_ms)
             _try_resume_upload(page, data)
             _fill_workday_widgets(page, data)
             _fill_workday_experience(page, data)
@@ -181,13 +183,14 @@ class WorkdayHandler(BaseATSHandler):
                 schema_id="workday_wizard",
                 handler_label="Workday",
             )
-            if not _click_any(page, _NEXT_BUTTONS, timeout_ms=_WIZARD_CLICK_TIMEOUT_MS):
+            if not _click_any(page, _NEXT_BUTTONS, timeout_ms=timeouts.wizard_click_timeout_ms):
                 break
-            _wait_brief(page, 2500)
+            _wait_brief(page, timeouts.step_transition_wait_ms)
 
     def _submit(self, page: PageDriver, data: ApplicationData) -> None:
+        timeouts = _get_timeouts(data)
         for selector in _SUBMIT_BUTTONS:
-            if _try_click(page, selector, timeout_ms=_WIZARD_CLICK_TIMEOUT_MS):
+            if _try_click(page, selector, timeout_ms=timeouts.wizard_click_timeout_ms):
                 return
         raise RuntimeError("Workday: no submit button found")
 
@@ -202,25 +205,29 @@ def _get_timeouts(data: ApplicationData) -> "ATSTimeoutsConfig":
 
 
 def _ensure_authenticated(page: PageDriver, data: ApplicationData) -> None:
+    timeouts = _get_timeouts(data)
     tenant, email, password, has_stored = _credentials(data)
     if not password:
-        logger.warning("Workday: no apply password configured for tenant %s", tenant)
-        return
+        raise RuntimeError(
+            f"Workday: no apply password configured for tenant {tenant}. "
+            f"Set static_answers.workday_apply_password or ensure account exists in "
+            f"data/workday_accounts.yaml"
+        )
 
     if _on_login_page(page):
         if _workday_sign_in(page, data):
             _persist_account(data, tenant, email, password, created=not has_stored)
-            _advance_past_auth_landing(page)
-            _ensure_english_locale(page, data.job_url)
+            _advance_past_auth_landing(page, timeouts)
+            _ensure_english_locale(page, data.job_url, timeouts)
         return
 
     if _wizard_authenticated(page):
-        _ensure_english_locale(page, data.job_url)
+        _ensure_english_locale(page, data.job_url, timeouts)
         return
 
     if has_stored:
         _goto_login_and_sign_in(page, data, tenant, email, password)
-        _ensure_english_locale(page, data.job_url)
+        _ensure_english_locale(page, data.job_url, timeouts)
         return
 
     if not _on_account_step(page):
@@ -230,12 +237,12 @@ def _ensure_authenticated(page: PageDriver, data: ApplicationData) -> None:
         if _on_login_page(page):
             if _workday_sign_in(page, data):
                 _persist_account(data, tenant, email, password, created=True)
-                _advance_past_auth_landing(page)
-                _ensure_english_locale(page, data.job_url)
+                _advance_past_auth_landing(page, timeouts)
+                _ensure_english_locale(page, data.job_url, timeouts)
         elif not _on_account_step(page):
             _persist_account(data, tenant, email, password, created=True)
-            _advance_past_auth_landing(page)
-            _ensure_english_locale(page, data.job_url)
+            _advance_past_auth_landing(page, timeouts)
+            _ensure_english_locale(page, data.job_url, timeouts)
 
 
 def _goto_login_and_sign_in(
@@ -245,18 +252,19 @@ def _goto_login_and_sign_in(
     email: str,
     password: str,
 ) -> None:
+    timeouts = _get_timeouts(data)
     login_url = WorkdayAccountStore.careers_login_url(getattr(page, "url", "") or "")
     if not login_url:
         return
     _workday_goto(page, login_url)
-    _wait_brief(page, 3000)
-    _accept_legal_notice(page)
+    _wait_brief(page, timeouts.page_load_wait_ms)
+    _accept_legal_notice(page, timeouts)
     if _workday_sign_in(page, data):
         store = _store(data)
         if store is not None:
             store.touch(tenant)
-        _advance_past_auth_landing(page)
-        _ensure_english_locale(page, data.job_url)
+        _advance_past_auth_landing(page, timeouts)
+        _ensure_english_locale(page, data.job_url, timeouts)
 
 
 def _wizard_authenticated(page: PageDriver) -> bool:
@@ -274,7 +282,8 @@ def _workday_create_account(
     email: str,
     password: str,
 ) -> bool:
-    _accept_legal_notice(page)
+    timeouts = _get_timeouts(data)
+    _accept_legal_notice(page, timeouts)
     if not _wait_for_selector(page, _AUTH_EMAIL, timeout_ms=10_000):
         fill_dynamic_fields(
             page,
@@ -284,23 +293,23 @@ def _workday_create_account(
             schema_id="workday_auth",
             handler_label="Workday",
         )
-    _try_fill(page, (_AUTH_EMAIL,), email, timeout_ms=_AUTH_FILL_TIMEOUT_MS)
-    _try_fill(page, (_AUTH_PASSWORD,), password, timeout_ms=_AUTH_FILL_TIMEOUT_MS)
+    _try_fill(page, (_AUTH_EMAIL,), email, timeout_ms=timeouts.auth_fill_timeout_ms)
+    _try_fill(page, (_AUTH_PASSWORD,), password, timeout_ms=timeouts.auth_fill_timeout_ms)
     if _selector_visible(page, _AUTH_VERIFY_PASSWORD, timeout_ms=1_000):
         _try_fill(
             page,
             (_AUTH_VERIFY_PASSWORD,),
             password,
-            timeout_ms=_AUTH_FILL_TIMEOUT_MS,
+            timeout_ms=timeouts.auth_fill_timeout_ms,
         )
     _try_check_consent(page, data)
-    clicked = _try_click(page, _CREATE_ACCOUNT, timeout_ms=_WIZARD_CLICK_TIMEOUT_MS)
+    clicked = _try_click(page, _CREATE_ACCOUNT, timeout_ms=timeouts.wizard_click_timeout_ms)
     if clicked:
-        _wait_brief(page, 5000)
+        _wait_brief(page, timeouts.page_load_wait_ms)
     return clicked
 
 
-def _advance_past_auth_landing(page: PageDriver) -> None:
+def _advance_past_auth_landing(page: PageDriver, timeouts: "ATSTimeoutsConfig") -> None:
     """After sign-in Workday often lands on applyManually before step 2."""
     _workday_force_en_us_url(page)
     _wait_for_any(
@@ -310,24 +319,25 @@ def _advance_past_auth_landing(page: PageDriver) -> None:
     )
     if _selector_visible(page, _FIRST_NAME_SELECTORS[0], timeout_ms=2_000):
         return
-    if _click_any(page, _NEXT_BUTTONS, timeout_ms=_WIZARD_CLICK_TIMEOUT_MS):
-        _wait_brief(page, 2500)
+    if _click_any(page, _NEXT_BUTTONS, timeout_ms=timeouts.wizard_click_timeout_ms):
+        _wait_brief(page, timeouts.step_transition_wait_ms)
 
 
 def _workday_sign_in(page: PageDriver, data: ApplicationData) -> bool:
-    _wait_brief(page, 2000)
-    _accept_legal_notice(page)
+    timeouts = _get_timeouts(data)
+    _wait_brief(page, timeouts.step_transition_wait_ms)
+    _accept_legal_notice(page, timeouts)
     tenant, email, password, _ = _credentials(data)
     if not password:
         return False
     if not _wait_for_selector(page, _AUTH_EMAIL, timeout_ms=10_000):
         return False
-    _try_fill(page, (_AUTH_EMAIL,), email, timeout_ms=_AUTH_FILL_TIMEOUT_MS)
-    _try_fill(page, (_AUTH_PASSWORD,), password, timeout_ms=_AUTH_FILL_TIMEOUT_MS)
+    _try_fill(page, (_AUTH_EMAIL,), email, timeout_ms=timeouts.auth_fill_timeout_ms)
+    _try_fill(page, (_AUTH_PASSWORD,), password, timeout_ms=timeouts.auth_fill_timeout_ms)
     if not _wait_for_selector(page, _SIGN_IN, timeout_ms=5_000):
         return False
-    _wait_brief(page, 1000)
-    clicked = _try_click(page, _SIGN_IN, timeout_ms=_WIZARD_CLICK_TIMEOUT_MS)
+    _wait_brief(page, timeouts.brief_wait_ms)
+    clicked = _try_click(page, _SIGN_IN, timeout_ms=timeouts.wizard_click_timeout_ms)
     if not clicked:
         return False
     _wait_until_not_login(page, timeout_ms=15_000)
@@ -443,7 +453,7 @@ def _try_fill(
     selectors: tuple[str, ...],
     value: str,
     *,
-    timeout_ms: int = _CANDIDATE_TIMEOUT_MS,
+    timeout_ms: int = 500,
 ) -> bool:
     for selector in selectors:
         try:
@@ -455,7 +465,7 @@ def _try_fill(
 
 
 def _try_click(
-    page: PageDriver, selector: str, *, timeout_ms: int = _CANDIDATE_TIMEOUT_MS
+    page: PageDriver, selector: str, *, timeout_ms: int = 500
 ) -> bool:
     try:
         page.click(selector, timeout=timeout_ms)  # type: ignore[call-arg]
@@ -466,7 +476,7 @@ def _try_click(
 
 def _try_check(page: PageDriver, selector: str) -> bool:
     try:
-        page.check(selector, timeout=_AUTH_FILL_TIMEOUT_MS)  # type: ignore[call-arg]
+        page.check(selector, timeout=timeouts.auth_fill_timeout_ms)  # type: ignore[call-arg]
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -476,7 +486,7 @@ def _click_any(
     page: PageDriver,
     selectors: tuple[str, ...],
     *,
-    timeout_ms: int = _CANDIDATE_TIMEOUT_MS,
+    timeout_ms: int = 500,
 ) -> bool:
     for selector in selectors:
         if _try_click(page, selector, timeout_ms=timeout_ms):
@@ -495,7 +505,7 @@ def _wait_brief(page: PageDriver, ms: int) -> None:
 def _wait_for_any(
     page: PageDriver, selectors: tuple[str, ...], *, timeout_ms: int
 ) -> bool:
-    per = max(timeout_ms // max(len(selectors), 1), _CANDIDATE_TIMEOUT_MS)
+    per = max(timeout_ms // max(len(selectors), 1), 500)
     for selector in selectors:
         if _wait_for_selector(page, selector, timeout_ms=per):
             return True
@@ -526,14 +536,14 @@ def _workday_goto(page: PageDriver, url: str) -> None:
     page.goto(WorkdayAccountStore.normalize_en_us_url(url))
 
 
-def _ensure_english_locale(page: PageDriver, job_url: str = "") -> None:
+def _ensure_english_locale(page: PageDriver, job_url: str, timeouts: "ATSTimeoutsConfig") -> None:
     """Force en-US before any form work — language-agnostic, not reactive."""
-    _workday_force_en_us_url(page)
-    _workday_force_english_language(page)
-    _workday_force_en_us_url(page)
+    _workday_force_en_us_url(page, timeouts)
+    _workday_force_english_language(page, timeouts)
+    _workday_force_en_us_url(page, timeouts)
 
 
-def _workday_force_en_us_url(page: PageDriver) -> None:
+def _workday_force_en_us_url(page: PageDriver, timeouts: "ATSTimeoutsConfig") -> None:
     """Rewrite the current Workday URL onto ``en-US`` when the locale segment differs."""
     current = getattr(page, "url", "") or ""
     if not current or "myworkdayjobs.com" not in current:
@@ -542,7 +552,7 @@ def _workday_force_en_us_url(page: PageDriver) -> None:
         return
     try:
         page.goto(WorkdayAccountStore.normalize_en_us_url(current))
-        _wait_brief(page, 2_000)
+        _wait_brief(page, timeouts.step_transition_wait_ms)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Workday: en-US URL rewrite failed: %s", exc)
 
@@ -553,7 +563,7 @@ def _is_english_language_label(label: str) -> bool:
     return lo == "english" or lo.startswith("english ") or lo.startswith("english(")
 
 
-def _workday_force_english_language(page: PageDriver) -> None:
+def _workday_force_english_language(page: PageDriver, timeouts: "ATSTimeoutsConfig") -> None:
     """Open the globe menu and select English unless English is already active."""
     locator = getattr(page, "locator", None)
     if not callable(locator):
@@ -564,8 +574,8 @@ def _workday_force_english_language(page: PageDriver) -> None:
             return
         if _is_english_language_label(button.inner_text(timeout=500)):
             return
-        button.click(timeout=_WIZARD_CLICK_TIMEOUT_MS)
-        _wait_brief(page, 1_000)
+        button.click(timeout=timeouts.wizard_click_timeout_ms)
+        _wait_brief(page, timeouts.brief_wait_ms)
         for english_label in (
             "English (United States)",
             "English (US)",
@@ -574,9 +584,9 @@ def _workday_force_english_language(page: PageDriver) -> None:
         ):
             try:
                 locator("[role='option']").filter(has_text=english_label).first.click(
-                    timeout=_WIZARD_CLICK_TIMEOUT_MS
+                    timeout=timeouts.wizard_click_timeout_ms
                 )
-                _wait_brief(page, 2_000)
+                _wait_brief(page, timeouts.step_transition_wait_ms)
                 return
             except Exception:  # noqa: BLE001
                 continue
@@ -584,11 +594,11 @@ def _workday_force_english_language(page: PageDriver) -> None:
         logger.debug("Workday: language selector failed: %s", exc)
 
 
-def _accept_legal_notice(page: PageDriver) -> None:
+def _accept_legal_notice(page: PageDriver, timeouts: "ATSTimeoutsConfig") -> None:
     selector = "[data-automation-id='legalNoticeAcceptButton']"
     if _selector_visible(page, selector, timeout_ms=3_000):
-        _try_click(page, selector, timeout_ms=_WIZARD_CLICK_TIMEOUT_MS)
-        _wait_brief(page, 1500)
+        _try_click(page, selector, timeout_ms=timeouts.wizard_click_timeout_ms)
+        _wait_brief(page, timeouts.brief_wait_ms)
 
 
 def _fill_workday_widgets(page: PageDriver, data: ApplicationData) -> None:
@@ -648,6 +658,7 @@ _DEGREE_LABEL_ALIASES: dict[str, tuple[str, ...]] = {
 
 def _fill_workday_experience(page: PageDriver, data: ApplicationData) -> None:
     """My Experience step — first job + education from tailored resume (raghuboosetty page 2)."""
+    timeouts = _get_timeouts(data)
     on_exp_page = _selector_visible(page, _MY_EXP_PAGE, timeout_ms=2_000)
     has_school_input = any(
         _selector_visible(page, sel, timeout_ms=500) for sel in _SCHOOL_INPUTS
@@ -657,8 +668,8 @@ def _fill_workday_experience(page: PageDriver, data: ApplicationData) -> None:
     resume = data.tailored_resume
     if resume.experience:
         if not _selector_visible(page, "[data-automation-id='formField-jobTitle']", timeout_ms=500):
-            _try_click(page, _WORK_EXP_ADD, timeout_ms=_WIZARD_CLICK_TIMEOUT_MS)
-            _wait_brief(page, 2500)
+            _try_click(page, _WORK_EXP_ADD, timeout_ms=timeouts.wizard_click_timeout_ms)
+            _wait_brief(page, timeouts.step_transition_wait_ms)
         exp = resume.experience[0]
         _try_fill(page, ("[data-automation-id='formField-jobTitle'] input",), exp.title)
         _try_fill(page, ("[data-automation-id='formField-companyName'] input",), exp.company)
@@ -677,13 +688,13 @@ def _fill_workday_experience(page: PageDriver, data: ApplicationData) -> None:
     if resume.education:
         edu = resume.education[0]
         if edu.school:
-            _fill_education_school(page, edu.school)
-            _wait_brief(page, 1500)
+            _fill_education_school(page, edu.school, timeouts)
+            _wait_brief(page, timeouts.brief_wait_ms)
         if edu.degree:
             for label in _degree_option_labels(edu.degree):
                 if workday_widgets.select_formfield_listbox(page, "formField-degree", label):
                     break
-            _wait_brief(page, 1500)
+            _wait_brief(page, timeouts.brief_wait_ms)
         if edu.field:
             _try_fill(
                 page,
@@ -692,7 +703,7 @@ def _fill_workday_experience(page: PageDriver, data: ApplicationData) -> None:
             )
 
 
-def _fill_education_school(page: PageDriver, school: str) -> bool:
+def _fill_education_school(page: PageDriver, school: str, timeouts: "ATSTimeoutsConfig") -> bool:
     """Circle uses ``#education-N--school``; Pluralsight uses ``--schoolName``."""
     for selector in _SCHOOL_INPUTS:
         if workday_widgets.fill_search_multiselect(page, selector, school):
@@ -705,6 +716,7 @@ def _fill_education_school(page: PageDriver, school: str) -> bool:
 
 def _fill_workday_review_education(page: PageDriver, data: ApplicationData) -> None:
     """Fill editable education gaps on the Review step (Circle read/edit panels)."""
+    timeouts = _get_timeouts(data)
     if not _at_review_step(page):
         return
     resume = data.tailored_resume
@@ -718,12 +730,12 @@ def _fill_workday_review_education(page: PageDriver, data: ApplicationData) -> N
             continue
         if _input_value(page, selector):
             return
-        if _fill_education_school(page, edu.school):
+        if _fill_education_school(page, edu.school, timeouts):
             return
     for add_sel in _EDUCATION_ADD:
-        if _try_click(page, add_sel, timeout_ms=_WIZARD_CLICK_TIMEOUT_MS):
-            _wait_brief(page, 2000)
-            if _fill_education_school(page, edu.school):
+        if _try_click(page, add_sel, timeout_ms=timeouts.wizard_click_timeout_ms):
+            _wait_brief(page, timeouts.step_transition_wait_ms)
+            if _fill_education_school(page, edu.school, timeouts):
                 return
 
 
@@ -838,7 +850,7 @@ def _try_resume_upload(page: PageDriver, data: ApplicationData) -> None:
 
 
 def _selector_visible(
-    page: PageDriver, selector: str, *, timeout_ms: int = _CANDIDATE_TIMEOUT_MS
+    page: PageDriver, selector: str, *, timeout_ms: int = 500
 ) -> bool:
     locator = getattr(page, "locator", None)
     if not callable(locator):

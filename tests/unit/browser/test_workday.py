@@ -77,7 +77,10 @@ def _data(url: str = "https://acme.wd1.myworkdayjobs.com/careers/job/1") -> Appl
     return ApplicationData(
         job_url=url,
         static_answers=StaticAnswers(
-            full_name="Jane Doe", email="j@example.com", phone="555-0100"
+            full_name="Jane Doe",
+            email="j@example.com",
+            phone="555-0100",
+            workday_apply_password="test123",
         ),
         tailored_resume=TailoredResume(base_name="R", job_id="abc", name="Jane Doe"),
         resume_docx_path=Path("/tmp/resume.docx"),

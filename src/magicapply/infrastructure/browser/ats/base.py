@@ -83,11 +83,12 @@ class ApplicationData(BaseModel):
     cover_letter: str | None = None
     dry_run: bool = False
     # Phase L: answer router for dynamic field discovery
-    answer_router: "AnswerRouter | None" = None
+    # Type checkers see AnswerRouter via TYPE_CHECKING; Pydantic sees object.
+    answer_router: object | None = None
     # Optional per-application Job — the answer router needs it to hand
     # screening questions to NarrativeEngine.answer. Kept optional so
     # simpler tests don't have to construct one.
-    job: "Job | None" = None
+    job: object | None = None
     # W.3: mutable list handlers append to as they resolve form fields.
     # BaseATSHandler.apply persists the full observation in one shot
     # after _fill_dynamic — Template-Method extension of a cross-cutting
@@ -98,11 +99,11 @@ class ApplicationData(BaseModel):
     # data dir).
     data_dir: Path | None = None
     # W.4b: per-tenant Workday apply credentials (data/workday_accounts.yaml).
-    workday_account_store: "WorkdayAccountStore | None" = None
+    workday_account_store: object | None = None
     # CF.1: composable form orchestrator (FormComposer); optional opaque slot.
-    form_composer: "FormComposer | None" = None
+    form_composer: object | None = None
     # CF.2: configurable timeouts per ATS (workday, greenhouse, etc.)
-    ats_timeouts: "ATSTimeoutsConfig | None" = None
+    ats_timeouts: object | None = None
 
 
 class ApplicationResult(BaseModel):
@@ -213,7 +214,14 @@ class BaseATSHandler:
             self._submit(page, data)
             return self._verify(page, data)
         except Exception as exc:
-            return ApplicationResult(state="failed", error=f"{type(exc).__name__}: {exc}")
+            error_msg = f"{type(exc).__name__}: {exc}"
+            _logger.error(
+                "ATS handler failed for %s: %s",
+                getattr(data, "job_url", "unknown"),
+                error_msg,
+                exc_info=True,
+            )
+            return ApplicationResult(state="failed", error=error_msg)
 
     # ---- Abstract hooks (must be overridden) ----
 

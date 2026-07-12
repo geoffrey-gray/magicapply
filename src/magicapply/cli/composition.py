@@ -263,8 +263,9 @@ def build_application_data(
     resume_docx = tailored_dir / "resume.docx"
     if not resume_docx.exists():
         raise FileNotFoundError(
-            f"application {app.id}: rendered DOCX missing at {resume_docx} — "
-            f"re-run `magicapply tailor` to regenerate"
+            f"application {app.id} (job_id={app.job_id}, profile={app.profile_name}): "
+            f"rendered DOCX missing at {resume_docx}. "
+            f"Run `magicapply tailor --profile {app.profile_name}` to regenerate."
         )
     profile = loaded.profile(app.profile_name)
     data_dir = loaded.data_dir()
