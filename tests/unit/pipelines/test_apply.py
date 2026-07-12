@@ -425,3 +425,92 @@ class TestApplyBatchPaced:
         )
         assert len(reports) == 1
         assert reports[0].final_state is ApplicationState.APPLIED
+
+
+class TestOrderByHostBucket:
+    """External ATS destinations must run before board listing shells."""
+
+    def test_external_before_indeed_and_linkedin(self, engine: Engine) -> None:
+        from magicapply.pipelines.apply import _order_by_host_bucket
+
+        jobs_repo = SqlJobsRepository(engine)
+        apps_repo = SqlApplicationsRepository(engine)
+
+        indeed = Job.new(
+            source_name="indeed-search",
+            url="https://www.indeed.com/viewjob?jk=aaa",
+            title="Indeed Role",
+            company="I",
+        )
+        linkedin = Job.new(
+            source_name="linkedin-search",
+            url="https://www.linkedin.com/jobs/view/1",
+            title="LI Role",
+            company="L",
+        )
+        gh = Job.new(
+            source_name="greenhouse-boards",
+            url="https://boards.greenhouse.io/acme/jobs/9",
+            apply_url="https://job-boards.greenhouse.io/embed/job_app?for=acme&token=9",
+            title="GH Role",
+            company="G",
+        )
+        for j in (indeed, linkedin, gh):
+            jobs_repo.upsert(j)
+
+        apps = []
+        for j, score in ((indeed, 90), (linkedin, 95), (gh, 50)):
+            a = Application(job_id=j.id, profile_name="swe", score=score)
+            a.transition_to(ApplicationState.SCORED)
+            a.transition_to(ApplicationState.TAILORED)
+            apps_repo.add(a)
+            apps.append(a)
+
+        ordered = _order_by_host_bucket(apps, wave=0, jobs=jobs_repo)
+        assert [a.job_id for a in ordered] == [gh.id, indeed.id, linkedin.id]
+
+        # Wave 1 still keeps external first; only board order rotates.
+        ordered1 = _order_by_host_bucket(apps, wave=1, jobs=jobs_repo)
+        assert ordered1[0].job_id == gh.id
+        assert [a.job_id for a in ordered1[1:]] == [linkedin.id, indeed.id]
+
+    def test_tailored_external_before_failed_board(
+        self, engine: Engine
+    ) -> None:
+        from magicapply.pipelines.apply import _order_by_host_bucket
+
+        jobs_repo = SqlJobsRepository(engine)
+        apps_repo = SqlApplicationsRepository(engine)
+
+        board = Job.new(
+            source_name="indeed-search",
+            url="https://www.indeed.com/viewjob?jk=bbb",
+            title="Board",
+            company="B",
+        )
+        ext = Job.new(
+            source_name="greenhouse-boards",
+            url="https://boards.greenhouse.io/acme/jobs/11",
+            apply_url="https://job-boards.greenhouse.io/embed/job_app?for=acme&token=11",
+            title="External",
+            company="E",
+        )
+        jobs_repo.upsert(board)
+        jobs_repo.upsert(ext)
+
+        failed = Application(job_id=board.id, profile_name="swe", score=99)
+        failed.transition_to(ApplicationState.SCORED)
+        failed.transition_to(ApplicationState.TAILORED)
+        failed.transition_to(ApplicationState.APPLYING)
+        failed.transition_to(ApplicationState.FAILED, reason="no form")
+        apps_repo.add(failed)
+
+        ready = Application(job_id=ext.id, profile_name="swe", score=40)
+        ready.transition_to(ApplicationState.SCORED)
+        ready.transition_to(ApplicationState.TAILORED)
+        apps_repo.add(ready)
+
+        ordered = _order_by_host_bucket(
+            [failed, ready], wave=0, jobs=jobs_repo
+        )
+        assert [a.job_id for a in ordered] == [ext.id, board.id]

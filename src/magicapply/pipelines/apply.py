@@ -123,9 +123,9 @@ class ApplyPipeline:
         )
 
         # Resolve embedded ATS destinations (e.g. Stripe careers → Greenhouse
-        # embed form) before handler selection. Indeed/LinkedIn listing URLs
-        # are valid apply targets (GenericHandler) — throttle rate-limits them;
-        # do not refuse board applies when no external ATS URL is known.
+        # embed form) before handler selection. Board listing URLs remain
+        # valid apply targets (GenericHandler) when no offsite URL is known —
+        # throttle rate-limits them; batch ordering prefers external ATS first.
         job = job_with_resolved_apply_url(job)
         apply_target = resolve_job_apply_destination(job)
         if application_data.job_url != apply_target:
@@ -407,6 +407,8 @@ def _host_bucket(url: str) -> str:
         return "indeed"
     if "linkedin.com" in host:
         return "linkedin"
+    if "glassdoor.com" in host or "glassdoor.co.uk" in host:
+        return "indeed"  # same “board shell” tier as Indeed for ordering
     return "external"
 
 
@@ -416,11 +418,21 @@ def _order_by_host_bucket(
     wave: int,
     jobs: JobsRepository,
 ) -> list[Application]:
-    """Rotate preference: indeed / linkedin / external (≈ 2:2:1 over 5 waves)."""
+    """Order apply candidates for a paced batch.
+
+    **External ATS first** (Greenhouse / Lever / Workday / Ashby / career
+    pages) — those have real application forms. Board listing shells
+    (Indeed / LinkedIn / Glassdoor viewjob pages) still run afterward so
+    board applies are not refused; they just must not starve fillable
+    destinations. Among board hosts, rotate Indeed vs LinkedIn by wave.
+
+    Within a host bucket: TAILORED before FAILED/NEEDS_INTERVENTION retries,
+    then higher score, then older ``updated_at``.
+    """
     from magicapply.infrastructure.sources.apply_url import resolve_job_apply_destination
 
-    preference = ("indeed", "linkedin", "external", "indeed", "linkedin")
-    pref = preference[wave % len(preference)]
+    board_rotate = ("indeed", "linkedin")
+    board_pref = board_rotate[wave % len(board_rotate)]
     buckets: dict[str, list[Application]] = {
         "indeed": [],
         "linkedin": [],
@@ -435,12 +447,14 @@ def _order_by_host_bucket(
         buckets[_host_bucket(dest)].append(app)
 
     def _sort_key(a: Application) -> tuple:
-        return (-(a.score or 0), a.updated_at, a.job_id)
+        state_rank = 0 if a.state is ApplicationState.TAILORED else 1
+        return (state_rank, -(a.score or 0), a.updated_at, a.job_id)
 
     for key in buckets:
         buckets[key].sort(key=_sort_key)
 
-    order = [pref] + [b for b in ("indeed", "linkedin", "external") if b != pref]
+    # Always drain external (real forms) before board shells.
+    order = ["external", board_pref] + [b for b in board_rotate if b != board_pref]
     ordered: list[Application] = []
     for key in order:
         ordered.extend(buckets[key])
