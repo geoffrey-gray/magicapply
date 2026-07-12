@@ -368,10 +368,10 @@ Candidates are ordered by **score (JD fit) high → low**, not by board brand.
 still has quota (e.g. LinkedIn cap hit → try Greenhouse). Pace sleep runs
 only after a counted outcome (applied / failed / needs_intervention).
 
-Unresolved Indeed/LinkedIn **listing** URLs (no external `apply_url`) are
-**soft-skipped** (`board_unresolved`) so they do not burn the campaign as
-fake Generic failures. Fix is enrich/resolve offsite apply URLs, not
-“always Greenhouse first.”
+**Board fallback:** If there is no external `apply_url`, apply still targets
+the Indeed/LinkedIn listing via **GenericHandler**. Throttle buckets are
+`indeed` / `linkedin` (not a single generic pile). Prefer offsite ATS when
+enrich finds it; board apply is the throttled fallback, not skipped.
 
 ---
 

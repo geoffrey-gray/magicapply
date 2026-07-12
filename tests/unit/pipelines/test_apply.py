@@ -565,46 +565,14 @@ class TestScoreFirstThrottleSkip:
         assert applied_ids == [lev_hi.id, gh_mid.id]
         assert lev_lo.id not in applied_ids
 
-    def test_board_shell_soft_skip_not_failed(
-        self, engine: Engine, tmp_path: Path
-    ) -> None:
-        jobs = SqlJobsRepository(engine)
-        apps = SqlApplicationsRepository(engine)
-        job = Job.new(
-            source_name="indeed-search",
-            url="https://www.indeed.com/viewjob?jk=shell1",
-            title="Shell",
-            company="S",
-        )
-        jobs.upsert(job)
-        d = tmp_path / "shell"
-        d.mkdir(parents=True)
-        (d / "resume.yaml").write_text(
-            yaml.safe_dump({"base_name": "R", "job_id": job.id, "name": "T"})
-        )
-        (d / "resume.docx").write_bytes(b"PK\x03\x04")
-        app = Application(
-            job_id=job.id, profile_name="swe", score=99, tailored_path=str(d)
-        )
-        app.transition_to(ApplicationState.SCORED)
-        app.transition_to(ApplicationState.TAILORED)
-        apps.add(app)
+    def test_ats_key_buckets_board_hosts(self) -> None:
+        from magicapply.pipelines.apply import ats_key_for_url
 
-        pipeline = ApplyPipeline(
-            applications_repo=apps,
-            jobs_repo=jobs,
-            data_builder=_data_builder,
+        assert ats_key_for_url("https://www.indeed.com/viewjob?jk=1") == "indeed"
+        assert ats_key_for_url("https://www.linkedin.com/jobs/view/1") == "linkedin"
+        assert (
+            ats_key_for_url(
+                "https://job-boards.greenhouse.io/embed/job_app?for=x&token=1"
+            )
+            == "greenhouse"
         )
-        reports = pipeline.apply_batch(
-            session=_FakeSession(),
-            profile_name="swe",
-            dry_run=True,
-            pace_seconds=1.0,
-            max_outcomes=5,
-            sleep=lambda _s: None,
-        )
-        assert reports
-        assert reports[0].error and reports[0].error.startswith("board_unresolved:")
-        reloaded = apps.get(app.id)
-        assert reloaded is not None
-        assert reloaded.state is ApplicationState.TAILORED

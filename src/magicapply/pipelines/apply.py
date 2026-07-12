@@ -35,11 +35,22 @@ from magicapply.infrastructure.browser.ats.factory import ATSHandlerFactory
 
 
 def ats_key_for_url(url: str) -> str | None:
-    """Derive the ATS name used as the throttle bucket + as the
-    `SqlApplicationsRepository.count_applied_in_window` key. Returns the
-    handler class name lowercased with the `handler` suffix stripped
-    (`GreenhouseHandler` → `greenhouse`). Returns None when no handler
-    matches — those apps are already routed to FAILED elsewhere."""
+    """Derive the throttle / stats bucket for an apply destination URL.
+
+    Board listings use host buckets (``indeed`` / ``linkedin`` / ``glassdoor``)
+    so GenericHandler catch-all does not collapse all boards into one cap.
+    Big-four ATS URLs use the handler name (``greenhouse``, ``workday``, …).
+    """
+    from urllib.parse import urlparse
+
+    host = urlparse(url or "").netloc.lower()
+    if "indeed.com" in host:
+        return "indeed"
+    if "linkedin.com" in host:
+        return "linkedin"
+    if "glassdoor.com" in host or "glassdoor.co.uk" in host:
+        return "glassdoor"
+
     handler = ATSHandlerFactory.for_url(url)
     if handler is None:
         return None
@@ -117,34 +128,18 @@ class ApplyPipeline:
             )
 
         from magicapply.infrastructure.sources.apply_url import (
-            is_job_board_listing_url,
             job_with_resolved_apply_url,
             resolve_job_apply_destination,
         )
 
-        # Resolve embedded ATS destinations (e.g. Stripe careers → Greenhouse
-        # embed form) before handler selection. Throttle bucket = resolved dest
-        # (Indeed listing with GH apply_url counts as greenhouse traffic).
+        # Prefer external/embed apply URLs when known. If the destination is
+        # still an Indeed/LinkedIn listing, apply via GenericHandler (fallback)
+        # under per-board throttle — do NOT skip board applies.
         job = job_with_resolved_apply_url(job)
         apply_target = resolve_job_apply_destination(job)
         if application_data.job_url != apply_target:
             application_data = application_data.model_copy(
                 update={"job_url": apply_target, "job": job}
-            )
-
-        # Unresolved board shells (Indeed/LI viewjob with no offsite apply_url)
-        # cannot be filled by Generic — soft-skip: leave state unchanged so
-        # score-first can move on; do not FAIL or false-APPLIED.
-        if is_job_board_listing_url(apply_target):
-            logger.warning(
-                "board_unresolved: soft-skip application %s dest=%s",
-                application.id,
-                apply_target,
-            )
-            return ApplyReport(
-                application.id,
-                application.state,
-                "board_unresolved: no external apply URL",
             )
 
         handler = ATSHandlerFactory.for_url(apply_target)
@@ -161,7 +156,7 @@ class ApplyPipeline:
         # Throttle pre-flight — check right before we transition to
         # APPLYING and touch the browser. On deny, leave the application
         # in TAILORED so score-first can try the next-best allowed dest.
-        # Real submissions and dry-runs both count against the cap.
+        # Board listings throttle as indeed/linkedin (not a single "generic").
         if self._throttle is not None:
             ats_key = ats_key_for_url(apply_target) or "unknown"
             decision = self._throttle.check(ats=ats_key)
@@ -218,11 +213,12 @@ class ApplyPipeline:
 
         Paced mode (``max_outcomes`` / ``deadline`` / ``pace_seconds``):
         re-lists candidates sorted by **score** (best first), applies when
-        throttle allows that destination, **skips** throttle-denied and
-        unresolved board shells to try the next-best job, sleeps after
-        counted outcomes only, and optionally includes FAILED /
-        NEEDS_INTERVENTION via ``apply_one(..., retry=True)``. Throttle deny
-        and board soft-skips do not count toward ``max_outcomes``.
+        throttle allows that destination, **skips** throttle-denied jobs to
+        try the next-best, sleeps after counted outcomes only, and optionally
+        includes FAILED / NEEDS_INTERVENTION via ``apply_one(..., retry=True)``.
+        Throttle deny does not count toward ``max_outcomes``. Board listings
+        (Indeed/LinkedIn) are valid apply targets via GenericHandler when no
+        external URL is known.
         """
         if self._jobs is None or self._data_builder is None:
             raise RuntimeError(
@@ -265,7 +261,6 @@ class ApplyPipeline:
 
             counted_this_pass = 0
             skipped_quota = 0
-            skipped_board = 0
 
             for app in ordered:
                 if deadline is not None and now_fn() >= deadline:
@@ -303,10 +298,6 @@ class ApplyPipeline:
                     )
                     continue
 
-                if _is_board_unresolved(report):
-                    skipped_board += 1
-                    continue
-
                 if _is_counted_outcome(report):
                     counted_this_pass += 1
                     if (
@@ -332,18 +323,17 @@ class ApplyPipeline:
             if deadline is not None and now_fn() >= deadline:
                 break
 
-            # No counted applies this pass: either only quota/board skips left,
-            # or nothing workable. Sleep once then re-list; if still blocked,
-            # return so outer ``run`` can rediscover later.
+            # No counted applies this pass: only quota skips left, or nothing
+            # workable. Sleep once then re-list; if still blocked, return so
+            # outer ``run`` can rediscover later.
             if counted_this_pass == 0:
-                if skipped_quota > 0 or skipped_board > 0:
+                if skipped_quota > 0:
                     stalled_passes += 1
                     if stalled_passes >= 2:
                         logger.info(
                             "apply_batch: still no allowed candidates after wait; "
-                            "returning (quota_skips=%d board_skips=%d)",
+                            "returning (quota_skips=%d)",
                             skipped_quota,
-                            skipped_board,
                         )
                         break
                     wait = pace_seconds if pace_seconds is not None else 900.0
@@ -354,9 +344,8 @@ class ApplyPipeline:
                         break
                     logger.info(
                         "apply_batch: no allowed candidates "
-                        "(quota_skips=%d board_skips=%d); sleeping %.0fs then re-list",
+                        "(quota_skips=%d); sleeping %.0fs then re-list",
                         skipped_quota,
-                        skipped_board,
                         wait,
                     )
                     sleep(wait)
@@ -437,12 +426,8 @@ def _is_throttle_defer(report: ApplyReport) -> bool:
     return bool(report.error and report.error.startswith("throttle:"))
 
 
-def _is_board_unresolved(report: ApplyReport) -> bool:
-    return bool(report.error and report.error.startswith("board_unresolved:"))
-
-
 def _is_counted_outcome(report: ApplyReport) -> bool:
-    if _is_throttle_defer(report) or _is_board_unresolved(report):
+    if _is_throttle_defer(report):
         return False
     return report.final_state in {
         ApplicationState.APPLIED,
@@ -458,8 +443,8 @@ def _count_outcomes(reports: list[ApplyReport]) -> int:
 def _order_candidates_by_score(apps: list[Application]) -> list[Application]:
     """Best JD-fit first; TAILORED before FAILED/NI retries; stable ties.
 
-    Throttle / board soft-skips are handled while walking this list so the
-    next attempt is always the highest-score job that is currently allowed.
+    Throttle skips are handled while walking this list so the next attempt
+    is always the highest-score job that is currently allowed.
     """
 
     def _sort_key(a: Application) -> tuple:
