@@ -130,6 +130,7 @@ static_answers:
   country: United States
   authorized_to_work_us: true
   needs_sponsorship_us: false
+  workday_apply_password: test123
   current_employer: Intrinsic
   years_of_experience: 12
   desired_salary: "$200,000"

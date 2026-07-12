@@ -148,6 +148,7 @@ static_answers:
   location: Boston, MA
   authorized_to_work_us: true
   needs_sponsorship_us: false
+  workday_apply_password: test123
 paths:
   resumes_dir: ../resumes
   data_dir: ../data

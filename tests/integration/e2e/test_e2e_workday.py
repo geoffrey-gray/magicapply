@@ -98,6 +98,7 @@ static_answers:
   full_name: E2E Applicant
   email: e2e@example.test
   phone: "555-0100"
+  workday_apply_password: test123
 paths:
   resumes_dir: ../resumes
   data_dir: ../data
