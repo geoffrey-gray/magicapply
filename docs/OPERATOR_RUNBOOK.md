@@ -360,6 +360,19 @@ bump `max_pages`. Raise caps only after clean multi-page runs.
 Adapters paginate serially until empty page, circuit-break, or caps.
 **Prefilter still runs after discover** — second funnel for fit.
 
+### Apply order (paced `run`)
+
+Candidates are ordered by **score (JD fit) high → low**, not by board brand.
+`ApplyThrottle` (per-ATS + global) decides whether that destination may fire
+**now**. On deny, the pipeline **skips** to the next-best job whose bucket
+still has quota (e.g. LinkedIn cap hit → try Greenhouse). Pace sleep runs
+only after a counted outcome (applied / failed / needs_intervention).
+
+Unresolved Indeed/LinkedIn **listing** URLs (no external `apply_url`) are
+**soft-skipped** (`board_unresolved`) so they do not burn the campaign as
+fake Generic failures. Fix is enrich/resolve offsite apply URLs, not
+“always Greenhouse first.”
+
 ---
 
 ## 9. Testing before you push

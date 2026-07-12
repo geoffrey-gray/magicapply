@@ -137,12 +137,13 @@ def test_apply_pipeline_routes_via_apply_url_not_listing(
     ) in page.calls
 
 
-def test_apply_pipeline_attempts_indeed_listing_via_generic(
+def test_apply_pipeline_soft_skips_unresolved_indeed_listing(
     engine: Engine, tmp_path: Path
 ) -> None:
-    """Indeed/LinkedIn listing URLs must be applied (Generic), not refused.
+    """Board shells without external apply_url soft-skip (stay TAILORED).
 
-    Rate is controlled by apply throttle — not by skipping board hosts.
+    Not SKIPPED forever, not Generic false-APPLIED. Throttle/score-first can
+    move on; resolve-offsite is the real fix for board jobs.
     """
     job = Job.new(
         source_name="indeed-search",
@@ -181,12 +182,7 @@ def test_apply_pipeline_attempts_indeed_listing_via_generic(
             pass
 
         def content(self) -> str:
-            # Minimal form so GenericHandler can dry-run rather than hard-fail.
-            return (
-                "<html><body><form>"
-                "<input id='first_name' /><input type='submit' />"
-                "</form></body></html>"
-            )
+            return "<html><body></body></html>"
 
         def set_input_files(self, selector: str, files: str) -> None:
             pass
@@ -215,12 +211,12 @@ def test_apply_pipeline_attempts_indeed_listing_via_generic(
     )
 
     assert isinstance(ATSHandlerFactory.for_url(job.url), GenericHandler)
-    assert ("goto", job.url) in page.calls
-    # Must not refuse board listings as SKIPPED.
-    assert report.final_state is not ApplicationState.SKIPPED
+    assert page.calls == []  # never navigated
+    assert report.error and report.error.startswith("board_unresolved:")
+    assert report.final_state is ApplicationState.TAILORED
     saved = apps.get(app.id)
     assert saved is not None
-    assert saved.state is not ApplicationState.SKIPPED
+    assert saved.state is ApplicationState.TAILORED
 
 
 def test_apply_pipeline_resolves_stripe_raw_to_greenhouse(

@@ -19,7 +19,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
-from urllib.parse import urlparse
 
 from magicapply.domain.apply.throttle import ApplyThrottle
 from magicapply.domain.models.application import Application, ApplicationState
@@ -118,19 +117,34 @@ class ApplyPipeline:
             )
 
         from magicapply.infrastructure.sources.apply_url import (
+            is_job_board_listing_url,
             job_with_resolved_apply_url,
             resolve_job_apply_destination,
         )
 
         # Resolve embedded ATS destinations (e.g. Stripe careers → Greenhouse
-        # embed form) before handler selection. Board listing URLs remain
-        # valid apply targets (GenericHandler) when no offsite URL is known —
-        # throttle rate-limits them; batch ordering prefers external ATS first.
+        # embed form) before handler selection. Throttle bucket = resolved dest
+        # (Indeed listing with GH apply_url counts as greenhouse traffic).
         job = job_with_resolved_apply_url(job)
         apply_target = resolve_job_apply_destination(job)
         if application_data.job_url != apply_target:
             application_data = application_data.model_copy(
                 update={"job_url": apply_target, "job": job}
+            )
+
+        # Unresolved board shells (Indeed/LI viewjob with no offsite apply_url)
+        # cannot be filled by Generic — soft-skip: leave state unchanged so
+        # score-first can move on; do not FAIL or false-APPLIED.
+        if is_job_board_listing_url(apply_target):
+            logger.warning(
+                "board_unresolved: soft-skip application %s dest=%s",
+                application.id,
+                apply_target,
+            )
+            return ApplyReport(
+                application.id,
+                application.state,
+                "board_unresolved: no external apply URL",
             )
 
         handler = ATSHandlerFactory.for_url(apply_target)
@@ -146,9 +160,8 @@ class ApplyPipeline:
 
         # Throttle pre-flight — check right before we transition to
         # APPLYING and touch the browser. On deny, leave the application
-        # in TAILORED so the next batch (once the window rolls) picks it
-        # up naturally. Real submissions and dry-runs both count against
-        # the cap because both generate ATS traffic.
+        # in TAILORED so score-first can try the next-best allowed dest.
+        # Real submissions and dry-runs both count against the cap.
         if self._throttle is not None:
             ats_key = ats_key_for_url(apply_target) or "unknown"
             decision = self._throttle.check(ats=ats_key)
@@ -201,15 +214,15 @@ class ApplyPipeline:
     ) -> list[ApplyReport]:
         """Apply to TAILORED applications for a profile in one session.
 
-        Default (no pacing kwargs): one pass over every TAILORED row — historical
-        batch behavior.
+        Default (no pacing kwargs): one score-ordered pass over TAILORED rows.
 
         Paced mode (``max_outcomes`` / ``deadline`` / ``pace_seconds``):
-        re-lists candidates, rotates Indeed / LinkedIn / external destinations,
-        sleeps after counted outcomes and on throttle denials, and optionally
-        includes FAILED / NEEDS_INTERVENTION via ``apply_one(..., retry=True)``.
-        Throttle deny does not count toward ``max_outcomes``. Successful dry-run
-        rows are already APPLIED and never appear in the TAILORED queue.
+        re-lists candidates sorted by **score** (best first), applies when
+        throttle allows that destination, **skips** throttle-denied and
+        unresolved board shells to try the next-best job, sleeps after
+        counted outcomes only, and optionally includes FAILED /
+        NEEDS_INTERVENTION via ``apply_one(..., retry=True)``. Throttle deny
+        and board soft-skips do not count toward ``max_outcomes``.
         """
         if self._jobs is None or self._data_builder is None:
             raise RuntimeError(
@@ -231,7 +244,7 @@ class ApplyPipeline:
             )
 
         reports: list[ApplyReport] = []
-        wave = 0
+        stalled_passes = 0
         while True:
             if deadline is not None and now_fn() >= deadline:
                 logger.info("apply_batch: deadline reached; stopping")
@@ -245,12 +258,15 @@ class ApplyPipeline:
             candidates = self._list_batch_candidates(
                 profile_name, include_retry_states=include_retry_states
             )
-            ordered = _order_by_host_bucket(candidates, wave=wave, jobs=self._jobs)
+            ordered = _order_candidates_by_score(candidates)
             if not ordered:
-                logger.info("apply_batch: no candidates remaining this wave")
+                logger.info("apply_batch: no candidates remaining")
                 break
 
-            wave_progress = False
+            counted_this_pass = 0
+            skipped_quota = 0
+            skipped_board = 0
+
             for app in ordered:
                 if deadline is not None and now_fn() >= deadline:
                     break
@@ -277,25 +293,22 @@ class ApplyPipeline:
                     retry=retry,
                 )
                 reports.append(report)
-                wave_progress = True
 
+                # Throttle: try next-best different destination — do not abort wave.
                 if _is_throttle_defer(report):
-                    wait = pace_seconds if pace_seconds is not None else 900.0
-                    if deadline is not None:
-                        remaining = (deadline - now_fn()).total_seconds()
-                        wait = max(0.0, min(wait, remaining))
-                    if wait > 0:
-                        logger.info(
-                            "apply_batch: throttle defer; sleeping %.0fs "
-                            "(caller may re-enter batch after rediscover)",
-                            wait,
-                        )
-                        sleep(wait)
-                    # Return to ``run`` so it can rediscover and open a new wave
-                    # rather than spinning the same TAILORED rows.
-                    return reports
+                    skipped_quota += 1
+                    logger.info(
+                        "apply_batch: throttle skip app=%s; trying next-best",
+                        app.id,
+                    )
+                    continue
+
+                if _is_board_unresolved(report):
+                    skipped_board += 1
+                    continue
 
                 if _is_counted_outcome(report):
+                    counted_this_pass += 1
                     if (
                         max_outcomes is not None
                         and _count_outcomes(reports) >= max_outcomes
@@ -314,11 +327,45 @@ class ApplyPipeline:
                             )
                             sleep(wait)
 
-            wave += 1
-            if not wave_progress:
+            if max_outcomes is not None and _count_outcomes(reports) >= max_outcomes:
                 break
-            # Exhausted current candidate set — return so ``run`` can rediscover.
-            break
+            if deadline is not None and now_fn() >= deadline:
+                break
+
+            # No counted applies this pass: either only quota/board skips left,
+            # or nothing workable. Sleep once then re-list; if still blocked,
+            # return so outer ``run`` can rediscover later.
+            if counted_this_pass == 0:
+                if skipped_quota > 0 or skipped_board > 0:
+                    stalled_passes += 1
+                    if stalled_passes >= 2:
+                        logger.info(
+                            "apply_batch: still no allowed candidates after wait; "
+                            "returning (quota_skips=%d board_skips=%d)",
+                            skipped_quota,
+                            skipped_board,
+                        )
+                        break
+                    wait = pace_seconds if pace_seconds is not None else 900.0
+                    if deadline is not None:
+                        remaining = (deadline - now_fn()).total_seconds()
+                        wait = max(0.0, min(wait, remaining))
+                    if wait <= 0:
+                        break
+                    logger.info(
+                        "apply_batch: no allowed candidates "
+                        "(quota_skips=%d board_skips=%d); sleeping %.0fs then re-list",
+                        skipped_quota,
+                        skipped_board,
+                        wait,
+                    )
+                    sleep(wait)
+                    continue
+                break
+
+            stalled_passes = 0
+            # Had progress — re-list remaining TAILORED by score (no rediscover).
+            continue
 
         return reports
 
@@ -330,12 +377,15 @@ class ApplyPipeline:
         dry_run: bool,
         include_retry_states: bool,
     ) -> list[ApplyReport]:
-        """Historical one-pass batch over TAILORED (optional retry states)."""
+        """One score-ordered pass over TAILORED (optional retry states)."""
         assert self._jobs is not None and self._data_builder is not None
         reports: list[ApplyReport] = []
-        for app in self._list_batch_candidates(
-            profile_name, include_retry_states=include_retry_states
-        ):
+        ordered = _order_candidates_by_score(
+            self._list_batch_candidates(
+                profile_name, include_retry_states=include_retry_states
+            )
+        )
+        for app in ordered:
             job = self._jobs.get(app.job_id)
             if job is None:
                 logger.warning(
@@ -387,8 +437,12 @@ def _is_throttle_defer(report: ApplyReport) -> bool:
     return bool(report.error and report.error.startswith("throttle:"))
 
 
+def _is_board_unresolved(report: ApplyReport) -> bool:
+    return bool(report.error and report.error.startswith("board_unresolved:"))
+
+
 def _is_counted_outcome(report: ApplyReport) -> bool:
-    if _is_throttle_defer(report):
+    if _is_throttle_defer(report) or _is_board_unresolved(report):
         return False
     return report.final_state in {
         ApplicationState.APPLIED,
@@ -401,61 +455,15 @@ def _count_outcomes(reports: list[ApplyReport]) -> int:
     return sum(1 for r in reports if _is_counted_outcome(r))
 
 
-def _host_bucket(url: str) -> str:
-    host = urlparse(url or "").netloc.lower()
-    if "indeed.com" in host:
-        return "indeed"
-    if "linkedin.com" in host:
-        return "linkedin"
-    if "glassdoor.com" in host or "glassdoor.co.uk" in host:
-        return "indeed"  # same “board shell” tier as Indeed for ordering
-    return "external"
+def _order_candidates_by_score(apps: list[Application]) -> list[Application]:
+    """Best JD-fit first; TAILORED before FAILED/NI retries; stable ties.
 
-
-def _order_by_host_bucket(
-    apps: list[Application],
-    *,
-    wave: int,
-    jobs: JobsRepository,
-) -> list[Application]:
-    """Order apply candidates for a paced batch.
-
-    **External ATS first** (Greenhouse / Lever / Workday / Ashby / career
-    pages) — those have real application forms. Board listing shells
-    (Indeed / LinkedIn / Glassdoor viewjob pages) still run afterward so
-    board applies are not refused; they just must not starve fillable
-    destinations. Among board hosts, rotate Indeed vs LinkedIn by wave.
-
-    Within a host bucket: TAILORED before FAILED/NEEDS_INTERVENTION retries,
-    then higher score, then older ``updated_at``.
+    Throttle / board soft-skips are handled while walking this list so the
+    next attempt is always the highest-score job that is currently allowed.
     """
-    from magicapply.infrastructure.sources.apply_url import resolve_job_apply_destination
-
-    board_rotate = ("indeed", "linkedin")
-    board_pref = board_rotate[wave % len(board_rotate)]
-    buckets: dict[str, list[Application]] = {
-        "indeed": [],
-        "linkedin": [],
-        "external": [],
-    }
-    for app in apps:
-        job = jobs.get(app.job_id)
-        if job is None:
-            buckets["external"].append(app)
-            continue
-        dest = resolve_job_apply_destination(job)
-        buckets[_host_bucket(dest)].append(app)
 
     def _sort_key(a: Application) -> tuple:
         state_rank = 0 if a.state is ApplicationState.TAILORED else 1
         return (state_rank, -(a.score or 0), a.updated_at, a.job_id)
 
-    for key in buckets:
-        buckets[key].sort(key=_sort_key)
-
-    # Always drain external (real forms) before board shells.
-    order = ["external", board_pref] + [b for b in board_rotate if b != board_pref]
-    ordered: list[Application] = []
-    for key in order:
-        ordered.extend(buckets[key])
-    return ordered
+    return sorted(apps, key=_sort_key)

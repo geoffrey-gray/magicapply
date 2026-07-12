@@ -352,9 +352,10 @@ class TestApplyBatchPaced:
         assert all(r.final_state is ApplicationState.APPLIED for r in reports)
         assert sleeps == [1.0]  # pace after first outcome; second hits max
 
-    def test_throttle_deny_does_not_count_and_sleeps(
+    def test_throttle_deny_skips_and_tries_next(
         self, engine: Engine, tmp_path: Path
     ) -> None:
+        """Quota deny must not abort the wave — try next-best allowed dest."""
         from magicapply.domain.apply.throttle import ApplyThrottle, ThrottleDecision
         from magicapply.config.models import ApplyThrottleConfig, ThrottleCaps
 
@@ -392,12 +393,12 @@ class TestApplyBatchPaced:
             pace_seconds=30.0,
             sleep=sleeps.append,
         )
-        # First app throttle-denied → sleep + re-list; both still TAILORED
+        # All denied → reports are throttle skips; still TAILORED; sleep then re-list
         assert reports
         assert all(
             r.error and r.error.startswith("throttle:") for r in reports
         )
-        assert sleeps  # slept after throttle
+        assert sleeps  # slept when nothing allowed this pass
         assert apps.list_by_state(ApplicationState.APPLIED) == []
 
     def test_include_retry_states_applies_failed(
@@ -427,90 +428,183 @@ class TestApplyBatchPaced:
         assert reports[0].final_state is ApplicationState.APPLIED
 
 
-class TestOrderByHostBucket:
-    """External ATS destinations must run before board listing shells."""
+class TestScoreFirstOrder:
+    """Candidates ordered by score; TAILORED before retries."""
 
-    def test_external_before_indeed_and_linkedin(self, engine: Engine) -> None:
-        from magicapply.pipelines.apply import _order_by_host_bucket
+    def test_higher_score_first(self) -> None:
+        from magicapply.pipelines.apply import _order_candidates_by_score
 
-        jobs_repo = SqlJobsRepository(engine)
-        apps_repo = SqlApplicationsRepository(engine)
+        low = Application(job_id="a", profile_name="swe", score=40)
+        low.transition_to(ApplicationState.SCORED)
+        low.transition_to(ApplicationState.TAILORED)
+        high = Application(job_id="b", profile_name="swe", score=95)
+        high.transition_to(ApplicationState.SCORED)
+        high.transition_to(ApplicationState.TAILORED)
+        mid = Application(job_id="c", profile_name="swe", score=70)
+        mid.transition_to(ApplicationState.SCORED)
+        mid.transition_to(ApplicationState.TAILORED)
+        ordered = _order_candidates_by_score([low, high, mid])
+        assert [a.job_id for a in ordered] == ["b", "c", "a"]
 
-        indeed = Job.new(
-            source_name="indeed-search",
-            url="https://www.indeed.com/viewjob?jk=aaa",
-            title="Indeed Role",
-            company="I",
-        )
-        linkedin = Job.new(
-            source_name="linkedin-search",
-            url="https://www.linkedin.com/jobs/view/1",
-            title="LI Role",
-            company="L",
-        )
-        gh = Job.new(
-            source_name="greenhouse-boards",
-            url="https://boards.greenhouse.io/acme/jobs/9",
-            apply_url="https://job-boards.greenhouse.io/embed/job_app?for=acme&token=9",
-            title="GH Role",
-            company="G",
-        )
-        for j in (indeed, linkedin, gh):
-            jobs_repo.upsert(j)
+    def test_tailored_before_failed_at_same_score(self) -> None:
+        from magicapply.pipelines.apply import _order_candidates_by_score
 
-        apps = []
-        for j, score in ((indeed, 90), (linkedin, 95), (gh, 50)):
-            a = Application(job_id=j.id, profile_name="swe", score=score)
-            a.transition_to(ApplicationState.SCORED)
-            a.transition_to(ApplicationState.TAILORED)
-            apps_repo.add(a)
-            apps.append(a)
-
-        ordered = _order_by_host_bucket(apps, wave=0, jobs=jobs_repo)
-        assert [a.job_id for a in ordered] == [gh.id, indeed.id, linkedin.id]
-
-        # Wave 1 still keeps external first; only board order rotates.
-        ordered1 = _order_by_host_bucket(apps, wave=1, jobs=jobs_repo)
-        assert ordered1[0].job_id == gh.id
-        assert [a.job_id for a in ordered1[1:]] == [linkedin.id, indeed.id]
-
-    def test_tailored_external_before_failed_board(
-        self, engine: Engine
-    ) -> None:
-        from magicapply.pipelines.apply import _order_by_host_bucket
-
-        jobs_repo = SqlJobsRepository(engine)
-        apps_repo = SqlApplicationsRepository(engine)
-
-        board = Job.new(
-            source_name="indeed-search",
-            url="https://www.indeed.com/viewjob?jk=bbb",
-            title="Board",
-            company="B",
-        )
-        ext = Job.new(
-            source_name="greenhouse-boards",
-            url="https://boards.greenhouse.io/acme/jobs/11",
-            apply_url="https://job-boards.greenhouse.io/embed/job_app?for=acme&token=11",
-            title="External",
-            company="E",
-        )
-        jobs_repo.upsert(board)
-        jobs_repo.upsert(ext)
-
-        failed = Application(job_id=board.id, profile_name="swe", score=99)
+        failed = Application(job_id="f", profile_name="swe", score=99)
         failed.transition_to(ApplicationState.SCORED)
         failed.transition_to(ApplicationState.TAILORED)
         failed.transition_to(ApplicationState.APPLYING)
-        failed.transition_to(ApplicationState.FAILED, reason="no form")
-        apps_repo.add(failed)
-
-        ready = Application(job_id=ext.id, profile_name="swe", score=40)
+        failed.transition_to(ApplicationState.FAILED, reason="x")
+        ready = Application(job_id="t", profile_name="swe", score=50)
         ready.transition_to(ApplicationState.SCORED)
         ready.transition_to(ApplicationState.TAILORED)
-        apps_repo.add(ready)
+        ordered = _order_candidates_by_score([failed, ready])
+        assert [a.job_id for a in ordered] == ["t", "f"]
 
-        ordered = _order_by_host_bucket(
-            [failed, ready], wave=0, jobs=jobs_repo
+
+class TestScoreFirstThrottleSkip:
+    def test_after_bucket_cap_applies_next_best_other_ats(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        """Score 90 Lever, 80 GH, 70 Lever: after Lever cap 1, apply GH not 2nd Lever."""
+        from magicapply.domain.apply.throttle import ApplyThrottle, ThrottleDecision
+        from magicapply.config.models import ApplyThrottleConfig, ThrottleCaps
+
+        jobs_repo = SqlJobsRepository(engine)
+        apps_repo = SqlApplicationsRepository(engine)
+        profile = "score-throttle"
+        lever_applied = {"n": 0}
+
+        def _seed(url: str, *, score: int, source: str) -> Application:
+            job = Job.new(source_name=source, url=url, title="T", company="C")
+            jobs_repo.upsert(job)
+            d = tmp_path / "t" / job.id
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "resume.yaml").write_text(
+                yaml.safe_dump(
+                    {"base_name": "R", "job_id": job.id, "name": "Test Person"}
+                )
+            )
+            (d / "resume.docx").write_bytes(b"PK\x03\x04")
+            a = Application(
+                job_id=job.id,
+                profile_name=profile,
+                score=score,
+                tailored_path=str(d),
+            )
+            a.transition_to(ApplicationState.SCORED)
+            a.transition_to(ApplicationState.TAILORED)
+            apps_repo.add(a)
+            return a
+
+        lev_hi = _seed(
+            "https://jobs.lever.co/acme/high",
+            score=90,
+            source="linkedin-search",
         )
-        assert [a.job_id for a in ordered] == [ext.id, board.id]
+        gh_mid = _seed(
+            "https://boards.greenhouse.io/acme/jobs/mid",
+            score=80,
+            source="greenhouse-boards",
+        )
+        lev_lo = _seed(
+            "https://jobs.lever.co/acme/low",
+            score=70,
+            source="linkedin-search",
+        )
+
+        class _LeverCapOne(ApplyThrottle):
+            def check(self, *, ats: str) -> ThrottleDecision:  # type: ignore[override]
+                if ats == "lever" and lever_applied["n"] >= 1:
+                    return ThrottleDecision.deny("lever hourly cap")
+                return ThrottleDecision.ok()
+
+        throttle = _LeverCapOne(
+            config=ApplyThrottleConfig(
+                ats_default=ThrottleCaps(hourly=4, daily=55),
+                global_cap=ThrottleCaps(hourly=20, daily=100),
+            ),
+            ats_hourly_count=lambda *a: 0,
+            ats_daily_count=lambda *a: 0,
+            global_hourly_count=lambda *a: 0,
+            global_daily_count=lambda *a: 0,
+        )
+
+        pipeline = ApplyPipeline(
+            applications_repo=apps_repo,
+            jobs_repo=jobs_repo,
+            data_builder=_data_builder,
+            throttle=throttle,
+        )
+        _orig = pipeline.apply_one
+
+        def _wrap(**kwargs):  # type: ignore[no-untyped-def]
+            report = _orig(**kwargs)
+            if (
+                report.final_state is ApplicationState.APPLIED
+                and kwargs["job"].url
+                and "lever.co" in kwargs["job"].url
+            ):
+                lever_applied["n"] += 1
+            return report
+
+        pipeline.apply_one = _wrap  # type: ignore[method-assign]
+
+        reports = pipeline.apply_batch(
+            session=_FakeSession(),
+            profile_name=profile,
+            dry_run=True,
+            max_outcomes=2,
+            pace_seconds=1.0,
+            sleep=lambda _s: None,
+        )
+        applied_ids = [
+            r.application_id
+            for r in reports
+            if r.final_state is ApplicationState.APPLIED
+        ]
+        assert applied_ids == [lev_hi.id, gh_mid.id]
+        assert lev_lo.id not in applied_ids
+
+    def test_board_shell_soft_skip_not_failed(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        jobs = SqlJobsRepository(engine)
+        apps = SqlApplicationsRepository(engine)
+        job = Job.new(
+            source_name="indeed-search",
+            url="https://www.indeed.com/viewjob?jk=shell1",
+            title="Shell",
+            company="S",
+        )
+        jobs.upsert(job)
+        d = tmp_path / "shell"
+        d.mkdir(parents=True)
+        (d / "resume.yaml").write_text(
+            yaml.safe_dump({"base_name": "R", "job_id": job.id, "name": "T"})
+        )
+        (d / "resume.docx").write_bytes(b"PK\x03\x04")
+        app = Application(
+            job_id=job.id, profile_name="swe", score=99, tailored_path=str(d)
+        )
+        app.transition_to(ApplicationState.SCORED)
+        app.transition_to(ApplicationState.TAILORED)
+        apps.add(app)
+
+        pipeline = ApplyPipeline(
+            applications_repo=apps,
+            jobs_repo=jobs,
+            data_builder=_data_builder,
+        )
+        reports = pipeline.apply_batch(
+            session=_FakeSession(),
+            profile_name="swe",
+            dry_run=True,
+            pace_seconds=1.0,
+            max_outcomes=5,
+            sleep=lambda _s: None,
+        )
+        assert reports
+        assert reports[0].error and reports[0].error.startswith("board_unresolved:")
+        reloaded = apps.get(app.id)
+        assert reloaded is not None
+        assert reloaded.state is ApplicationState.TAILORED
