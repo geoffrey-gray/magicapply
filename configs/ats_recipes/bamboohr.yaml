@@ -1,0 +1,45 @@
+# BambooHR careers apply form (company.bamboohr.com/careers/…).
+# Used by GenericHandler via host match — no dedicated handler required.
+platform: bamboohr
+match_hosts:
+  - bamboohr.com
+form_selectors:
+  # Prefer the real application form; avoid bare `form` (login/search chrome).
+  - form#job-application-form
+  - form[id*='job-application']
+  - form[id*='application']
+  - "#job-application-form"
+submit_selectors:
+  - "button:has-text('Submit application')"
+  - "button:has-text('Submit Application')"
+  - "button:has-text('Submit')"
+  - "button:has-text('Send application')"
+  - button[type='submit']
+resume_selectors:
+  - input[type='file'][aria-label='file-input']
+  - input[type='file'][data-bi-id*='file']
+  - input[type='file'][accept*='pdf']
+  - input[type='file']
+pre_steps:
+  - action: wait
+    timeout_ms: 1500
+  - action: click
+    selector: "button:has-text('Apply')"
+    timeout_ms: 2500
+  - action: click
+    selector: "a:has-text('Apply')"
+    timeout_ms: 2000
+  - action: click
+    selector: "button:has-text('Apply for this job')"
+    timeout_ms: 2000
+  - action: wait
+    timeout_ms: 2000
+wizard:
+  next_selectors:
+    - "button:has-text('Next')"
+    - "button:has-text('Continue')"
+  max_steps: 6
+  review_selectors:
+    - "button:has-text('Submit application')"
+    - "button:has-text('Submit')"
+    - button[type='submit']

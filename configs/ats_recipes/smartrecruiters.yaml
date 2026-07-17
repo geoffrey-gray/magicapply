@@ -1,4 +1,7 @@
-# SmartRecruiters apply shells (often reached via Indeed redirect).
+# SmartRecruiters apply shells (often reached via Indeed/LinkedIn redirect).
+# Listing pages (jobs.smartrecruiters.com/Company/id-slug) are often SPA shells
+# without a <form> until Apply opens the one-click application UI.
+# Prefer real form selectors; never fall back to bare `form` alone.
 platform: smartrecruiters
 match_hosts:
   - jobs.smartrecruiters.com
@@ -6,33 +9,51 @@ match_hosts:
 form_selectors:
   - form#st-applicationForm
   - form.st-applicationForm
+  - form[id*='applicationForm']
+  - form[id*='ApplicationForm']
   - "[data-test='application-form']"
   - form.application-form
-  - main form
-  - form
+  - "div[data-test='application-form'] form"
+  - "main form[id*='application']"
+  - "main form[class*='application']"
 submit_selectors:
-  - button[type='submit']
-  - "button:has-text('Submit')"
-  - "button:has-text('Submit application')"
   - "#st-submitApplication"
+  - "button:has-text('Submit application')"
+  - "button:has-text('Submit Application')"
+  - "button:has-text('Submit')"
+  - button[type='submit']
+  - "button:has-text('Send application')"
 resume_selectors:
   - input[type='file'][name*='resume']
   - input[type='file'][name*='cv']
+  - input[type='file'][id*='resume']
   - input[type='file']
 pre_steps:
   - action: wait
+    timeout_ms: 2000
+  - action: click
+    selector: "#onetrust-accept-btn-handler"
+    timeout_ms: 1500
+  - action: click
+    selector: "button:has-text('Accept')"
     timeout_ms: 1500
   - action: click
     selector: "button:has-text('Apply')"
-    timeout_ms: 2000
+    timeout_ms: 3000
   - action: click
     selector: "a:has-text('Apply')"
-    timeout_ms: 2000
+    timeout_ms: 2500
+  - action: click
+    selector: "button:has-text(\"I'm interested\")"
+    timeout_ms: 2500
   - action: click
     selector: "[data-test='apply-button']"
     timeout_ms: 2000
+  - action: click
+    selector: "a[href*='oneclick']"
+    timeout_ms: 2500
   - action: wait
-    timeout_ms: 1500
+    timeout_ms: 2500
 wizard:
   next_selectors:
     - "button:has-text('Next')"
@@ -42,3 +63,4 @@ wizard:
   review_selectors:
     - button[type='submit']
     - "button:has-text('Submit')"
+    - "#st-submitApplication"

@@ -385,31 +385,32 @@ magicapply run <profile> --root configs --skip-discover \
   --max-applies 60 --duration-hours 12 --pace-seconds 1080
 ```
 
-### DoD checklist (dry-run)
+### DoD checklist (dry-run) — external ATS first
+
+**Phase 1 primary path:** board **discovery** → **external company ATS** apply.
+LinkedIn/Indeed **Easy Apply** (forms hosted on the board) is **optional /
+deferred** — high bot friction, weaker signal, more resume-harvest risk.
 
 Honest pass only — dry-run `APPLIED` **and** a real application form:
 
-- Guest LinkedIn chrome / people-search First+Last fills are **FAIL** (never
-  count as Easy Apply success).
-- Board Easy Apply requires the Easy Apply / Indeed IA modal form present.
-- LinkedIn Easy Apply needs headed Chromium after headed `auth login linkedin`
-  (headless reuse clears `li_at`).
-- Scale DoD after this checklist: 10 Indeed + 10 LinkedIn dry-run APPLIED in
-  `configs-capture` / `data/capture_10x10` (see plan: board matrix then 10×10).
+- Guest LinkedIn chrome / people-search fills are **FAIL**.
+- External destinations use the real ATS handler or Generic + recipe
+  (`configs/ats_recipes/`: greenhouse via handler, plus workable,
+  smartrecruiters, bamboohr, …).
 
-1. **Indeed → external:** `status --source <indeed-source>` → pick a row with
-   `dest=external` → `tailor <profile> <job-id>` → `apply <job-id> --no-submit`
-   (browser lands on Greenhouse/Workday/Lever/Ashby, not Indeed form).
-2. **Indeed → Easy Apply:** pick `dest=board` Indeed row → same tailor/apply;
-   `IndeedHandler` fills through last step; submit skipped.
-3. **LinkedIn → external:** same as (1) for a LinkedIn-sourced external row.
-4. **LinkedIn → Easy Apply:** `dest=board` LinkedIn row → `LinkedInHandler`
-   with `--no-headless` (or session auto-headed when LinkedIn auth is loaded).
-5. **Big-four ATS:** dry-run apply one TAILORED job each for greenhouse /
-   workday / lever / ashby destinations.
+1. **Indeed → external:** pick a row with off-board `apply_url` (or resolve
+   lands on GH/WD/Lever/Ashby/Bamboo/SR/…) → `tailor` → `apply --no-submit`.
+2. **LinkedIn → external:** same; browser leaves linkedin.com for company ATS.
+3. **Big-four ATS:** dry-run one TAILORED job each for greenhouse / workday /
+   lever / ashby.
+4. **Mid-tier recipes:** SmartRecruiters / BambooHR / Workable via Generic +
+   YAML when those hosts appear (no Easy Apply required).
+5. **(Optional later) Board Easy Apply:** Indeed IA / LinkedIn Easy Apply only
+   after calm auth + human-paced navigation — not the volume path.
 
-Auth: `magicapply auth login indeed` (and `linkedin`) before board paths.
-Apply sessions load `data/auth/*_storage_state.json` automatically.
+Auth: `magicapply auth login linkedin` (and `indeed`) for **discovery** and
+board listing resolve. Apply sessions load `data/auth/*_storage_state.json`.
+Incomplete LinkedIn jars (no `li_at`) are ignored — re-run auth login.
 Use the project venv (`PATH=.venv/bin:$PATH` or `uv run`) for all CLI/pytest.
 
 ---

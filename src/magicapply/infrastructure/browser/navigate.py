@@ -32,9 +32,11 @@ def linkedin_same_origin_goto(
     page: object,
     url: str,
     *,
+    # Prefer feed only. Bare https://www.linkedin.com/ often 302-loops under
+    # Playwright even with a valid li_at (ERR_TOO_MANY_REDIRECTS).
     warm_urls: tuple[str, ...] = (
         "https://www.linkedin.com/feed/",
-        "https://www.linkedin.com/",
+        "https://www.linkedin.com/jobs/",
     ),
     timeout_ms: int = _DEFAULT_NAV_TIMEOUT_MS,
 ) -> None:

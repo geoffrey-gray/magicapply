@@ -34,9 +34,23 @@ def test_loads_workable_and_smartrecruiters_recipes() -> None:
     assert resolve_recipe(
         "https://apply.workable.com/acme/j/ABC", recipes
     ).platform == "workable"
-    assert resolve_recipe(
+    sr = resolve_recipe(
         "https://jobs.smartrecruiters.com/Acme/123", recipes
-    ).platform == "smartrecruiters"
+    )
+    assert sr.platform == "smartrecruiters"
+    # Bare `form` matches listing chrome; keep SR selectors specific.
+    assert "form" not in sr.form_selectors
+
+
+def test_loads_bamboohr_recipe() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    assert "bamboohr" in recipes
+    recipe = resolve_recipe(
+        "https://cognira.bamboohr.com/careers/164", recipes
+    )
+    assert recipe.platform == "bamboohr"
+    assert "form#job-application-form" in recipe.form_selectors
+    assert "form" not in recipe.form_selectors
 
 
 def test_loads_eightfold_recipe_from_bundled_configs() -> None:
