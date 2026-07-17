@@ -31,9 +31,11 @@ _CAPTCHA_MARKERS = re.compile(
 
 
 # Page-level interstitials that block navigation before any form work.
+# Do NOT match bare google.com/recaptcha/api — dormant/invisible widgets on
+# Indeed (and others) embed that script without presenting a challenge.
 _BLOCKING_MARKERS = re.compile(
     r"""(
-        google\.com/recaptcha/api
+        recaptcha/api2/bframe
         | cf-challenge
         | challenges\.cloudflare
     )""",

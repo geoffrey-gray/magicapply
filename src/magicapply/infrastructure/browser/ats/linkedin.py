@@ -26,7 +26,7 @@ from magicapply.infrastructure.browser.ats.generic_wizard import (
     _try_fill,
 )
 from magicapply.infrastructure.browser.ats.router_dispatch import fill_dynamic_fields
-from magicapply.infrastructure.browser.navigate import safe_goto
+from magicapply.infrastructure.browser.navigate import linkedin_same_origin_goto
 from magicapply.infrastructure.sources.apply_url import is_job_board_listing_url
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,13 @@ _APPLY_CLICK_SELECTORS = (
     "button:has-text('Easy Apply')",
     "button:has-text('Apply')",
     "a.jobs-apply-button",
+)
+
+_EASY_APPLY_FORM_SELECTORS = (
+    "form.jobs-easy-apply-form",
+    "div.jobs-easy-apply-content form",
+    ".jobs-easy-apply-modal form",
+    "form.jobs-easy-apply-content__form",
 )
 
 
@@ -59,6 +66,14 @@ class LinkedInHandler(BaseATSHandler):
         try:
             self._navigate(page, data)
             final = getattr(page, "url", None) or data.job_url
+            if final and (
+                final.startswith("chrome-error:")
+                or final.startswith("chrome://")
+                or "chromewebdata" in final
+            ):
+                raise RuntimeError(
+                    f"LinkedIn navigation failed (browser error page): {final}"
+                )
             if final and not self.matches(final):
                 return self._redispatch(page, data, final)
             orig_nav = self._navigate
@@ -96,11 +111,31 @@ class LinkedInHandler(BaseATSHandler):
 
     def _navigate(self, page: PageDriver, data: ApplicationData) -> None:
         recipe = resolve_recipe(data.job_url, self._recipes)
-        safe_goto(page, data.job_url)
+        # Warm feed/jobs hub then same-origin assign — direct page.goto to
+        # /jobs/view/… self-302 loops even with a valid jar (li_at present).
+        linkedin_same_origin_goto(page, data.job_url)
         run_pre_steps(page, recipe)
         current = getattr(page, "url", "") or data.job_url
         if is_job_board_listing_url(current):
-            _click_any(page, _APPLY_CLICK_SELECTORS, timeout_ms=800)
+            # Prefer Easy Apply CTA before generic Apply (offsite).
+            _click_any(
+                page,
+                (
+                    "button:has-text('Easy Apply')",
+                    "button.jobs-apply-button--top-card",
+                    "button.jobs-apply-button",
+                    "button:has-text('Apply')",
+                    "a.jobs-apply-button",
+                ),
+                timeout_ms=2000,
+            )
+        _wait_for_easy_apply_form(page)
+        final = getattr(page, "url", "") or current
+        host = urlparse(final).netloc.lower()
+        if not any(h in host for h in _MATCH_HOSTS):
+            # Offsite Apply left LinkedIn — apply() will redispatch.
+            return
+        _ensure_easy_apply_form(page)
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers
@@ -155,3 +190,56 @@ class LinkedInHandler(BaseATSHandler):
             if _try_click(page, selector, timeout_ms=800):
                 return
         raise RuntimeError("LinkedInHandler: no submit control matched")
+
+
+def _wait_briefly(page: PageDriver, timeout_ms: int) -> None:
+    wait = getattr(page, "wait_for_timeout", None)
+    if callable(wait):
+        with contextlib.suppress(Exception):
+            wait(timeout_ms)
+
+
+def _wait_for_easy_apply_form(page: PageDriver, timeout_ms: int = 5000) -> None:
+    """Wait for Easy Apply modal after CTA click (headed UI paint)."""
+    wait_for = getattr(page, "wait_for_selector", None)
+    if callable(wait_for):
+        for selector in _EASY_APPLY_FORM_SELECTORS:
+            with contextlib.suppress(Exception):
+                wait_for(selector, timeout=timeout_ms)
+                return
+    _wait_briefly(page, min(timeout_ms, 2000))
+
+
+def _ensure_easy_apply_form(page: PageDriver) -> None:
+    """Fail loud when guest/search chrome is present instead of Easy Apply."""
+    for selector in _EASY_APPLY_FORM_SELECTORS:
+        if _easy_apply_present(page, selector):
+            return
+    html = ""
+    with contextlib.suppress(Exception):
+        html = (page.content() or "").lower()
+    if "jobs-guest" in html or "d_jobs_guest" in html:
+        raise RuntimeError(
+            "LinkedIn: guest page / not authenticated — Easy Apply form missing"
+        )
+    raise RuntimeError(
+        "LinkedIn: Easy Apply form not found (auth expired or offsite-only apply)"
+    )
+
+
+def _easy_apply_present(page: PageDriver, selector: str) -> bool:
+    locator = getattr(page, "locator", None)
+    if callable(locator):
+        try:
+            return locator(selector).first.count() > 0
+        except Exception:  # noqa: BLE001
+            return False
+    with contextlib.suppress(Exception):
+        html = page.content() or ""
+        if "jobs-easy-apply-form" in selector and "jobs-easy-apply-form" in html:
+            return True
+        if "jobs-easy-apply-content" in selector and "jobs-easy-apply-content" in html:
+            return True
+        if "jobs-easy-apply-modal" in selector and "jobs-easy-apply-modal" in html:
+            return True
+    return False

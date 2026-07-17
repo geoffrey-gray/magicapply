@@ -116,7 +116,203 @@ def test_linkedin_handler_stays_on_board_dry_run(tmp_path: Path) -> None:
         page=_Page(),
         data=_data(job.url, tmp_path, job),
     )
-    # Without form_composer, fill is a no-op; dry-run still reports applied.
+    # Easy Apply form present → dry-run still reports applied.
     assert result.state == "applied"
     assert isinstance(LinkedInHandler(), LinkedInHandler)
     assert GreenhouseHandler.matches("https://boards.greenhouse.io/x/jobs/1")
+
+
+def test_linkedin_handler_fails_on_guest_people_search(tmp_path: Path) -> None:
+    job = Job.new(
+        source_name="linkedin-search",
+        url="https://www.linkedin.com/jobs/view/999",
+        title="Eng",
+        company="Acme",
+        raw={"board_resolve": "done", "linkedin_easy_apply": True},
+    )
+
+    class _Page:
+        url = job.url
+
+        def goto(self, url: str) -> None:
+            self.url = url
+
+        def content(self) -> str:
+            return (
+                "<html><body data-page-key='d_jobs_guest_details'>"
+                "<form role='search' action='/pub/dir'>"
+                "<input type='search' name='firstName' />"
+                "<input type='search' name='lastName' />"
+                "</form></body></html>"
+            )
+
+        def click(self, selector: str) -> None:
+            raise RuntimeError("missing")
+
+        def fill(self, selector: str, value: str) -> None:
+            pass
+
+        def set_input_files(self, selector: str, files: str) -> None:
+            pass
+
+    result = LinkedInHandler().apply(
+        page=_Page(),
+        data=_data(job.url, tmp_path, job),
+    )
+    assert result.state == "failed"
+    assert result.error is not None
+    assert "Easy Apply" in result.error or "guest" in result.error.lower()
+
+
+def test_indeed_handler_stays_on_board_dry_run(tmp_path: Path) -> None:
+    job = Job.new(
+        source_name="indeed-search",
+        url="https://www.indeed.com/viewjob?jk=abc",
+        title="Eng",
+        company="Acme",
+        raw={"indeed_apply_url": "https://www.indeed.com/applystart?jk=abc"},
+    )
+
+    class _Page:
+        url = "https://www.indeed.com/applystart?jk=abc"
+
+        def goto(self, url: str) -> None:
+            self.url = url
+
+        def content(self) -> str:
+            return (
+                "<html><body><form id='ia-container' class='ia-BasePage-card'>"
+                "<input name='email' /><button type='submit'>Submit</button>"
+                "</form></body></html>"
+            )
+
+        def fill(self, selector: str, value: str) -> None:
+            pass
+
+        def click(self, selector: str) -> None:
+            pass
+
+        def set_input_files(self, selector: str, files: str) -> None:
+            pass
+
+        def select_option(self, selector: str, value: str) -> None:
+            pass
+
+        def check(self, selector: str) -> None:
+            pass
+
+        def locator(self, selector: str):
+            class _Loc:
+                @property
+                def first(self):
+                    return self
+
+                def count(self) -> int:
+                    return 1 if "ia-container" in selector or "ia-Base" in selector else 0
+
+            return _Loc()
+
+    result = IndeedHandler().apply(
+        page=_Page(),
+        data=_data(job.url, tmp_path, job),
+    )
+    assert result.state == "applied"
+    assert result.error == "dry-run: submit skipped"
+
+
+def test_indeed_handler_fails_on_login_wall(tmp_path: Path) -> None:
+    job = Job.new(
+        source_name="indeed-search",
+        url="https://www.indeed.com/viewjob?jk=xyz",
+        title="Eng",
+        company="Acme",
+    )
+
+    class _Page:
+        url = job.url
+
+        def goto(self, url: str) -> None:
+            self.url = "https://secure.indeed.com/auth?from=apply"
+
+        def content(self) -> str:
+            return "<html><body><h1>Sign in</h1><form><input type='email'/></form></body></html>"
+
+        def click(self, selector: str) -> None:
+            raise RuntimeError("missing")
+
+        def fill(self, selector: str, value: str) -> None:
+            pass
+
+        def set_input_files(self, selector: str, files: str) -> None:
+            pass
+
+        def locator(self, selector: str):
+            class _Loc:
+                @property
+                def first(self):
+                    return self
+
+                def count(self) -> int:
+                    return 0
+
+            return _Loc()
+
+    result = IndeedHandler().apply(
+        page=_Page(),
+        data=_data(job.url, tmp_path, job),
+    )
+    assert result.state == "failed"
+    assert result.error is not None
+    assert "login" in result.error.lower() or "form" in result.error.lower()
+
+
+def test_indeed_handler_footer_sign_in_is_not_login_wall(tmp_path: Path) -> None:
+    """Footer 'Sign in' copy must not trip the login-wall guard."""
+    job = Job.new(
+        source_name="indeed-search",
+        url="https://www.indeed.com/viewjob?jk=xyz",
+        title="Eng",
+        company="Acme",
+        raw={"indeed_apply_url": "https://www.indeed.com/applystart?jk=xyz"},
+    )
+
+    class _Page:
+        url = "https://www.indeed.com/viewjob?jk=xyz"
+
+        def goto(self, url: str) -> None:
+            self.url = url
+
+        def content(self) -> str:
+            return (
+                "<html><body><a href='/account'>Sign in</a>"
+                "<form><input name='q'/></form></body></html>"
+            )
+
+        def click(self, selector: str) -> None:
+            raise RuntimeError("missing")
+
+        def fill(self, selector: str, value: str) -> None:
+            pass
+
+        def set_input_files(self, selector: str, files: str) -> None:
+            pass
+
+        def locator(self, selector: str):
+            class _Loc:
+                @property
+                def first(self):
+                    return self
+
+                def count(self) -> int:
+                    return 0
+
+            return _Loc()
+
+    result = IndeedHandler().apply(
+        page=_Page(),
+        data=_data(job.url, tmp_path, job),
+    )
+    assert result.state == "failed"
+    assert result.error is not None
+    assert "login wall" not in result.error.lower()
+    assert "Apply form not found" in result.error

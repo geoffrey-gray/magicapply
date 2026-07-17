@@ -3,11 +3,12 @@ platform: indeed
 match_hosts:
   - indeed.com
 form_selectors:
+  # Indeed Apply only — bare `form` can match login / search chrome.
   - form#ia-container
   - form.ia-BasePage-card
   - "div[data-testid='ia-BaseForm'] form"
-  - form
-  - main form
+  - form.ia-Form
+  - "div.ia-BasePage form"
 submit_selectors:
   - "button:has-text('Submit your application')"
   - "button:has-text('Submit application')"

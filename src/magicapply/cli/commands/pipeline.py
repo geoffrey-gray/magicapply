@@ -31,8 +31,11 @@ from magicapply.config.paths import default_config_root
 from magicapply.domain.models.application import ApplicationState
 from magicapply.infrastructure.browser.apply_session import (
     apply_pending_auth_cookies,
+    board_auth_site_for_job,
     configure_apply_page,
     open_apply_session,
+    order_board_auth_sites,
+    requires_headed_board_session,
 )
 from magicapply.infrastructure.browser.board_resolve import resolve_board_destination
 from magicapply.infrastructure.sources.apply_url import needs_board_destination_resolve
@@ -226,18 +229,20 @@ def run(
         console.print(
             f"[dim]resolving board destinations for {len(needing)} SCORED job(s)[/dim]"
         )
-        # Prefer Indeed auth when any Indeed listing needs resolve.
-        prefer = None
-        for job in needing:
-            if "indeed.com" in job.url.lower():
-                prefer = "indeed"
-                break
-            if "linkedin.com" in job.url.lower():
-                prefer = "linkedin"
+        sites = order_board_auth_sites(
+            [
+                site
+                for job in needing
+                if (site := board_auth_site_for_job(job)) is not None
+            ]
+        )
+        if requires_headed_board_session(sites) and headless:
+            console.print("[dim]board auth session: headed (linkedin)[/dim]")
         session = open_apply_session(
             headless=headless,
             data_dir=loaded.data_dir(),
-            prefer_site=prefer,
+            prefer_site=sites[0] if sites else None,
+            also_sites=sites[1:],
         )
         with session:
             apply_pending_auth_cookies(session)
@@ -273,27 +278,36 @@ def run(
         _render_tailor(tailor_report)
 
     def _open_apply_session_for_batch():
-        # Load Indeed/LinkedIn auth when any TAILORED job may need board apply.
-        tailored = apps_repo.list_by_state_and_profile(
-            ApplicationState.TAILORED, profile_cfg.name
+        # Mixed Indeed+LinkedIn batches need both storage_states in one context.
+        # Prefer LinkedIn as primary (auth-sensitive); merge Indeed cookies in.
+        candidates = (
+            apps_repo.list_by_state_and_profile(
+                ApplicationState.TAILORED, profile_cfg.name
+            )
+            + apps_repo.list_by_state_and_profile(
+                ApplicationState.FAILED, profile_cfg.name
+            )
+            + apps_repo.list_by_state_and_profile(
+                ApplicationState.NEEDS_INTERVENTION, profile_cfg.name
+            )
         )
-        prefer = None
-        for app in tailored:
+        sites: list[str] = []
+        for app in candidates:
             job = jobs_repo.get(app.job_id)
             if job is None:
                 continue
-            url = (job.apply_url or job.url).lower()
-            if "indeed.com" in url:
-                prefer = "indeed"
-                break
-            if "linkedin.com" in url and prefer is None:
-                prefer = "linkedin"
-        session = open_apply_session(
+            site = board_auth_site_for_job(job)
+            if site is not None and site not in sites:
+                sites.append(site)
+        ordered = order_board_auth_sites(sites)
+        if requires_headed_board_session(ordered) and headless:
+            console.print("[dim]board auth session: headed (linkedin)[/dim]")
+        return open_apply_session(
             headless=headless,
             data_dir=loaded.data_dir(),
-            prefer_site=prefer,
+            prefer_site=ordered[0] if ordered else None,
+            also_sites=ordered[1:],
         )
-        return session
 
     if not paced:
         _discover_and_tailor()
@@ -552,6 +566,8 @@ def apply(
         data_dir=loaded.data_dir(),
         job=job,
     )
+    # Intervention prompts only when the operator asked for a visible browser.
+    session_headed = not bool(getattr(session, "_headless", headless))
     with session:
         apply_pending_auth_cookies(session)
         page = session.new_page()
@@ -566,7 +582,7 @@ def apply(
         # headless) and the flow bailed for CAPTCHA / manual review, keep
         # the session open and let the operator finish the application
         # by hand, then record what happened.
-        if not headless and report.final_state is ApplicationState.NEEDS_INTERVENTION:
+        if session_headed and report.final_state is ApplicationState.NEEDS_INTERVENTION:
             report = _run_manual_intervention(page, apps_repo, application, report)
 
     console.print(f"application: {report.application_id}")

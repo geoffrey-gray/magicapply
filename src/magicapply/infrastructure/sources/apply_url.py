@@ -28,6 +28,7 @@ PLATFORM_HOST_MARKERS: dict[str, tuple[str, ...]] = {
     "taleo": ("taleo.net",),
     "successfactors": ("successfactors.com", "successfactors.eu"),
     "smartrecruiters": ("smartrecruiters.com",),
+    "workable": ("workable.com", "apply.workable.com", "jobs.workable.com"),
     "jazzhr": ("applytojob.com",),
 }
 
@@ -450,12 +451,24 @@ def is_indeed_applystart_url(url: str | None) -> bool:
 
 
 def indeed_apply_entry_url(job: Job) -> str | None:
-    """Indeed-hosted apply entry (applystart) from raw metadata, if any."""
+    """Indeed-hosted apply entry (applystart) from raw metadata or viewjob ``jk``."""
     raw = job.raw or {}
     for key in ("indeed_apply_url", "thirdPartyApplyUrl"):
         val = raw.get(key)
         if val and is_indeed_applystart_url(str(val)):
             return normalize_indeed_applystart_url(str(val))
+    # Synthesize applystart from listing ``jk`` when metadata is missing —
+    # viewjob+click often lands on offsite / expired CTAs without an IA form.
+    for candidate in (job.apply_url, job.url):
+        if not candidate or "indeed.com" not in str(candidate).lower():
+            continue
+        from urllib.parse import parse_qs, urlparse
+
+        jk = parse_qs(urlparse(str(candidate)).query).get("jk", [None])[0]
+        if jk:
+            return normalize_indeed_applystart_url(
+                f"https://www.indeed.com/applystart?jk={jk}"
+            )
     return None
 
 

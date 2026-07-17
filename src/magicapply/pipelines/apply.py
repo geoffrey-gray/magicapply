@@ -426,4 +426,9 @@ class ApplyPipeline:
                     ApplicationState.NEEDS_INTERVENTION, profile_name
                 )
             )
+            apps.extend(
+                self._apps.list_by_state_and_profile(
+                    ApplicationState.APPLYING, profile_name
+                )
+            )
         return apps

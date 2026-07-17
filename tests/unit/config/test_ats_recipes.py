@@ -20,6 +20,23 @@ def test_loads_indeed_and_linkedin_board_recipes() -> None:
     assert recipes["linkedin"].platform == "linkedin"
     assert recipes["indeed"].wizard is not None
     assert recipes["linkedin"].wizard is not None
+    # Guest people-search / login chrome must not be a form_selector fallback.
+    assert "form" not in recipes["indeed"].form_selectors
+    assert "main form" not in recipes["indeed"].form_selectors
+    assert "form" not in recipes["linkedin"].form_selectors
+    assert "main form" not in recipes["linkedin"].form_selectors
+
+
+def test_loads_workable_and_smartrecruiters_recipes() -> None:
+    recipes = load_ats_recipes(bundled_recipes_dir().parent)
+    assert "workable" in recipes
+    assert "smartrecruiters" in recipes
+    assert resolve_recipe(
+        "https://apply.workable.com/acme/j/ABC", recipes
+    ).platform == "workable"
+    assert resolve_recipe(
+        "https://jobs.smartrecruiters.com/Acme/123", recipes
+    ).platform == "smartrecruiters"
 
 
 def test_loads_eightfold_recipe_from_bundled_configs() -> None:

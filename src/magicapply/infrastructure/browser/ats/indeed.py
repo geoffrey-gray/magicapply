@@ -49,6 +49,14 @@ _APPLY_CLICK_SELECTORS = (
     "button:has-text('Continue')",
 )
 
+_INDEED_APPLY_FORM_SELECTORS = (
+    "form#ia-container",
+    "form.ia-BasePage-card",
+    "div[data-testid='ia-BaseForm'] form",
+    "form.ia-Form",
+    "div.ia-BasePage form",
+)
+
 
 class IndeedHandler(BaseATSHandler):
     """Indeed-hosted Easy Apply and applystart entry points."""
@@ -117,6 +125,25 @@ class IndeedHandler(BaseATSHandler):
         current = getattr(page, "url", "") or target
         if "applystart" not in current.lower() and is_job_board_listing_url(current):
             _click_any(page, _APPLY_CLICK_SELECTORS, timeout_ms=800)
+        _wait_for_indeed_apply_form(page)
+        final = getattr(page, "url", "") or current
+        # Enforce IA form on applystart; also catch auth walls.
+        # Listing pages often redirect offsite after Apply — leave that to redispatch.
+        if self.matches(final) and (
+            "applystart" in final.lower()
+            or "secure.indeed.com/auth" in final.lower()
+            or "/account/login" in final.lower()
+        ):
+            _ensure_indeed_apply_form(page)
+        elif self.matches(final) and is_job_board_listing_url(final):
+            _click_any(page, _APPLY_CLICK_SELECTORS, timeout_ms=1200)
+            _wait_for_indeed_apply_form(page)
+            final = getattr(page, "url", "") or final
+            if self.matches(final) and (
+                "applystart" in final.lower()
+                or "secure.indeed.com/auth" in final.lower()
+            ):
+                _ensure_indeed_apply_form(page)
 
     def _fill_static(self, page: PageDriver, data: ApplicationData) -> None:
         answers = data.static_answers
@@ -186,3 +213,60 @@ class IndeedHandler(BaseATSHandler):
                 # is enough to surface the form in many flows.
                 frame_locator(sel)
                 break
+
+
+def _wait_briefly(page: PageDriver, timeout_ms: int) -> None:
+    wait = getattr(page, "wait_for_timeout", None)
+    if callable(wait):
+        with contextlib.suppress(Exception):
+            wait(timeout_ms)
+
+
+def _wait_for_indeed_apply_form(page: PageDriver, timeout_ms: int = 5000) -> None:
+    """Wait for Indeed Apply / IA form after navigation or CTA click."""
+    wait_for = getattr(page, "wait_for_selector", None)
+    if callable(wait_for):
+        for selector in _INDEED_APPLY_FORM_SELECTORS:
+            with contextlib.suppress(Exception):
+                wait_for(selector, timeout=timeout_ms)
+                return
+    _wait_briefly(page, min(timeout_ms, 2000))
+
+
+def _ensure_indeed_apply_form(page: PageDriver) -> None:
+    """Fail loud when login wall / missing Apply form instead of false APPLIED."""
+    for selector in _INDEED_APPLY_FORM_SELECTORS:
+        if _indeed_form_present(page, selector):
+            return
+    url = (getattr(page, "url", "") or "").lower()
+    # Only treat URL hosts/paths as login walls — footer "Sign in" copy is
+    # present on authenticated Indeed pages and must not false-positive.
+    if (
+        "secure.indeed.com/auth" in url
+        or "secure.indeed.com/account" in url
+        or "/account/login" in url
+        or "/oauth" in url
+    ):
+        raise RuntimeError(
+            "Indeed: login wall / not authenticated — Apply form missing"
+        )
+    raise RuntimeError(
+        "Indeed: Apply form not found (auth expired, CAPTCHA, or offsite-only apply)"
+    )
+
+
+def _indeed_form_present(page: PageDriver, selector: str) -> bool:
+    locator = getattr(page, "locator", None)
+    if callable(locator):
+        try:
+            return locator(selector).first.count() > 0
+        except Exception:  # noqa: BLE001
+            return False
+    with contextlib.suppress(Exception):
+        html = (page.content() or "").lower()
+        return any(
+            m in html
+            for m in ("ia-container", "ia-basepage", "ia-baseform", "ia-form", "indeedapply")
+        )
+    return False
+

@@ -298,8 +298,37 @@ def run_interactive_login(
 
     if not out.is_file():
         raise RuntimeError(f"failed to write auth state to {out}")
+    if spec.name == "linkedin":
+        _normalize_linkedin_storage_state(out)
     print(f"Saved auth state → {out}")
     return out
+
+
+def _normalize_linkedin_storage_state(path: Path) -> None:
+    """Widen ``.www.linkedin.com`` cookie domains after interactive login."""
+    import json
+
+    from magicapply.infrastructure.browser.apply_session import (
+        normalize_board_cookie_domains,
+    )
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("auth login linkedin: cannot normalize %s: %s", path, exc)
+        return
+    cookies = raw.get("cookies") or []
+    if not isinstance(cookies, list):
+        return
+    normalized = normalize_board_cookie_domains(
+        [c for c in cookies if isinstance(c, dict)]
+    )
+    raw["cookies"] = normalized
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    logger.info(
+        "auth login linkedin: normalized %d cookies (www→.linkedin.com)",
+        len(normalized),
+    )
 
 
 def _stdin_is_tty() -> bool:

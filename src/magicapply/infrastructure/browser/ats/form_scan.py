@@ -87,7 +87,14 @@ def scan_form(page: PageDriver, form_selector: str = "form") -> list[FormField]:
         tag = el.tag
         if tag == "input":
             input_type = (el.get("type") or "text").lower()
-            if input_type in {"hidden", "submit", "button", "reset", "image"}:
+            if input_type in {
+                "hidden",
+                "submit",
+                "button",
+                "reset",
+                "image",
+                "search",  # LinkedIn guest people-search bar, etc.
+            }:
                 continue
             if input_type == "file":
                 fields.append(_build_field(el, root, kind="file"))
@@ -130,6 +137,9 @@ def _is_scan_noise(field: FormField) -> bool:
         return True
     label = field.label.strip().lower()
     if label == "search" or "search-input" in field.selector:
+        return True
+    sel = field.selector.lower()
+    if "people-search-bar" in sel or "base-search-bar" in sel:
         return True
     return False
 

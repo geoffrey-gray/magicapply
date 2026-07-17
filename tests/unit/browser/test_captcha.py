@@ -43,6 +43,19 @@ def test_detect(html: str, expected_substr: str | None) -> None:
             "recaptcha",
         ),
         ('<div class="g-recaptcha" data-sitekey="x"></div>', None),
+        # Dormant API script (Indeed Easy Apply) must NOT block.
+        (
+            '<script src="https://www.google.com/recaptcha/api.js"></script>',
+            None,
+        ),
+        (
+            '<script src="https://www.google.com/recaptcha/api.js?render=explicit"></script>',
+            None,
+        ),
+        (
+            '<div class="cf-challenge">Checking your browser</div>',
+            "cf-challenge",
+        ),
     ],
 )
 def test_detect_blocking(html: str, expected_substr: str | None) -> None:

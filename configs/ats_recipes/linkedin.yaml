@@ -3,10 +3,11 @@ platform: linkedin
 match_hosts:
   - linkedin.com
 form_selectors:
+  # Easy Apply only — bare `form` matches the guest people-search bar.
   - form.jobs-easy-apply-form
   - div.jobs-easy-apply-content form
-  - form
-  - main form
+  - .jobs-easy-apply-modal form
+  - form.jobs-easy-apply-content__form
 submit_selectors:
   - "button:has-text('Submit application')"
   - "button:has-text('Submit')"

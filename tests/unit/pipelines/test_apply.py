@@ -427,6 +427,31 @@ class TestApplyBatchPaced:
         assert len(reports) == 1
         assert reports[0].final_state is ApplicationState.APPLIED
 
+    def test_include_retry_states_applies_applying_orphan(
+        self, engine: Engine, tmp_path: Path
+    ) -> None:
+        _, app = _seed_tailored(
+            engine, tmp_path, url="https://boards.greenhouse.io/acme/jobs/88"
+        )
+        apps = SqlApplicationsRepository(engine)
+        app.transition_to(ApplicationState.APPLYING)
+        apps.save(app)
+        jobs = SqlJobsRepository(engine)
+        pipeline = ApplyPipeline(
+            applications_repo=apps,
+            jobs_repo=jobs,
+            data_builder=_data_builder,
+        )
+        reports = pipeline.apply_batch(
+            session=_FakeSession(),
+            profile_name="swe",
+            dry_run=True,
+            include_retry_states=True,
+            max_outcomes=1,
+        )
+        assert len(reports) == 1
+        assert reports[0].final_state is ApplicationState.APPLIED
+
 
 class TestScoreFirstThrottleSkip:
     def test_after_bucket_cap_applies_next_best_other_ats(

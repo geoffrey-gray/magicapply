@@ -1,0 +1,44 @@
+# SmartRecruiters apply shells (often reached via Indeed redirect).
+platform: smartrecruiters
+match_hosts:
+  - jobs.smartrecruiters.com
+  - smartrecruiters.com
+form_selectors:
+  - form#st-applicationForm
+  - form.st-applicationForm
+  - "[data-test='application-form']"
+  - form.application-form
+  - main form
+  - form
+submit_selectors:
+  - button[type='submit']
+  - "button:has-text('Submit')"
+  - "button:has-text('Submit application')"
+  - "#st-submitApplication"
+resume_selectors:
+  - input[type='file'][name*='resume']
+  - input[type='file'][name*='cv']
+  - input[type='file']
+pre_steps:
+  - action: wait
+    timeout_ms: 1500
+  - action: click
+    selector: "button:has-text('Apply')"
+    timeout_ms: 2000
+  - action: click
+    selector: "a:has-text('Apply')"
+    timeout_ms: 2000
+  - action: click
+    selector: "[data-test='apply-button']"
+    timeout_ms: 2000
+  - action: wait
+    timeout_ms: 1500
+wizard:
+  next_selectors:
+    - "button:has-text('Next')"
+    - "button:has-text('Continue')"
+    - "#st-next"
+  max_steps: 8
+  review_selectors:
+    - button[type='submit']
+    - "button:has-text('Submit')"

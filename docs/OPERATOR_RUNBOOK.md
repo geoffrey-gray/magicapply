@@ -387,18 +387,30 @@ magicapply run <profile> --root configs --skip-discover \
 
 ### DoD checklist (dry-run)
 
+Honest pass only — dry-run `APPLIED` **and** a real application form:
+
+- Guest LinkedIn chrome / people-search First+Last fills are **FAIL** (never
+  count as Easy Apply success).
+- Board Easy Apply requires the Easy Apply / Indeed IA modal form present.
+- LinkedIn Easy Apply needs headed Chromium after headed `auth login linkedin`
+  (headless reuse clears `li_at`).
+- Scale DoD after this checklist: 10 Indeed + 10 LinkedIn dry-run APPLIED in
+  `configs-capture` / `data/capture_10x10` (see plan: board matrix then 10×10).
+
 1. **Indeed → external:** `status --source <indeed-source>` → pick a row with
    `dest=external` → `tailor <profile> <job-id>` → `apply <job-id> --no-submit`
    (browser lands on Greenhouse/Workday/Lever/Ashby, not Indeed form).
 2. **Indeed → Easy Apply:** pick `dest=board` Indeed row → same tailor/apply;
    `IndeedHandler` fills through last step; submit skipped.
 3. **LinkedIn → external:** same as (1) for a LinkedIn-sourced external row.
-4. **LinkedIn → Easy Apply:** `dest=board` LinkedIn row → `LinkedInHandler`.
+4. **LinkedIn → Easy Apply:** `dest=board` LinkedIn row → `LinkedInHandler`
+   with `--no-headless` (or session auto-headed when LinkedIn auth is loaded).
 5. **Big-four ATS:** dry-run apply one TAILORED job each for greenhouse /
    workday / lever / ashby destinations.
 
 Auth: `magicapply auth login indeed` (and `linkedin`) before board paths.
 Apply sessions load `data/auth/*_storage_state.json` automatically.
+Use the project venv (`PATH=.venv/bin:$PATH` or `uv run`) for all CLI/pytest.
 
 ---
 

@@ -24,7 +24,7 @@ class RecipeStep(BaseModel):
     model_config = _Strict
 
     action: Literal["click", "wait"]
-    selector: str
+    selector: str = ""
     timeout_ms: int = Field(default=500, gt=0)
 
 
