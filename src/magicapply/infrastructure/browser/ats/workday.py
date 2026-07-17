@@ -315,7 +315,7 @@ def _workday_create_account(
 
 def _advance_past_auth_landing(page: PageDriver, timeouts: ATSTimeoutsConfig) -> None:
     """After sign-in Workday often lands on applyManually before step 2."""
-    _workday_force_en_us_url(page)
+    _workday_force_en_us_url(page, timeouts)
     _wait_for_any(
         page,
         (*_NEXT_BUTTONS, *_FIRST_NAME_SELECTORS),

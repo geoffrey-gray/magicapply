@@ -35,7 +35,14 @@ class TestResolvePriority:
         monkeypatch.setenv("LINKEDIN_LI_AT", "legacy")
         path = auth_state_path(tmp_path, "linkedin")
         path.parent.mkdir(parents=True)
+        # Incomplete jar (no li_at) must not win over env cookies.
         path.write_text('{"cookies":[]}\n')
+        auth = resolve_session_auth("linkedin", tmp_path)
+        assert auth.source == "env_cookies"
+        # Complete jar with session cookie wins.
+        path.write_text(
+            '{"cookies":[{"name":"li_at","value":"fromfile","domain":".linkedin.com","path":"/"}]}\n'
+        )
         auth = resolve_session_auth("linkedin", tmp_path)
         assert auth.source == "storage_state"
         assert auth.storage_state_path == path
@@ -85,14 +92,31 @@ class TestResolvePriority:
 
 class TestClearAndStatus:
     def test_clear_and_status(self, tmp_path: Path) -> None:
-        path = auth_state_path(tmp_path, "glassdoor")
+        # Indeed has no required session cookie name — any non-empty jar counts.
+        path = auth_state_path(tmp_path, "indeed")
         path.parent.mkdir(parents=True)
-        path.write_text("{}")
+        path.write_text('{"cookies":[{"name":"CTK","value":"1","domain":".indeed.com"}]}\n')
         rows = {r["site"]: r for r in site_status(tmp_path)}
-        assert rows["glassdoor"]["storage_state"] is True
-        assert rows["glassdoor"]["resolved"] == "storage_state"
-        assert clear_auth_state(tmp_path, "glassdoor") is True
-        assert clear_auth_state(tmp_path, "glassdoor") is False
+        assert rows["indeed"]["storage_state"] is True
+        assert rows["indeed"]["resolved"] == "storage_state"
+        assert clear_auth_state(tmp_path, "indeed") is True
+        assert clear_auth_state(tmp_path, "indeed") is False
+
+    def test_linkedin_incomplete_jar_not_resolved(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("LINKEDIN_SESSION_COOKIES", raising=False)
+        monkeypatch.delenv("LINKEDIN_LI_AT", raising=False)
+        path = auth_state_path(tmp_path, "linkedin")
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            '{"cookies":[{"name":"bcookie","value":"x","domain":".linkedin.com"}]}\n'
+        )
+        rows = {r["site"]: r for r in site_status(tmp_path)}
+        assert rows["linkedin"]["storage_state"] is False
+        assert rows["linkedin"]["resolved"] == "storage_state_incomplete"
+        auth = resolve_session_auth("linkedin", tmp_path)
+        assert auth.source == "none"
 
 
 class TestHeadedDisplayGate:

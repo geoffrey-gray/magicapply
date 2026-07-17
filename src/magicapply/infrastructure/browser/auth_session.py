@@ -10,6 +10,7 @@ Priority for every site:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import sys
@@ -25,7 +26,13 @@ from magicapply.infrastructure.browser.auth_sites import (
 
 logger = logging.getLogger(__name__)
 
-AuthSource = Literal["storage_state", "env_cookies", "legacy", "none"]
+AuthSource = Literal[
+    "storage_state",
+    "storage_state_incomplete",
+    "env_cookies",
+    "legacy",
+    "none",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,12 +54,45 @@ def auth_state_path(data_dir: Path, site: str) -> Path:
     return auth_dir(data_dir) / spec.state_filename
 
 
+def storage_state_has_session_cookie(path: Path, site: str) -> bool:
+    """True if storage_state JSON includes the site's session cookie name.
+
+    LinkedIn Easy Apply needs ``li_at``. A jar of only tracking cookies
+    (bcookie, lidc, …) still makes a non-empty file — treat that as incomplete
+    so resolve can fall through to env/legacy.
+    """
+    import json
+
+    try:
+        spec = get_site(site)
+    except KeyError:
+        return path.is_file() and path.stat().st_size > 2
+    required = spec.legacy_cookie_name
+    if not required:
+        return path.is_file() and path.stat().st_size > 2
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return False
+    cookies = raw.get("cookies") or []
+    if not isinstance(cookies, list):
+        return False
+    return any(
+        isinstance(c, dict) and str(c.get("name") or "") == required
+        for c in cookies
+    )
+
+
 def resolve_session_auth(site: str, data_dir: Path | None) -> AuthResolution:
     """Resolve storage_state and/or cookies for a site (never logs values)."""
     spec = get_site(site)
     if data_dir is not None:
         state = auth_state_path(data_dir, site)
-        if state.is_file() and state.stat().st_size > 2:
+        if (
+            state.is_file()
+            and state.stat().st_size > 2
+            and storage_state_has_session_cookie(state, site)
+        ):
             return AuthResolution(
                 storage_state_path=state,
                 cookies=[],
@@ -119,7 +159,12 @@ def site_status(data_dir: Path | None) -> list[dict[str, str | bool]]:
         state_path = (
             auth_state_path(data_dir, spec.name) if data_dir is not None else None
         )
-        state_ok = bool(state_path and state_path.is_file())
+        state_file = bool(state_path and state_path.is_file())
+        state_ok = bool(
+            state_path
+            and state_file
+            and storage_state_has_session_cookie(state_path, spec.name)
+        )
         env_ok = bool(os.environ.get(spec.cookie_env, "").strip())
         legacy_ok = any(
             os.environ.get(k, "").strip() for k in spec.legacy_env_keys
@@ -130,6 +175,9 @@ def site_status(data_dir: Path | None) -> list[dict[str, str | bool]]:
             source = "env_cookies"
         elif legacy_ok:
             source = "legacy"
+        elif state_file:
+            # File present but missing session cookie (e.g. LinkedIn without li_at).
+            source = "storage_state_incomplete"
         else:
             source = "none"
         rows.append(
@@ -255,6 +303,13 @@ def run_interactive_login(
                 time.sleep(2.0)
             else:
                 names = _cookie_names(session)
+                if target_cookie and target_cookie not in names:
+                    raise RuntimeError(
+                        f"Timed out waiting for login on {spec.name}: "
+                        f"session cookie {target_cookie!r} never appeared "
+                        f"(saw {len(names)} other cookies). "
+                        f"Log in fully (2FA if prompted) or set {spec.cookie_env}."
+                    )
                 if not names:
                     raise RuntimeError(
                         f"Timed out waiting for login on {spec.name} "
@@ -300,6 +355,15 @@ def run_interactive_login(
         raise RuntimeError(f"failed to write auth state to {out}")
     if spec.name == "linkedin":
         _normalize_linkedin_storage_state(out)
+    if target_cookie and not storage_state_has_session_cookie(out, site):
+        # Refuse to leave a jar that looks "present" but cannot authenticate.
+        with contextlib.suppress(OSError):
+            out.unlink()
+        raise RuntimeError(
+            f"auth state for {spec.name} missing session cookie "
+            f"{target_cookie!r} after save; not writing incomplete state. "
+            f"Complete login or set {spec.cookie_env} / legacy env."
+        )
     print(f"Saved auth state → {out}")
     return out
 
